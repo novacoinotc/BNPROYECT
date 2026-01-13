@@ -1,0 +1,262 @@
+// =====================================================
+// PRISMA SCHEMA
+// PostgreSQL database for P2P Trading Bot
+// =====================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum TradeType {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  APPEALING
+  COMPLETED
+  CANCELLED
+  CANCELLED_SYSTEM
+  CANCELLED_TIMEOUT
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  MATCHED
+  RELEASED
+  FAILED
+  REVERSED
+}
+
+enum VerificationMethod {
+  BANK_WEBHOOK
+  OCR_RECEIPT
+  MANUAL
+}
+
+// ==================== MODELS ====================
+
+/// Stores all P2P orders
+model Order {
+  id                String      @id @default(cuid())
+  orderNumber       String      @unique
+  advNo             String
+  tradeType         TradeType
+  asset             String
+  fiatUnit          String
+  amount            Decimal     @db.Decimal(18, 8)
+  totalPrice        Decimal     @db.Decimal(18, 2)
+  unitPrice         Decimal     @db.Decimal(18, 2)
+  commission        Decimal     @db.Decimal(18, 8)
+  status            OrderStatus
+
+  // Buyer info
+  buyerUserNo       String
+  buyerNickName     String
+  buyerRealName     String?
+
+  // Seller info
+  sellerUserNo      String
+  sellerNickName    String
+
+  // Timestamps
+  binanceCreateTime DateTime
+  confirmPayEndTime DateTime?
+  paidAt            DateTime?
+  releasedAt        DateTime?
+  cancelledAt       DateTime?
+
+  // Internal timestamps
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relations
+  payments          Payment[]
+  messages          ChatMessage[]
+
+  @@index([status])
+  @@index([buyerUserNo])
+  @@index([binanceCreateTime])
+}
+
+/// Bank payments received via webhook
+model Payment {
+  id                String          @id @default(cuid())
+  transactionId     String          @unique
+  amount            Decimal         @db.Decimal(18, 2)
+  currency          String
+  senderName        String
+  senderAccount     String?
+  receiverAccount   String?
+  concept           String?
+  bankReference     String?
+  bankTimestamp     DateTime
+
+  // Matching
+  status            PaymentStatus   @default(PENDING)
+  matchedOrderId    String?
+  matchedAt         DateTime?
+
+  // Verification
+  verificationMethod VerificationMethod?
+  ocrConfidence     Float?
+  receiptUrl        String?
+
+  // Internal
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Relations
+  order             Order?          @relation(fields: [matchedOrderId], references: [id])
+
+  @@index([status])
+  @@index([amount])
+  @@index([senderName])
+}
+
+/// Chat messages for audit trail
+model ChatMessage {
+  id            String   @id @default(cuid())
+  messageId     String
+  orderNumber   String
+  content       String?
+  imageUrl      String?
+  thumbnailUrl  String?
+  messageType   String
+  fromNickName  String
+  isSelf        Boolean
+
+  binanceTime   DateTime
+  createdAt     DateTime @default(now())
+
+  // Relations
+  order         Order    @relation(fields: [orderNumber], references: [orderNumber])
+
+  @@index([orderNumber])
+}
+
+/// Price history for analytics
+model PriceHistory {
+  id              String   @id @default(cuid())
+  asset           String
+  fiat            String
+  tradeType       TradeType
+
+  referencePrice  Decimal  @db.Decimal(18, 2)
+  bestCompetitor  Decimal  @db.Decimal(18, 2)
+  averagePrice    Decimal  @db.Decimal(18, 2)
+  ourPrice        Decimal  @db.Decimal(18, 2)
+  margin          Float
+  pricePosition   String
+
+  createdAt       DateTime @default(now())
+
+  @@index([asset, fiat])
+  @@index([createdAt])
+}
+
+/// Daily statistics
+model DailyStats {
+  id                String   @id @default(cuid())
+  date              DateTime @db.Date @unique
+
+  // Volume
+  totalOrders       Int      @default(0)
+  completedOrders   Int      @default(0)
+  cancelledOrders   Int      @default(0)
+
+  // Amounts
+  totalVolumeFiat   Decimal  @db.Decimal(18, 2) @default(0)
+  totalVolumeAsset  Decimal  @db.Decimal(18, 8) @default(0)
+  totalCommission   Decimal  @db.Decimal(18, 8) @default(0)
+
+  // Pricing
+  avgMargin         Float    @default(0)
+  avgPrice          Decimal  @db.Decimal(18, 2) @default(0)
+
+  // Performance
+  avgPaymentTime    Int?     // seconds
+  avgReleaseTime    Int?     // seconds
+  autoReleaseRate   Float?   // percentage
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/// Buyer reputation cache
+model BuyerCache {
+  id                    String   @id @default(cuid())
+  userNo                String   @unique
+  nickName              String
+
+  completedOrders       Int      @default(0)
+  completedOrders30d    Int      @default(0)
+  finishRate            Float    @default(0)
+  finishRate30d         Float    @default(0)
+  avgPayTime            Int?
+  creditScore           Int?
+  registerDays          Int?
+
+  // Our tracking
+  ordersWithUs          Int      @default(0)
+  issuesCount           Int      @default(0)
+  lastOrderAt           DateTime?
+  isTrusted             Boolean  @default(false)
+  isBlocked             Boolean  @default(false)
+  blockReason           String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([nickName])
+  @@index([isTrusted])
+  @@index([isBlocked])
+}
+
+/// System alerts and notifications
+model Alert {
+  id          String   @id @default(cuid())
+  type        String   // 'reversal', 'appeal', 'high_value', 'error'
+  severity    String   // 'info', 'warning', 'error', 'critical'
+  title       String
+  message     String
+  orderNumber String?
+  metadata    Json?
+
+  acknowledged Boolean  @default(false)
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([type])
+  @@index([severity])
+  @@index([acknowledged])
+  @@index([createdAt])
+}
+
+/// Audit log for all bot actions
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // 'order_created', 'payment_matched', 'crypto_released', etc.
+  orderNumber String?
+  details     Json?
+  success     Boolean
+  error       String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([action])
+  @@index([orderNumber])
+  @@index([createdAt])
+}
