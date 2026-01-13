@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 24, 26, 32;
+  --background-end-rgb: 24, 26, 32;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+  min-height: 100vh;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e2026;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #474d57;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5e6673;
+}
+
+/* Status colors */
+.status-pending {
+  @apply bg-yellow-500/20 text-yellow-400;
+}
+
+.status-paid {
+  @apply bg-blue-500/20 text-blue-400;
+}
+
+.status-completed {
+  @apply bg-green-500/20 text-green-400;
+}
+
+.status-cancelled {
+  @apply bg-red-500/20 text-red-400;
+}
+
+/* Card styles */
+.card {
+  @apply bg-[#1e2026] rounded-lg border border-[#2b2f36];
+}
+
+.card-header {
+  @apply px-4 py-3 border-b border-[#2b2f36];
+}
+
+.card-body {
+  @apply p-4;
+}

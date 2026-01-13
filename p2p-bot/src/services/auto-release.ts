@@ -1,0 +1,680 @@
+// =====================================================
+// AUTO RELEASE ORCHESTRATOR
+// Coordinates payment verification and crypto release
+// =====================================================
+
+import { EventEmitter } from 'events';
+import { OrderManager, OrderEvent } from './order-manager.js';
+import { ChatHandler, ChatEvent, ImageMessage } from './chat-handler.js';
+import { WebhookReceiver, WebhookEvent } from './webhook-receiver.js';
+import { OCRService } from './ocr-service.js';
+import { getBinanceClient } from './binance-client.js';
+import { logger } from '../utils/logger.js';
+import {
+  OrderData,
+  OrderStatus,
+  AuthType,
+  BankWebhookPayload,
+  OrderMatch,
+} from '../types/binance.js';
+
+export interface AutoReleaseConfig {
+  enableAutoRelease: boolean;
+  requireBankMatch: boolean;
+  requireOcrVerification: boolean;
+  authType: AuthType;
+  minConfidence: number;
+  releaseDelayMs: number;
+  maxAutoReleaseAmount: number;
+}
+
+export interface ReleaseEvent {
+  type: 'verification_started' | 'verification_complete' | 'release_queued' | 'release_success' | 'release_failed' | 'manual_required';
+  orderNumber: string;
+  reason?: string;
+  data?: any;
+}
+
+interface PendingRelease {
+  orderNumber: string;
+  order: OrderData;
+  bankMatch?: BankWebhookPayload;
+  ocrVerified: boolean;
+  ocrConfidence: number;
+  receiptUrl?: string;
+  queuedAt: Date;
+  attempts: number;
+}
+
+export class AutoReleaseOrchestrator extends EventEmitter {
+  private config: AutoReleaseConfig;
+  private orderManager: OrderManager;
+  private chatHandler: ChatHandler;
+  private webhookReceiver: WebhookReceiver;
+  private ocrService: OCRService;
+
+  // Queues
+  private pendingReleases: Map<string, PendingRelease> = new Map();
+  private releaseQueue: string[] = [];
+  private processing: boolean = false;
+
+  // 2FA code callback (for manual entry or TOTP generation)
+  private getVerificationCode: ((orderNumber: string, authType: AuthType) => Promise<string>) | null = null;
+
+  constructor(
+    config: AutoReleaseConfig,
+    orderManager: OrderManager,
+    chatHandler: ChatHandler,
+    webhookReceiver: WebhookReceiver,
+    ocrService: OCRService
+  ) {
+    super();
+    this.config = config;
+    this.orderManager = orderManager;
+    this.chatHandler = chatHandler;
+    this.webhookReceiver = webhookReceiver;
+    this.ocrService = ocrService;
+
+    this.setupEventListeners();
+
+    logger.info({
+      enableAutoRelease: config.enableAutoRelease,
+      requireBankMatch: config.requireBankMatch,
+      requireOcr: config.requireOcrVerification,
+    }, 'Auto-release orchestrator initialized');
+  }
+
+  // ==================== EVENT SETUP ====================
+
+  /**
+   * Setup event listeners for all services
+   */
+  private setupEventListeners(): void {
+    // Order events
+    this.orderManager.on('order', (event: OrderEvent) => {
+      this.handleOrderEvent(event);
+    });
+
+    // Chat events (receipt images)
+    this.chatHandler.on('chat', (event: ChatEvent) => {
+      this.handleChatEvent(event);
+    });
+
+    // Bank webhook events
+    this.webhookReceiver.on('payment', (event: WebhookEvent) => {
+      this.handleBankPayment(event);
+    });
+
+    this.webhookReceiver.on('reversal', (event: WebhookEvent) => {
+      this.handleBankReversal(event);
+    });
+  }
+
+  // ==================== EVENT HANDLERS ====================
+
+  /**
+   * Handle order events
+   */
+  private async handleOrderEvent(event: OrderEvent): Promise<void> {
+    switch (event.type) {
+      case 'new':
+        // New order - watch chat and send auto-reply
+        this.chatHandler.watchOrder(event.order.orderNumber);
+        await this.chatHandler.sendAutoReply(event.order.orderNumber);
+        break;
+
+      case 'paid':
+        // Buyer marked as paid - start verification process
+        await this.startVerification(event.order);
+        break;
+
+      case 'matched':
+        // Bank payment matched to order
+        if (event.match) {
+          await this.handlePaymentMatch(event.order, event.match);
+        }
+        break;
+
+      case 'released':
+      case 'cancelled':
+        // Cleanup
+        this.pendingReleases.delete(event.order.orderNumber);
+        this.chatHandler.unwatchOrder(event.order.orderNumber);
+        break;
+    }
+  }
+
+  /**
+   * Handle chat events
+   */
+  private async handleChatEvent(event: ChatEvent): Promise<void> {
+    if (event.type === 'image' && event.message) {
+      await this.handleReceiptImage({
+        orderNo: event.message.orderNo,
+        imageUrl: event.message.imageUrl || '',
+        thumbnailUrl: event.message.thumbnailUrl,
+        senderId: '',
+        senderName: event.message.fromNickName,
+        timestamp: new Date(event.message.createTime),
+      });
+    }
+  }
+
+  /**
+   * Handle bank payment webhook
+   */
+  private async handleBankPayment(event: WebhookEvent): Promise<void> {
+    const match = this.orderManager.matchBankPayment(event.payload);
+
+    if (match) {
+      const order = this.orderManager.getOrder(match.orderNumber);
+      if (order) {
+        await this.handlePaymentMatch(order, match);
+      }
+    }
+  }
+
+  /**
+   * Handle bank reversal (chargeback)
+   */
+  private handleBankReversal(event: WebhookEvent): void {
+    logger.warn({
+      transactionId: event.payload.transactionId,
+      amount: event.payload.amount,
+    }, 'ALERT: Bank reversal detected!');
+
+    // Find any orders associated with this transaction
+    for (const [orderNumber, pending] of this.pendingReleases) {
+      if (pending.bankMatch?.transactionId === event.payload.transactionId) {
+        // Remove from release queue
+        this.pendingReleases.delete(orderNumber);
+        this.releaseQueue = this.releaseQueue.filter(o => o !== orderNumber);
+
+        logger.error({
+          orderNumber,
+          transactionId: event.payload.transactionId,
+        }, 'Order removed from release queue due to reversal');
+
+        this.emit('release', {
+          type: 'release_failed',
+          orderNumber,
+          reason: 'Bank reversal detected',
+        } as ReleaseEvent);
+      }
+    }
+  }
+
+  // ==================== VERIFICATION ====================
+
+  /**
+   * Start verification process for paid order
+   */
+  private async startVerification(order: OrderData): Promise<void> {
+    logger.info({
+      orderNumber: order.orderNumber,
+      amount: order.totalPrice,
+    }, 'Starting payment verification');
+
+    this.emit('release', {
+      type: 'verification_started',
+      orderNumber: order.orderNumber,
+    } as ReleaseEvent);
+
+    // Initialize pending release record
+    const pending: PendingRelease = {
+      orderNumber: order.orderNumber,
+      order,
+      ocrVerified: false,
+      ocrConfidence: 0,
+      queuedAt: new Date(),
+      attempts: 0,
+    };
+
+    this.pendingReleases.set(order.orderNumber, pending);
+
+    // Look for existing receipt images in chat
+    const existingImages = await this.chatHandler.findReceiptImages(order.orderNumber);
+
+    if (existingImages.length > 0) {
+      // Process the most recent image
+      await this.handleReceiptImage(existingImages[existingImages.length - 1]);
+    }
+  }
+
+  /**
+   * Handle receipt image from chat
+   */
+  private async handleReceiptImage(image: ImageMessage): Promise<void> {
+    const pending = this.pendingReleases.get(image.orderNo);
+
+    if (!pending) {
+      logger.debug({ orderNo: image.orderNo }, 'Receipt image for unknown order');
+      return;
+    }
+
+    logger.info({
+      orderNumber: image.orderNo,
+      imageUrl: image.imageUrl,
+    }, 'Processing receipt image');
+
+    if (this.config.requireOcrVerification) {
+      // Run OCR
+      const ocrResult = await this.ocrService.processReceiptUrl(image.imageUrl);
+
+      // Verify against order
+      const expectedAmount = parseFloat(pending.order.totalPrice);
+      const verification = this.ocrService.verifyReceipt(
+        ocrResult,
+        expectedAmount,
+        pending.order.buyer.realName
+      );
+
+      pending.ocrVerified = verification.verified;
+      pending.ocrConfidence = verification.confidence;
+      pending.receiptUrl = image.imageUrl;
+
+      // Update order manager
+      this.orderManager.verifyPayment(
+        image.orderNo,
+        image.imageUrl,
+        ocrResult.amount,
+        ocrResult.senderName
+      );
+
+      if (verification.verified) {
+        logger.info({
+          orderNumber: image.orderNo,
+          confidence: verification.confidence.toFixed(2),
+        }, 'Receipt verified via OCR');
+      } else {
+        logger.warn({
+          orderNumber: image.orderNo,
+          issues: verification.issues,
+        }, 'Receipt verification failed');
+      }
+    } else {
+      // No OCR required - just mark as having receipt
+      pending.receiptUrl = image.imageUrl;
+      pending.ocrVerified = true;
+      pending.ocrConfidence = 0.5;
+    }
+
+    // Check if ready for release
+    await this.checkReadyForRelease(image.orderNo);
+  }
+
+  /**
+   * Handle bank payment match
+   */
+  private async handlePaymentMatch(order: OrderData, match: OrderMatch): Promise<void> {
+    let pending = this.pendingReleases.get(order.orderNumber);
+
+    if (!pending) {
+      // Create pending record if doesn't exist
+      pending = {
+        orderNumber: order.orderNumber,
+        order,
+        ocrVerified: false,
+        ocrConfidence: 0,
+        queuedAt: new Date(),
+        attempts: 0,
+      };
+      this.pendingReleases.set(order.orderNumber, pending);
+    }
+
+    // Store bank match info
+    pending.bankMatch = {
+      transactionId: match.bankTransactionId || '',
+      amount: match.receivedAmount || 0,
+      currency: order.fiatUnit,
+      senderName: match.senderName || '',
+      senderAccount: '',
+      receiverAccount: '',
+      concept: '',
+      timestamp: match.matchedAt?.toISOString() || new Date().toISOString(),
+      bankReference: '',
+      status: 'completed',
+    };
+
+    logger.info({
+      orderNumber: order.orderNumber,
+      bankAmount: match.receivedAmount,
+      expectedAmount: match.expectedAmount,
+    }, 'Bank payment matched to order');
+
+    // Check if ready for release
+    await this.checkReadyForRelease(order.orderNumber);
+  }
+
+  /**
+   * Check if order is ready for automatic release
+   */
+  private async checkReadyForRelease(orderNumber: string): Promise<void> {
+    const pending = this.pendingReleases.get(orderNumber);
+
+    if (!pending) return;
+
+    // Check conditions
+    const hasBankMatch = !this.config.requireBankMatch || !!pending.bankMatch;
+    const hasOcrVerification = !this.config.requireOcrVerification || pending.ocrVerified;
+    const meetsConfidence = pending.ocrConfidence >= this.config.minConfidence || !this.config.requireOcrVerification;
+    const underLimit = parseFloat(pending.order.totalPrice) <= this.config.maxAutoReleaseAmount;
+
+    logger.debug({
+      orderNumber,
+      hasBankMatch,
+      hasOcrVerification,
+      meetsConfidence,
+      underLimit,
+      autoReleaseEnabled: this.config.enableAutoRelease,
+    }, 'Checking release conditions');
+
+    if (!this.config.enableAutoRelease) {
+      this.emit('release', {
+        type: 'manual_required',
+        orderNumber,
+        reason: 'Auto-release disabled',
+      } as ReleaseEvent);
+      return;
+    }
+
+    if (!underLimit) {
+      this.emit('release', {
+        type: 'manual_required',
+        orderNumber,
+        reason: `Amount ${pending.order.totalPrice} exceeds auto-release limit ${this.config.maxAutoReleaseAmount}`,
+      } as ReleaseEvent);
+      return;
+    }
+
+    if (hasBankMatch && hasOcrVerification && meetsConfidence) {
+      // Ready for release!
+      this.emit('release', {
+        type: 'verification_complete',
+        orderNumber,
+        data: {
+          bankMatch: !!pending.bankMatch,
+          ocrVerified: pending.ocrVerified,
+          confidence: pending.ocrConfidence,
+        },
+      } as ReleaseEvent);
+
+      await this.queueForRelease(orderNumber);
+    } else {
+      const missing: string[] = [];
+      if (!hasBankMatch) missing.push('bank confirmation');
+      if (!hasOcrVerification) missing.push('OCR verification');
+      if (!meetsConfidence) missing.push(`sufficient confidence (${(pending.ocrConfidence * 100).toFixed(0)}% < ${(this.config.minConfidence * 100).toFixed(0)}%)`);
+
+      logger.debug({
+        orderNumber,
+        missing,
+      }, 'Not ready for release yet');
+    }
+  }
+
+  // ==================== RELEASE EXECUTION ====================
+
+  /**
+   * Queue order for release
+   */
+  private async queueForRelease(orderNumber: string): Promise<void> {
+    if (this.releaseQueue.includes(orderNumber)) {
+      return; // Already queued
+    }
+
+    this.releaseQueue.push(orderNumber);
+
+    this.emit('release', {
+      type: 'release_queued',
+      orderNumber,
+    } as ReleaseEvent);
+
+    logger.info({
+      orderNumber,
+      queuePosition: this.releaseQueue.length,
+    }, 'Order queued for release');
+
+    // Add delay before release
+    setTimeout(
+      () => this.processReleaseQueue(),
+      this.config.releaseDelayMs
+    );
+  }
+
+  /**
+   * Process release queue
+   */
+  private async processReleaseQueue(): Promise<void> {
+    if (this.processing || this.releaseQueue.length === 0) {
+      return;
+    }
+
+    this.processing = true;
+
+    try {
+      while (this.releaseQueue.length > 0) {
+        const orderNumber = this.releaseQueue.shift()!;
+        await this.executeRelease(orderNumber);
+
+        // Small delay between releases
+        await this.sleep(1000);
+      }
+    } finally {
+      this.processing = false;
+    }
+  }
+
+  /**
+   * Execute crypto release
+   */
+  private async executeRelease(orderNumber: string): Promise<void> {
+    const pending = this.pendingReleases.get(orderNumber);
+
+    if (!pending) {
+      logger.warn({ orderNumber }, 'Order not found for release');
+      return;
+    }
+
+    // Check order is still in PAID status
+    const currentOrder = this.orderManager.getOrder(orderNumber);
+
+    if (!currentOrder || currentOrder.orderStatus !== OrderStatus.PAID) {
+      logger.warn({
+        orderNumber,
+        status: currentOrder?.orderStatus,
+      }, 'Order status changed, skipping release');
+      return;
+    }
+
+    pending.attempts++;
+
+    try {
+      // Get verification code
+      if (!this.getVerificationCode) {
+        throw new Error('No verification code provider set');
+      }
+
+      const verificationCode = await this.getVerificationCode(
+        orderNumber,
+        this.config.authType
+      );
+
+      // Send confirmation message to buyer
+      await this.chatHandler.sendPaymentConfirmation(orderNumber);
+
+      // Release crypto
+      const success = await this.orderManager.releaseCrypto(
+        orderNumber,
+        this.config.authType,
+        verificationCode
+      );
+
+      if (success) {
+        logger.info({
+          orderNumber,
+          amount: pending.order.totalPrice,
+          asset: pending.order.asset,
+        }, 'Crypto released successfully');
+
+        this.emit('release', {
+          type: 'release_success',
+          orderNumber,
+          data: {
+            amount: pending.order.totalPrice,
+            asset: pending.order.asset,
+          },
+        } as ReleaseEvent);
+
+        this.pendingReleases.delete(orderNumber);
+      } else {
+        throw new Error('Release API call failed');
+      }
+    } catch (error) {
+      logger.error({
+        orderNumber,
+        error,
+        attempts: pending.attempts,
+      }, 'Failed to release crypto');
+
+      if (pending.attempts < 3) {
+        // Retry
+        this.releaseQueue.push(orderNumber);
+      } else {
+        this.emit('release', {
+          type: 'release_failed',
+          orderNumber,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        } as ReleaseEvent);
+
+        this.emit('release', {
+          type: 'manual_required',
+          orderNumber,
+          reason: 'Max release attempts exceeded',
+        } as ReleaseEvent);
+      }
+    }
+  }
+
+  // ==================== CONFIGURATION ====================
+
+  /**
+   * Set verification code provider
+   */
+  setVerificationCodeProvider(
+    provider: (orderNumber: string, authType: AuthType) => Promise<string>
+  ): void {
+    this.getVerificationCode = provider;
+    logger.info('Verification code provider set');
+  }
+
+  /**
+   * Update configuration
+   */
+  updateConfig(config: Partial<AutoReleaseConfig>): void {
+    this.config = { ...this.config, ...config };
+    logger.info({ config: this.config }, 'Auto-release config updated');
+  }
+
+  // ==================== MANUAL OPERATIONS ====================
+
+  /**
+   * Manually approve release
+   */
+  async manualApprove(orderNumber: string): Promise<void> {
+    const pending = this.pendingReleases.get(orderNumber);
+
+    if (!pending) {
+      const order = this.orderManager.getOrder(orderNumber);
+      if (order) {
+        this.pendingReleases.set(orderNumber, {
+          orderNumber,
+          order,
+          ocrVerified: true,
+          ocrConfidence: 1.0,
+          queuedAt: new Date(),
+          attempts: 0,
+        });
+      }
+    } else {
+      pending.ocrVerified = true;
+      pending.ocrConfidence = 1.0;
+    }
+
+    await this.queueForRelease(orderNumber);
+    logger.info({ orderNumber }, 'Manual release approved');
+  }
+
+  /**
+   * Cancel pending release
+   */
+  cancelRelease(orderNumber: string): void {
+    this.pendingReleases.delete(orderNumber);
+    this.releaseQueue = this.releaseQueue.filter(o => o !== orderNumber);
+    logger.info({ orderNumber }, 'Release cancelled');
+  }
+
+  // ==================== STATUS ====================
+
+  /**
+   * Get pending releases
+   */
+  getPendingReleases(): PendingRelease[] {
+    return Array.from(this.pendingReleases.values());
+  }
+
+  /**
+   * Get release queue
+   */
+  getReleaseQueue(): string[] {
+    return [...this.releaseQueue];
+  }
+
+  /**
+   * Get stats
+   */
+  getStats(): {
+    pendingVerification: number;
+    queuedForRelease: number;
+    processing: boolean;
+  } {
+    return {
+      pendingVerification: this.pendingReleases.size,
+      queuedForRelease: this.releaseQueue.length,
+      processing: this.processing,
+    };
+  }
+
+  // ==================== UTILITIES ====================
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+// Factory function
+export function createAutoReleaseOrchestrator(
+  config: Partial<AutoReleaseConfig>,
+  orderManager: OrderManager,
+  chatHandler: ChatHandler,
+  webhookReceiver: WebhookReceiver,
+  ocrService: OCRService
+): AutoReleaseOrchestrator {
+  const defaultConfig: AutoReleaseConfig = {
+    enableAutoRelease: process.env.ENABLE_AUTO_RELEASE === 'true',
+    requireBankMatch: process.env.REQUIRE_BANK_MATCH === 'true',
+    requireOcrVerification: process.env.REQUIRE_OCR_VERIFICATION !== 'false',
+    authType: (process.env.RELEASE_AUTH_TYPE as AuthType) || AuthType.GOOGLE,
+    minConfidence: parseFloat(process.env.OCR_MIN_CONFIDENCE || '0.7'),
+    releaseDelayMs: parseInt(process.env.RELEASE_DELAY_MS || '5000'),
+    maxAutoReleaseAmount: parseFloat(process.env.MAX_AUTO_RELEASE_AMOUNT || '50000'),
+  };
+
+  return new AutoReleaseOrchestrator(
+    { ...defaultConfig, ...config },
+    orderManager,
+    chatHandler,
+    webhookReceiver,
+    ocrService
+  );
+}
