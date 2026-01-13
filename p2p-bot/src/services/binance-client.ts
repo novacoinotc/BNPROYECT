@@ -1,0 +1,378 @@
+// =====================================================
+// BINANCE C2C API CLIENT
+// Handles authentication, signing, and API requests
+// =====================================================
+
+import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import CryptoJS from 'crypto-js';
+import { logger } from '../utils/logger.js';
+import {
+  BinanceApiResponse,
+  SearchAdsRequest,
+  UpdateAdRequest,
+  ListOrdersRequest,
+  OrderDetailRequest,
+  ReleaseCoinRequest,
+  MarkOrderAsPaidRequest,
+  ChatMessagesRequest,
+  AdData,
+  OrderData,
+  ChatCredential,
+  ChatMessage,
+  MerchantAdsDetail,
+  ReferencePrice,
+  UserStats,
+  TradeType,
+} from '../types/binance.js';
+
+export class BinanceC2CClient {
+  private readonly apiKey: string;
+  private readonly apiSecret: string;
+  private readonly baseUrl: string;
+  private readonly client: AxiosInstance;
+
+  constructor(apiKey: string, apiSecret: string, baseUrl: string = 'https://api.binance.com') {
+    this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
+    this.baseUrl = baseUrl;
+
+    this.client = axios.create({
+      baseURL: this.baseUrl,
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-MBX-APIKEY': this.apiKey,
+      },
+    });
+
+    // Request interceptor for logging
+    this.client.interceptors.request.use((config) => {
+      logger.debug({
+        method: config.method,
+        url: config.url,
+        params: config.params
+      }, 'API Request');
+      return config;
+    });
+
+    // Response interceptor for logging
+    this.client.interceptors.response.use(
+      (response) => {
+        logger.debug({
+          status: response.status,
+          data: response.data
+        }, 'API Response');
+        return response;
+      },
+      (error) => {
+        logger.error({
+          error: error.response?.data || error.message
+        }, 'API Error');
+        throw error;
+      }
+    );
+  }
+
+  // ==================== SIGNATURE ====================
+
+  /**
+   * Generate HMAC SHA256 signature
+   * IMPORTANT: signature must be the LAST query parameter
+   */
+  private generateSignature(queryString: string): string {
+    return CryptoJS.HmacSHA256(queryString, this.apiSecret).toString(CryptoJS.enc.Hex);
+  }
+
+  /**
+   * Build signed query string with timestamp
+   */
+  private buildSignedParams(params: Record<string, any> = {}): string {
+    const timestamp = Date.now();
+    const allParams = { ...params, timestamp };
+
+    // Build query string (without signature)
+    const queryString = Object.entries(allParams)
+      .filter(([_, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => {
+        if (Array.isArray(value)) {
+          return value.map(v => `${key}=${encodeURIComponent(v)}`).join('&');
+        }
+        return `${key}=${encodeURIComponent(value)}`;
+      })
+      .join('&');
+
+    // Generate signature
+    const signature = this.generateSignature(queryString);
+
+    // Signature MUST be last parameter
+    return `${queryString}&signature=${signature}`;
+  }
+
+  /**
+   * Make signed GET request
+   */
+  private async signedGet<T>(endpoint: string, params: Record<string, any> = {}): Promise<T> {
+    const signedParams = this.buildSignedParams(params);
+    const response = await this.client.get<BinanceApiResponse<T>>(
+      `${endpoint}?${signedParams}`
+    );
+    return response.data.data;
+  }
+
+  /**
+   * Make signed POST request
+   */
+  private async signedPost<T>(
+    endpoint: string,
+    body: Record<string, any> = {},
+    params: Record<string, any> = {}
+  ): Promise<T> {
+    const signedParams = this.buildSignedParams(params);
+    const response = await this.client.post<BinanceApiResponse<T>>(
+      `${endpoint}?${signedParams}`,
+      body
+    );
+    return response.data.data;
+  }
+
+  // ==================== ADS MANAGEMENT ====================
+
+  /**
+   * Search competitor ads
+   * POST /sapi/v1/c2c/ads/search
+   */
+  async searchAds(request: SearchAdsRequest): Promise<AdData[]> {
+    const response = await this.signedPost<AdData[]>(
+      '/sapi/v1/c2c/ads/search',
+      request
+    );
+    return response;
+  }
+
+  /**
+   * Get reference price for asset/fiat pair
+   * POST /sapi/v1/c2c/ads/getReferencePrice
+   */
+  async getReferencePrice(
+    asset: string,
+    fiat: string,
+    tradeType: TradeType
+  ): Promise<ReferencePrice> {
+    const response = await this.signedPost<ReferencePrice>(
+      '/sapi/v1/c2c/ads/getReferencePrice',
+      { asset, fiat, tradeType }
+    );
+    return response;
+  }
+
+  /**
+   * List my ads with pagination
+   * POST /sapi/v1/c2c/ads/listWithPagination
+   */
+  async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
+    const response = await this.signedPost<MerchantAdsDetail>(
+      '/sapi/v1/c2c/ads/listWithPagination',
+      { page, rows }
+    );
+    return response;
+  }
+
+  /**
+   * Update ad price and settings
+   * POST /sapi/v1/c2c/ads/update
+   */
+  async updateAd(request: UpdateAdRequest): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/ads/update',
+      request
+    );
+    return true;
+  }
+
+  /**
+   * Enable/disable ad
+   * POST /sapi/v1/c2c/ads/updateStatus
+   */
+  async updateAdStatus(advNo: string, enable: boolean): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/ads/updateStatus',
+      { advNo, advStatus: enable ? 1 : 0 }
+    );
+    return true;
+  }
+
+  // ==================== ORDER MANAGEMENT ====================
+
+  /**
+   * List orders with filters
+   * POST /sapi/v1/c2c/orderMatch/listOrders
+   */
+  async listOrders(request: ListOrdersRequest = {}): Promise<OrderData[]> {
+    const response = await this.signedPost<OrderData[]>(
+      '/sapi/v1/c2c/orderMatch/listOrders',
+      {
+        page: request.page || 1,
+        rows: request.rows || 20,
+        ...request,
+      }
+    );
+    return response;
+  }
+
+  /**
+   * Get order detail
+   * POST /sapi/v1/c2c/orderMatch/getUserOrderDetail
+   */
+  async getOrderDetail(orderNumber: string): Promise<OrderData> {
+    const response = await this.signedPost<OrderData>(
+      '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+      { orderNumber }
+    );
+    return response;
+  }
+
+  /**
+   * Get user statistics
+   * GET /sapi/v1/c2c/orderMatch/getUserStats
+   */
+  async getUserStats(userNo: string): Promise<UserStats> {
+    const response = await this.signedGet<UserStats>(
+      '/sapi/v1/c2c/orderMatch/getUserStats',
+      { userNo }
+    );
+    return response;
+  }
+
+  /**
+   * Release crypto to buyer (requires 2FA)
+   * POST /sapi/v1/c2c/orderMatch/releaseCoin
+   *
+   * IMPORTANT: This requires 2FA verification
+   */
+  async releaseCoin(request: ReleaseCoinRequest): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/orderMatch/releaseCoin',
+      request
+    );
+    logger.info({ orderNumber: request.orderNumber }, 'Crypto released successfully');
+    return true;
+  }
+
+  /**
+   * Mark order as paid (for buyer side)
+   * POST /sapi/v1/c2c/orderMatch/markOrderAsPaid
+   */
+  async markOrderAsPaid(request: MarkOrderAsPaidRequest): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/orderMatch/markOrderAsPaid',
+      request
+    );
+    return true;
+  }
+
+  /**
+   * Cancel order
+   * POST /sapi/v1/c2c/orderMatch/cancelOrder
+   */
+  async cancelOrder(orderNumber: string): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/orderMatch/cancelOrder',
+      { orderNumber }
+    );
+    logger.info({ orderNumber }, 'Order cancelled');
+    return true;
+  }
+
+  // ==================== CHAT ====================
+
+  /**
+   * Get WebSocket credentials for chat
+   * GET /sapi/v1/c2c/chat/retrieveChatCredential
+   */
+  async getChatCredential(): Promise<ChatCredential> {
+    const response = await this.signedGet<ChatCredential>(
+      '/sapi/v1/c2c/chat/retrieveChatCredential'
+    );
+    return response;
+  }
+
+  /**
+   * Get chat messages for an order
+   * GET /sapi/v1/c2c/chat/retrieveChatMessagesWithPagination
+   */
+  async getChatMessages(request: ChatMessagesRequest): Promise<ChatMessage[]> {
+    const response = await this.signedGet<ChatMessage[]>(
+      '/sapi/v1/c2c/chat/retrieveChatMessagesWithPagination',
+      {
+        orderNo: request.orderNo,
+        page: request.page || 1,
+        rows: request.rows || 50,
+      }
+    );
+    return response;
+  }
+
+  /**
+   * Send chat message
+   * POST /sapi/v1/c2c/chat/sendMessage
+   */
+  async sendChatMessage(orderNo: string, content: string): Promise<boolean> {
+    await this.signedPost<void>(
+      '/sapi/v1/c2c/chat/sendMessage',
+      { orderNo, content, type: 'text' }
+    );
+    return true;
+  }
+
+  /**
+   * Get pre-signed URL for uploading images to chat
+   * POST /sapi/v1/c2c/chat/image/pre-signed-url
+   */
+  async getImageUploadUrl(orderNo: string): Promise<{ uploadUrl: string; imageUrl: string }> {
+    const response = await this.signedPost<{ uploadUrl: string; imageUrl: string }>(
+      '/sapi/v1/c2c/chat/image/pre-signed-url',
+      { orderNo }
+    );
+    return response;
+  }
+
+  // ==================== UTILITY METHODS ====================
+
+  /**
+   * Check API connectivity
+   */
+  async ping(): Promise<boolean> {
+    try {
+      await this.client.get('/api/v3/ping');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get server time (for timestamp sync)
+   */
+  async getServerTime(): Promise<number> {
+    const response = await this.client.get<{ serverTime: number }>('/api/v3/time');
+    return response.data.serverTime;
+  }
+}
+
+// Singleton instance
+let clientInstance: BinanceC2CClient | null = null;
+
+export function getBinanceClient(): BinanceC2CClient {
+  if (!clientInstance) {
+    const apiKey = process.env.BINANCE_API_KEY;
+    const apiSecret = process.env.BINANCE_API_SECRET;
+    const baseUrl = process.env.BINANCE_SAPI_URL || 'https://api.binance.com';
+
+    if (!apiKey || !apiSecret) {
+      throw new Error('BINANCE_API_KEY and BINANCE_API_SECRET must be set');
+    }
+
+    clientInstance = new BinanceC2CClient(apiKey, apiSecret, baseUrl);
+  }
+  return clientInstance;
+}
