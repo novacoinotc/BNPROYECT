@@ -16,7 +16,7 @@ function sign(queryString: string): string {
 }
 
 // Make authenticated request
-async function request(endpoint: string, params: Record<string, any> = {}, method: string = 'POST') {
+async function request(endpoint: string, params: Record<string, any> = {}, method: string = 'POST'): Promise<any> {
   const timestamp = Date.now();
   const allParams = { ...params, timestamp };
   const queryString = Object.entries(allParams)
@@ -65,7 +65,7 @@ async function testGetOrders() {
     rows: 5,
   });
 
-  if (data?.data?.length > 0) {
+  if (data && data.data && data.data.length > 0) {
     console.log('\n📦 First order structure:');
     console.log(JSON.stringify(data.data[0], null, 2));
 
@@ -75,7 +75,10 @@ async function testGetOrders() {
       console.log(`   ${key}: ${typeof value} = ${JSON.stringify(value)}`);
     }
   } else {
-    console.log('   No orders found');
+    console.log('   No orders found or error in response');
+    if (data) {
+      console.log('   Response:', JSON.stringify(data, null, 2));
+    }
   }
 
   return data;
@@ -110,7 +113,7 @@ async function testGetOrderDetail() {
     rows: 1,
   });
 
-  if (orders?.data?.length > 0) {
+  if (orders && orders.data && orders.data.length > 0) {
     const orderNo = orders.data[0].orderNumber || orders.data[0].orderNo;
     console.log(`\n   Using order: ${orderNo}`);
 
