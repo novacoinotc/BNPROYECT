@@ -112,6 +112,9 @@ export class WebhookReceiver extends EventEmitter {
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
+    // Alias route for core bancario integration
+    this.app.post('/webhook/bank', this.handlePaymentWebhook.bind(this));
+
     // Payment reversal webhook (chargebacks)
     this.app.post(`${this.config.webhookPath}/reversal`, this.handleReversalWebhook.bind(this));
 
