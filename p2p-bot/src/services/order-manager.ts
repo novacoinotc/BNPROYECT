@@ -6,6 +6,7 @@
 import { EventEmitter } from 'events';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { orderLogger as logger } from '../utils/logger.js';
+import { saveOrder } from './database.js';
 import {
   OrderData,
   OrderStatus,
@@ -148,6 +149,14 @@ export class OrderManager extends EventEmitter {
       status: order.orderStatus,
     }, 'New order detected');
 
+    // Save order to database
+    try {
+      await saveOrder(order);
+      logger.info({ orderNumber: order.orderNumber }, 'Order saved to database');
+    } catch (dbError) {
+      logger.error({ orderNumber: order.orderNumber, error: dbError }, 'Failed to save order to database');
+    }
+
     // Check if buyer meets requirements
     if (order.tradeType === TradeType.SELL) {
       const buyerMeetsRequirements = await this.validateBuyer(order.buyer.userNo);
@@ -196,6 +205,13 @@ export class OrderManager extends EventEmitter {
       oldStatus: oldOrder.orderStatus,
       newStatus: newOrder.orderStatus,
     }, 'Order status changed');
+
+    // Update order in database
+    try {
+      await saveOrder(newOrder);
+    } catch (dbError) {
+      logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+    }
 
     switch (newOrder.orderStatus) {
       case OrderStatus.PAID:
