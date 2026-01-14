@@ -75,21 +75,23 @@ export async function saveOrder(order: OrderData): Promise<void> {
   // Map to buyer/seller based on trade type
   const buyerUserNo = isSellOrder ? 'counterpart' : 'self';
   const buyerNickName = isSellOrder ? counterPartNick : 'self';
-  const buyerRealName = null; // Not available in API response
+  // Get real name from order detail if available
+  const buyerRealName = (order as any).buyerRealName || order.buyer?.realName || null;
   const sellerUserNo = isSellOrder ? 'self' : 'counterpart';
   const sellerNickName = isSellOrder ? 'self' : counterPartNick;
 
   try {
-    // Try to update first
+    // Try to update first - also update buyerRealName if we now have it
     const updateResult = await db.query(
       `UPDATE "Order" SET
         status = $1::"OrderStatus",
+        "buyerRealName" = COALESCE($4, "buyerRealName"),
         "paidAt" = CASE WHEN $2 = 'PAID' AND "paidAt" IS NULL THEN NOW() ELSE "paidAt" END,
         "releasedAt" = CASE WHEN $2 = 'COMPLETED' AND "releasedAt" IS NULL THEN NOW() ELSE "releasedAt" END,
         "cancelledAt" = CASE WHEN $2 IN ('CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT') AND "cancelledAt" IS NULL THEN NOW() ELSE "cancelledAt" END,
         "updatedAt" = NOW()
       WHERE "orderNumber" = $3`,
-      [status, status, order.orderNumber]
+      [status, status, order.orderNumber, buyerRealName]
     );
 
     // If no rows updated, insert new order

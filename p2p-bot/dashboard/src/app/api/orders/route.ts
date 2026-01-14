@@ -8,9 +8,20 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const limit = parseInt(searchParams.get('limit') || '50');
     const status = searchParams.get('status');
+    const showAll = searchParams.get('showAll') === 'true';
+
+    // By default, only show active orders (PENDING, PAID, APPEALING)
+    // Use showAll=true to see completed/cancelled orders
+    const activeStatuses = ['PENDING', 'PAID', 'APPEALING'];
+
+    const whereClause = status
+      ? { status: status as any }
+      : showAll
+        ? undefined
+        : { status: { in: activeStatuses as any } };
 
     const orders = await prisma.order.findMany({
-      where: status ? { status: status as any } : undefined,
+      where: whereClause,
       orderBy: { binanceCreateTime: 'desc' },
       take: limit,
       select: {

@@ -615,13 +615,26 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       );
     }
 
-    // VERIFY NAME
-    const buyerName = order.counterPartNickName || order.buyer?.nickName || '';
+    // VERIFY NAME - Use real name if available
+    const buyerRealName = (order as any).buyerRealName || order.buyer?.realName;
+    const buyerName = buyerRealName || order.counterPartNickName || order.buyer?.nickName || '';
     const senderName = match.senderName || '';
     const nameMatchScore = this.compareNames(senderName, buyerName);
-    const nameMatches = nameMatchScore > 0.3;
+    const hasRealName = !!buyerRealName;
+    const nameMatches = hasRealName && nameMatchScore > 0.3;
 
-    if (nameMatches) {
+    if (!hasRealName) {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.NAME_MISMATCH,
+        `⚠️ No se pudo obtener nombre real del comprador - Requiere verificación manual`,
+        {
+          senderName,
+          buyerNickName: order.counterPartNickName,
+          reason: 'real_name_not_available',
+        }
+      );
+    } else if (nameMatches) {
       await db.addVerificationStep(
         order.orderNumber,
         VerificationStatus.NAME_VERIFIED,

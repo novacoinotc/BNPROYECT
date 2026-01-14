@@ -215,7 +215,20 @@ export class OrderManager extends EventEmitter {
     // Status is now a string like "TRADING", "BUYER_PAYED", etc.
     switch (newOrder.orderStatus) {
       case 'BUYER_PAYED':
-        // Buyer marked as paid
+        // Buyer marked as paid - fetch order detail to get real buyer name
+        try {
+          const orderDetail = await this.client.getOrderDetail(newOrder.orderNumber);
+          // The detail API returns buyer.realName if available
+          if (orderDetail.buyer?.realName) {
+            (newOrder as any).buyerRealName = orderDetail.buyer.realName;
+            logger.info({
+              orderNumber: newOrder.orderNumber,
+              buyerRealName: orderDetail.buyer.realName,
+            }, 'Got real buyer name from order detail');
+          }
+        } catch (detailError) {
+          logger.warn({ orderNumber: newOrder.orderNumber, error: detailError }, 'Could not fetch order detail for buyer name');
+        }
         this.emit('order', { type: 'paid', order: newOrder } as OrderEvent);
         break;
 
