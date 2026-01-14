@@ -12,7 +12,7 @@ import { getChatHandler } from './services/chat-handler.js';
 import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
-import { testConnection, disconnect } from './services/database.js';
+import { testConnection, disconnect } from './services/database-pg.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================

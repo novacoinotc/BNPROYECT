@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { orderLogger as logger } from '../utils/logger.js';
-import { saveOrder } from './database.js';
+import { saveOrder } from './database-pg.js';
 import {
   OrderData,
   OrderStatus,
