@@ -1,6 +1,6 @@
 // =====================================================
-// API TEST SCRIPT
-// Tests Binance P2P API endpoints and logs data structures
+// COMPREHENSIVE BINANCE P2P API TEST SUITE
+// Tests ALL endpoints without destructive operations
 // =====================================================
 
 import 'dotenv/config';
@@ -8,26 +8,37 @@ import crypto from 'crypto';
 
 const API_KEY = process.env.BINANCE_API_KEY!;
 const API_SECRET = process.env.BINANCE_API_SECRET!;
+const ADV_NO = process.env.BINANCE_ADV_NO || '';
 const BASE_URL = 'https://api.binance.com';
 
-// Generate HMAC signature
+// Test results tracking
+const results: { endpoint: string; method: string; status: string; data?: any; error?: string }[] = [];
+
 function sign(queryString: string): string {
   return crypto.createHmac('sha256', API_SECRET).update(queryString).digest('hex');
 }
 
-// Make authenticated request
-async function request(endpoint: string, params: Record<string, any> = {}, method: string = 'POST'): Promise<any> {
+async function testEndpoint(
+  name: string,
+  endpoint: string,
+  params: Record<string, any> = {},
+  method: string = 'GET'
+): Promise<any> {
   const timestamp = Date.now();
   const allParams = { ...params, timestamp };
   const queryString = Object.entries(allParams)
-    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .filter(([_, v]) => v !== undefined && v !== null && (v as any) !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
     .join('&');
   const signature = sign(queryString);
-
   const url = `${BASE_URL}${endpoint}?${queryString}&signature=${signature}`;
 
-  console.log(`\n📡 ${method} ${endpoint}`);
-  console.log(`   Params:`, JSON.stringify(params, null, 2));
+  console.log(`\n${'─'.repeat(70)}`);
+  console.log(`📡 [${method}] ${name}`);
+  console.log(`   Endpoint: ${endpoint}`);
+  if (Object.keys(params).length > 0) {
+    console.log(`   Params: ${JSON.stringify(params)}`);
+  }
 
   try {
     const response = await fetch(url, {
@@ -38,169 +49,522 @@ async function request(endpoint: string, params: Record<string, any> = {}, metho
       },
     });
 
-    const data = await response.json();
+    const text = await response.text();
+    let data: any = null;
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
 
     if (!response.ok) {
-      console.log(`   ❌ Error ${response.status}:`, JSON.stringify(data, null, 2));
+      console.log(`   ❌ Error ${response.status}: ${JSON.stringify(data)}`);
+      results.push({ endpoint, method, status: 'ERROR', error: JSON.stringify(data) });
       return null;
     }
 
-    console.log(`   ✅ Success`);
+    console.log(`   ✅ Success (${response.status})`);
+    results.push({ endpoint, method, status: 'OK', data });
     return data;
   } catch (error) {
-    console.log(`   ❌ Network error:`, (error as Error).message);
+    const err = error as Error;
+    console.log(`   ❌ Network Error: ${err.message}`);
+    results.push({ endpoint, method, status: 'NETWORK_ERROR', error: err.message });
     return null;
   }
 }
 
-// ==================== TESTS ====================
+function logStructure(name: string, data: any) {
+  if (!data) return;
 
-async function testGetOrders() {
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST: Get P2P Orders (c2cOrderMatch/listUserOrderHistory)');
-  console.log('='.repeat(60));
+  console.log(`\n   📦 ${name} Structure:`);
 
-  const data = await request('/sapi/v1/c2c/orderMatch/listUserOrderHistory', {
-    tradeType: 'SELL',
-    rows: 5,
-  }, 'GET');
-
-  if (data && data.data && data.data.length > 0) {
-    console.log('\n📦 First order structure:');
-    console.log(JSON.stringify(data.data[0], null, 2));
-
-    console.log('\n📋 All order fields:');
-    const order = data.data[0];
-    for (const [key, value] of Object.entries(order)) {
-      console.log(`   ${key}: ${typeof value} = ${JSON.stringify(value)}`);
+  if (Array.isArray(data)) {
+    console.log(`      Type: Array (${data.length} items)`);
+    if (data.length > 0) {
+      console.log(`      First item fields:`);
+      for (const [key, value] of Object.entries(data[0])) {
+        const type = Array.isArray(value) ? `array[${(value as any[]).length}]` : typeof value;
+        const preview = JSON.stringify(value)?.substring(0, 80);
+        console.log(`         ${key}: (${type}) ${preview}${preview && preview.length >= 80 ? '...' : ''}`);
+      }
     }
-  } else {
-    console.log('   No orders found or error in response');
-    if (data) {
-      console.log('   Response:', JSON.stringify(data, null, 2));
+  } else if (typeof data === 'object') {
+    for (const [key, value] of Object.entries(data)) {
+      const type = Array.isArray(value) ? `array[${(value as any[]).length}]` : typeof value;
+      const preview = JSON.stringify(value)?.substring(0, 80);
+      console.log(`      ${key}: (${type}) ${preview}${preview && preview.length >= 80 ? '...' : ''}`);
+    }
+  }
+}
+
+// =====================================================
+// TEST CATEGORIES
+// =====================================================
+
+async function testAccountEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('🔐 ACCOUNT & USER ENDPOINTS');
+  console.log('═'.repeat(70));
+
+  // Test account info
+  const userInfo = await testEndpoint(
+    'Get User Info',
+    '/sapi/v1/c2c/user/userInfo',
+    {},
+    'GET'
+  );
+  logStructure('User Info', userInfo);
+
+  // Test merchant status
+  const merchantStatus = await testEndpoint(
+    'Get Merchant Status',
+    '/sapi/v1/c2c/user/merchantStatus',
+    {},
+    'GET'
+  );
+  logStructure('Merchant Status', merchantStatus);
+
+  // Test user configuration
+  const userConfig = await testEndpoint(
+    'Get User Configuration',
+    '/sapi/v1/c2c/user/userConfiguration',
+    {},
+    'GET'
+  );
+  logStructure('User Config', userConfig);
+}
+
+async function testOrderEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('📋 ORDER ENDPOINTS');
+  console.log('═'.repeat(70));
+
+  // List orders - different methods
+  const orderHistory = await testEndpoint(
+    'List User Order History (GET)',
+    '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
+    { tradeType: 'SELL', rows: 10 },
+    'GET'
+  );
+
+  if (orderHistory?.data) {
+    logStructure('Order History', orderHistory.data);
+
+    // Save first order for detail tests
+    if (orderHistory.data.length > 0) {
+      const firstOrder = orderHistory.data[0];
+      console.log('\n   📝 First Order Full Data:');
+      console.log(JSON.stringify(firstOrder, null, 2));
+
+      // Test order detail
+      const orderNo = firstOrder.orderNumber || firstOrder.orderNo || firstOrder.advOrderNumber;
+      if (orderNo) {
+        const orderDetail = await testEndpoint(
+          'Get Order Detail (GET)',
+          '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+          { orderNo },
+          'GET'
+        );
+        if (orderDetail) {
+          console.log('\n   📝 Order Detail Full Data:');
+          console.log(JSON.stringify(orderDetail, null, 2));
+        }
+
+        // Try POST method too
+        await testEndpoint(
+          'Get Order Detail (POST)',
+          '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+          { orderNo },
+          'POST'
+        );
+      }
     }
   }
 
-  return data;
+  // Try POST method for order list
+  await testEndpoint(
+    'List User Order History (POST)',
+    '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
+    { tradeType: 'SELL', rows: 5 },
+    'POST'
+  );
+
+  // List orders endpoint
+  await testEndpoint(
+    'List Orders (GET)',
+    '/sapi/v1/c2c/orderMatch/listOrders',
+    { page: 1, rows: 10 },
+    'GET'
+  );
+
+  await testEndpoint(
+    'List Orders (POST)',
+    '/sapi/v1/c2c/orderMatch/listOrders',
+    { page: 1, rows: 10 },
+    'POST'
+  );
+
+  // Pending orders
+  await testEndpoint(
+    'Get Pending Orders',
+    '/sapi/v1/c2c/orderMatch/listPendingOrders',
+    { rows: 10 },
+    'GET'
+  );
+
+  // Order count
+  await testEndpoint(
+    'Get Order Count',
+    '/sapi/v1/c2c/orderMatch/getOrderCount',
+    {},
+    'GET'
+  );
 }
 
-async function testGetAds() {
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST: Get My Ads (c2c/ads/getDetailV2)');
-  console.log('='.repeat(60));
+async function testAdEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('📢 ADVERTISEMENT ENDPOINTS');
+  console.log('═'.repeat(70));
 
-  // First try to list ads
-  const listData = await request('/sapi/v1/c2c/ads/getDetailV2', {
-    advNos: process.env.BINANCE_ADV_NO || '',
-  }, 'GET');
+  // List my ads
+  const myAds = await testEndpoint(
+    'List My Ads (GET)',
+    '/sapi/v1/c2c/ads/list',
+    { page: 1, rows: 10 },
+    'GET'
+  );
+  logStructure('My Ads', myAds?.data);
 
-  if (listData) {
-    console.log('\n📦 Ad structure:');
-    console.log(JSON.stringify(listData, null, 2));
+  await testEndpoint(
+    'List My Ads (POST)',
+    '/sapi/v1/c2c/ads/list',
+    { page: 1, rows: 10 },
+    'POST'
+  );
+
+  // List with pagination
+  await testEndpoint(
+    'List Ads With Pagination (GET)',
+    '/sapi/v1/c2c/ads/listWithPagination',
+    { page: 1, rows: 10 },
+    'GET'
+  );
+
+  await testEndpoint(
+    'List Ads With Pagination (POST)',
+    '/sapi/v1/c2c/ads/listWithPagination',
+    { page: 1, rows: 10 },
+    'POST'
+  );
+
+  // Get ad detail if we have ADV_NO
+  if (ADV_NO) {
+    const adDetail = await testEndpoint(
+      'Get Ad Detail V2 (GET)',
+      '/sapi/v1/c2c/ads/getDetailV2',
+      { advNos: ADV_NO },
+      'GET'
+    );
+    if (adDetail) {
+      console.log('\n   📝 Ad Detail Full Data:');
+      console.log(JSON.stringify(adDetail, null, 2));
+    }
+
+    await testEndpoint(
+      'Get Ad Detail V2 (POST)',
+      '/sapi/v1/c2c/ads/getDetailV2',
+      { advNos: ADV_NO },
+      'POST'
+    );
+
+    await testEndpoint(
+      'Get Ad Detail (GET)',
+      '/sapi/v1/c2c/ads/getDetail',
+      { advNo: ADV_NO },
+      'GET'
+    );
   }
 
-  return listData;
+  // Search competitor ads
+  await testEndpoint(
+    'Search Ads (GET)',
+    '/sapi/v1/c2c/ads/search',
+    { asset: 'USDT', fiat: 'MXN', tradeType: 'SELL', page: 1, rows: 5 },
+    'GET'
+  );
+
+  const searchAdsPost = await testEndpoint(
+    'Search Ads (POST)',
+    '/sapi/v1/c2c/ads/search',
+    { asset: 'USDT', fiat: 'MXN', tradeType: 'SELL', page: 1, rows: 5 },
+    'POST'
+  );
+  logStructure('Search Ads', searchAdsPost?.data);
+
+  // Get reference price
+  await testEndpoint(
+    'Get Reference Price (GET)',
+    '/sapi/v1/c2c/ads/getReferencePrice',
+    { asset: 'USDT', fiat: 'MXN', tradeType: 'SELL' },
+    'GET'
+  );
+
+  const refPrice = await testEndpoint(
+    'Get Reference Price (POST)',
+    '/sapi/v1/c2c/ads/getReferencePrice',
+    { asset: 'USDT', fiat: 'MXN', tradeType: 'SELL' },
+    'POST'
+  );
+  logStructure('Reference Price', refPrice);
+
+  // Ad configuration
+  await testEndpoint(
+    'Get Ad Configuration',
+    '/sapi/v1/c2c/ads/getAdConfiguration',
+    {},
+    'GET'
+  );
+
+  // Payment methods
+  await testEndpoint(
+    'Get Payment Methods',
+    '/sapi/v1/c2c/ads/getPaymentMethods',
+    {},
+    'GET'
+  );
 }
 
-async function testGetOrderDetail() {
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST: Get Order Detail');
-  console.log('='.repeat(60));
+async function testChatEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('💬 CHAT ENDPOINTS');
+  console.log('═'.repeat(70));
 
-  // First get an order number
-  const orders = await request('/sapi/v1/c2c/orderMatch/listUserOrderHistory', {
-    tradeType: 'SELL',
-    rows: 1,
-  }, 'GET');
+  // Get chat credential
+  const chatCred = await testEndpoint(
+    'Get Chat Credential (GET)',
+    '/sapi/v1/c2c/chat/retrieveChatCredential',
+    {},
+    'GET'
+  );
+  if (chatCred) {
+    console.log('\n   📝 Chat Credential Full Data:');
+    console.log(JSON.stringify(chatCred, null, 2));
+  }
 
-  if (orders && orders.data && orders.data.length > 0) {
+  await testEndpoint(
+    'Get Chat Credential (POST)',
+    '/sapi/v1/c2c/chat/retrieveChatCredential',
+    {},
+    'POST'
+  );
+
+  // Get order number for chat test
+  const orders = await testEndpoint(
+    'Get Order for Chat Test',
+    '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
+    { tradeType: 'SELL', rows: 1 },
+    'GET'
+  );
+
+  if (orders?.data?.[0]) {
     const orderNo = orders.data[0].orderNumber || orders.data[0].orderNo;
-    console.log(`\n   Using order: ${orderNo}`);
+    if (orderNo) {
+      // Get chat messages
+      const messages = await testEndpoint(
+        'Get Chat Messages (GET)',
+        '/sapi/v1/c2c/chat/retrieveChatMessagesWithPagination',
+        { orderNo, page: 1, rows: 50 },
+        'GET'
+      );
+      logStructure('Chat Messages', messages?.data);
 
-    const detail = await request('/sapi/v1/c2c/orderMatch/getUserOrderDetail', {
-      orderNo,
-    }, 'GET');
-
-    if (detail) {
-      console.log('\n📦 Order detail structure:');
-      console.log(JSON.stringify(detail, null, 2));
+      await testEndpoint(
+        'Get Chat Messages (POST)',
+        '/sapi/v1/c2c/chat/retrieveChatMessagesWithPagination',
+        { orderNo, page: 1, rows: 50 },
+        'POST'
+      );
     }
-
-    return detail;
   }
-
-  return null;
 }
 
-async function testMarketPrice() {
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST: Get Market Price');
-  console.log('='.repeat(60));
+async function testPriceEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('💰 PRICE & MARKET ENDPOINTS');
+  console.log('═'.repeat(70));
 
-  // Try public endpoint for reference price
+  // Spot price (public)
   try {
-    const response = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=USDTMXN');
-    const data = await response.json();
-    console.log('\n📦 Spot price (USDTMXN):');
-    console.log(JSON.stringify(data, null, 2));
+    const spotResponse = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=USDTMXN');
+    const spotData = await spotResponse.json() as { price?: string; symbol?: string };
+    console.log(`\n${'─'.repeat(70)}`);
+    console.log('📡 [PUBLIC] Spot Price USDT/MXN');
+    console.log(`   ✅ Price: ${spotData.price || 'N/A'}`);
+    results.push({ endpoint: '/api/v3/ticker/price', method: 'GET', status: 'OK', data: spotData });
   } catch (e) {
-    console.log('   Spot price not available for this pair');
+    console.log('   ❌ Failed to get spot price');
   }
 
-  // Try P2P market data
-  const p2pData = await request('/sapi/v1/c2c/ads/search', {
-    asset: 'USDT',
-    fiat: 'MXN',
-    tradeType: 'SELL',
-    rows: 5,
-  }, 'GET');
+  // C2C index price
+  await testEndpoint(
+    'Get C2C Index Price (GET)',
+    '/sapi/v1/c2c/market/getIndexPrice',
+    { asset: 'USDT', fiat: 'MXN' },
+    'GET'
+  );
 
-  if (p2pData) {
-    console.log('\n📦 P2P market search result:');
-    console.log(JSON.stringify(p2pData, null, 2));
-  }
+  await testEndpoint(
+    'Get C2C Index Price (POST)',
+    '/sapi/v1/c2c/market/getIndexPrice',
+    { asset: 'USDT', fiat: 'MXN' },
+    'POST'
+  );
 
-  return p2pData;
+  // Market depth
+  await testEndpoint(
+    'Get Market Depth',
+    '/sapi/v1/c2c/market/getDepth',
+    { asset: 'USDT', fiat: 'MXN' },
+    'GET'
+  );
 }
 
-async function testAccountInfo() {
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST: Get Account Info');
-  console.log('='.repeat(60));
+async function testStatisticsEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('📊 STATISTICS ENDPOINTS');
+  console.log('═'.repeat(70));
 
-  const data = await request('/sapi/v1/c2c/user/userInfo', {}, 'GET');
+  // User stats
+  await testEndpoint(
+    'Get User Stats (GET)',
+    '/sapi/v1/c2c/orderMatch/getUserStats',
+    {},
+    'GET'
+  );
 
-  if (data) {
-    console.log('\n📦 User info:');
-    console.log(JSON.stringify(data, null, 2));
-  }
+  // Trade history summary
+  await testEndpoint(
+    'Get Trade History Summary',
+    '/sapi/v1/c2c/orderMatch/tradeHistorySummary',
+    {},
+    'GET'
+  );
 
-  return data;
+  // Daily stats
+  await testEndpoint(
+    'Get Daily Statistics',
+    '/sapi/v1/c2c/orderMatch/dailyStats',
+    {},
+    'GET'
+  );
 }
 
-// ==================== MAIN ====================
+async function testOtherEndpoints() {
+  console.log('\n' + '═'.repeat(70));
+  console.log('🔧 OTHER ENDPOINTS');
+  console.log('═'.repeat(70));
+
+  // Supported assets and fiats
+  await testEndpoint(
+    'Get Supported Coins',
+    '/sapi/v1/c2c/ads/getSupportedCoins',
+    {},
+    'GET'
+  );
+
+  await testEndpoint(
+    'Get Supported Fiats',
+    '/sapi/v1/c2c/ads/getSupportedFiats',
+    {},
+    'GET'
+  );
+
+  await testEndpoint(
+    'Get Supported Trade Sides',
+    '/sapi/v1/c2c/ads/getSupportedTradeSides',
+    {},
+    'GET'
+  );
+
+  // Appeal endpoints (just info, no actions)
+  await testEndpoint(
+    'Get Appeal Reasons',
+    '/sapi/v1/c2c/appeal/getAppealReasons',
+    {},
+    'GET'
+  );
+
+  // Notification settings
+  await testEndpoint(
+    'Get Notification Settings',
+    '/sapi/v1/c2c/user/getNotificationSettings',
+    {},
+    'GET'
+  );
+
+  // Auto-reply settings
+  await testEndpoint(
+    'Get Auto Reply Settings',
+    '/sapi/v1/c2c/chat/getAutoReplySettings',
+    {},
+    'GET'
+  );
+}
+
+// =====================================================
+// MAIN
+// =====================================================
 
 async function main() {
-  console.log('🚀 Binance P2P API Test Script');
-  console.log('================================');
+  console.log('═'.repeat(70));
+  console.log('🚀 BINANCE P2P API COMPREHENSIVE TEST SUITE');
+  console.log('═'.repeat(70));
   console.log(`API Key: ${API_KEY?.substring(0, 10)}...`);
-  console.log(`ADV NO: ${process.env.BINANCE_ADV_NO || 'Not set'}`);
+  console.log(`ADV NO: ${ADV_NO || 'Not set'}`);
+  console.log(`Time: ${new Date().toISOString()}`);
+  console.log(`⚠️  NO DESTRUCTIVE OPERATIONS WILL BE PERFORMED`);
 
   if (!API_KEY || !API_SECRET) {
     console.error('❌ Missing API credentials!');
     process.exit(1);
   }
 
-  // Run all tests
-  await testGetOrders();
-  await testGetOrderDetail();
-  await testGetAds();
-  await testMarketPrice();
-  await testAccountInfo();
+  // Run all test categories
+  await testAccountEndpoints();
+  await testOrderEndpoints();
+  await testAdEndpoints();
+  await testChatEndpoints();
+  await testPriceEndpoints();
+  await testStatisticsEndpoints();
+  await testOtherEndpoints();
 
-  console.log('\n' + '='.repeat(60));
-  console.log('✅ All tests completed!');
-  console.log('='.repeat(60));
+  // Summary
+  console.log('\n' + '═'.repeat(70));
+  console.log('📊 TEST SUMMARY');
+  console.log('═'.repeat(70));
+
+  const successful = results.filter(r => r.status === 'OK');
+  const failed = results.filter(r => r.status !== 'OK');
+
+  console.log(`\n✅ Successful: ${successful.length}`);
+  console.log(`❌ Failed: ${failed.length}`);
+  console.log(`📝 Total: ${results.length}`);
+
+  console.log('\n📋 Working Endpoints:');
+  for (const r of successful) {
+    console.log(`   ✅ [${r.method}] ${r.endpoint}`);
+  }
+
+  console.log('\n📋 Failed Endpoints:');
+  for (const r of failed) {
+    console.log(`   ❌ [${r.method}] ${r.endpoint} - ${r.error?.substring(0, 50)}`);
+  }
+
+  console.log('\n' + '═'.repeat(70));
+  console.log('✅ ALL TESTS COMPLETED');
+  console.log('═'.repeat(70));
 }
 
 main().catch(console.error);
