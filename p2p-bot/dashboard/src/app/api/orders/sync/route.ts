@@ -113,9 +113,25 @@ export async function POST(request: NextRequest) {
           }
           synced++;
         } else {
-          // Order not found in Binance - might be very old or deleted
-          // Mark as completed if it's been stuck
-          errors++;
+          // Order not found in Binance or no status returned
+          // This means it was completed/cancelled and removed from Binance's active list
+          // Mark as COMPLETED in our DB
+          console.log(`Order ${order.orderNumber} not found in Binance, marking as COMPLETED`);
+
+          await prisma.order.update({
+            where: { id: order.id },
+            data: {
+              status: 'COMPLETED',
+              releasedAt: new Date(),
+            },
+          });
+
+          results.push({
+            orderNumber: order.orderNumber,
+            oldStatus: order.status,
+            newStatus: 'COMPLETED',
+          });
+          updated++;
         }
 
         // Small delay to avoid rate limits

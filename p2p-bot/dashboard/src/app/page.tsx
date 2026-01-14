@@ -5,6 +5,7 @@ import { StatsCards } from '@/components/StatsCards';
 import { OrdersTable } from '@/components/OrdersTable';
 import { PriceChart } from '@/components/PriceChart';
 import { AlertsList } from '@/components/AlertsList';
+import { AdInfo } from '@/components/AdInfo';
 
 async function fetchDashboardData() {
   const [stats, orders, alerts] = await Promise.all([
@@ -72,13 +73,30 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Price Chart */}
-      <div className="card">
-        <div className="card-header">
-          <h2 className="text-lg font-semibold">Price History</h2>
+      {/* Bottom Grid: Ad Info and Price Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Ad Info - 1 column */}
+        <div className="lg:col-span-1">
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-lg font-semibold">Mi Anuncio</h2>
+            </div>
+            <div className="card-body">
+              <AdInfo />
+            </div>
+          </div>
         </div>
-        <div className="card-body">
-          <PriceChart />
+
+        {/* Price Chart - 2 columns */}
+        <div className="lg:col-span-2">
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-lg font-semibold">Price History</h2>
+            </div>
+            <div className="card-body">
+              <PriceChart />
+            </div>
+          </div>
         </div>
       </div>
     </div>
