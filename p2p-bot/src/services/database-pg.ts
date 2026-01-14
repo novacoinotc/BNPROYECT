@@ -74,7 +74,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
     // Try to update first
     const updateResult = await db.query(
       `UPDATE "Order" SET
-        status = $1,
+        status = $1::"OrderStatus",
         "paidAt" = CASE WHEN $2 = 'PAID' AND "paidAt" IS NULL THEN NOW() ELSE "paidAt" END,
         "releasedAt" = CASE WHEN $2 = 'COMPLETED' AND "releasedAt" IS NULL THEN NOW() ELSE "releasedAt" END,
         "cancelledAt" = CASE WHEN $2 IN ('CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT') AND "cancelledAt" IS NULL THEN NOW() ELSE "cancelledAt" END,
@@ -93,7 +93,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
           "sellerUserNo", "sellerNickName",
           "binanceCreateTime", "confirmPayEndTime",
           "createdAt", "updatedAt"
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())`,
+        ) VALUES ($1, $2, $3, $4::"TradeType", $5, $6, $7, $8, $9, $10, $11::"OrderStatus", $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())`,
         [
           generateId(),
           order.orderNumber,
@@ -122,11 +122,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
     const err = error as Error;
     // Ignore duplicate key errors
     if (!err.message.includes('duplicate key')) {
-      logger.error({
-        errorMessage: err.message,
-        errorName: err.name,
-        orderNumber: order.orderNumber,
-      }, 'Failed to save order');
+      logger.error(`Failed to save order ${order.orderNumber}: ${err.message}`);
       throw error;
     }
   }
