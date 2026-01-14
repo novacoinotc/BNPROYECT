@@ -3,9 +3,9 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// Binance API configuration
+// Binance API configuration - support both env var names
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
-const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY;
+const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY || process.env.BINANCE_API_SECRET;
 const BINANCE_BASE_URL = 'https://api.binance.com';
 
 // Sign request for Binance API
@@ -20,8 +20,13 @@ async function signRequest(params: Record<string, string>): Promise<string> {
 }
 
 // Get order detail from Binance
-async function getOrderFromBinance(orderNumber: string): Promise<any> {
+// Returns: { success: true, data: orderData } or { success: false, error: string }
+async function getOrderFromBinance(orderNumber: string): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
+      return { success: false, error: 'Missing API credentials' };
+    }
+
     const timestamp = Date.now().toString();
     const params = { orderNumber, timestamp };
     const signedQuery = await signRequest(params);
@@ -38,14 +43,24 @@ async function getOrderFromBinance(orderNumber: string): Promise<any> {
     );
 
     if (!response.ok) {
-      return null;
+      const errorText = await response.text();
+      console.error(`Binance API error for ${orderNumber}: ${response.status} - ${errorText}`);
+      return { success: false, error: `HTTP ${response.status}` };
     }
 
     const data = await response.json();
-    return data.data || data;
+
+    // Check if Binance returned an error
+    if (data.code && data.code !== 0) {
+      console.log(`Binance returned code ${data.code} for order ${orderNumber}: ${data.msg}`);
+      // Code -100001 or similar usually means order not found
+      return { success: true, data: null }; // Order not found is a valid response
+    }
+
+    return { success: true, data: data.data || data };
   } catch (error) {
     console.error(`Error fetching order ${orderNumber}:`, error);
-    return null;
+    return { success: false, error: 'Network error' };
   }
 }
 
@@ -64,6 +79,14 @@ function mapBinanceStatus(binanceStatus: string): string {
 
 export async function POST(request: NextRequest) {
   try {
+    // Check credentials first
+    if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
+      return NextResponse.json({
+        success: false,
+        error: 'Missing Binance API credentials. Add BINANCE_API_KEY and BINANCE_SECRET_KEY (or BINANCE_API_SECRET) to environment variables.',
+      }, { status: 500 });
+    }
+
     // Get all active orders from DB
     const activeOrders = await prisma.order.findMany({
       where: {
@@ -75,6 +98,7 @@ export async function POST(request: NextRequest) {
         id: true,
         orderNumber: true,
         status: true,
+        binanceCreateTime: true,
       },
     });
 
@@ -83,14 +107,25 @@ export async function POST(request: NextRequest) {
     let synced = 0;
     let updated = 0;
     let errors = 0;
+    let skipped = 0;
     const results: Array<{ orderNumber: string; oldStatus: string; newStatus: string }> = [];
 
     // Check each order against Binance (in batches to avoid rate limits)
     for (const order of activeOrders) {
       try {
-        const binanceOrder = await getOrderFromBinance(order.orderNumber);
+        const result = await getOrderFromBinance(order.orderNumber);
+
+        if (!result.success) {
+          // API call failed (not order not found, but actual error)
+          console.error(`API error for ${order.orderNumber}: ${result.error}`);
+          errors++;
+          continue; // Don't mark as completed on API errors
+        }
+
+        const binanceOrder = result.data;
 
         if (binanceOrder && binanceOrder.orderStatus) {
+          // Got order data from Binance
           const newStatus = mapBinanceStatus(binanceOrder.orderStatus);
 
           if (newStatus !== order.status) {
@@ -113,29 +148,36 @@ export async function POST(request: NextRequest) {
           }
           synced++;
         } else {
-          // Order not found in Binance or no status returned
-          // This means it was completed/cancelled and removed from Binance's active list
-          // Mark as COMPLETED in our DB
-          console.log(`Order ${order.orderNumber} not found in Binance, marking as COMPLETED`);
+          // Order not found in Binance (API call succeeded but no data)
+          // Only mark as COMPLETED if order is older than 24 hours
+          const orderAge = Date.now() - new Date(order.binanceCreateTime || 0).getTime();
+          const hoursOld = orderAge / (1000 * 60 * 60);
 
-          await prisma.order.update({
-            where: { id: order.id },
-            data: {
-              status: 'COMPLETED',
-              releasedAt: new Date(),
-            },
-          });
+          if (hoursOld > 24) {
+            console.log(`Order ${order.orderNumber} not found in Binance and is ${hoursOld.toFixed(1)}h old, marking as COMPLETED`);
 
-          results.push({
-            orderNumber: order.orderNumber,
-            oldStatus: order.status,
-            newStatus: 'COMPLETED',
-          });
-          updated++;
+            await prisma.order.update({
+              where: { id: order.id },
+              data: {
+                status: 'COMPLETED',
+                releasedAt: new Date(),
+              },
+            });
+
+            results.push({
+              orderNumber: order.orderNumber,
+              oldStatus: order.status,
+              newStatus: 'COMPLETED',
+            });
+            updated++;
+          } else {
+            console.log(`Order ${order.orderNumber} not found but only ${hoursOld.toFixed(1)}h old, skipping`);
+            skipped++;
+          }
         }
 
         // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 200));
       } catch (orderError) {
         console.error(`Error syncing order ${order.orderNumber}:`, orderError);
         errors++;
@@ -144,10 +186,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Synced ${synced} orders, updated ${updated}, errors ${errors}`,
+      message: `Synced ${synced} orders, updated ${updated}, skipped ${skipped}, errors ${errors}`,
       total: activeOrders.length,
       synced,
       updated,
+      skipped,
       errors,
       changes: results,
     });

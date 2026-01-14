@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Binance API configuration
+// Binance API configuration - support both env var names
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
-const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY;
+const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY || process.env.BINANCE_API_SECRET;
 const BINANCE_BASE_URL = 'https://api.binance.com';
 
 // Sign request for Binance API
@@ -17,8 +17,12 @@ async function signRequest(params: Record<string, string>): Promise<string> {
 }
 
 // Get my ads from Binance
-async function getMyAds(): Promise<any> {
+async function getMyAds(): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
+      return { success: false, error: 'Missing BINANCE_API_KEY or BINANCE_SECRET_KEY/BINANCE_API_SECRET' };
+    }
+
     const timestamp = Date.now().toString();
     const params = { timestamp, page: '1', rows: '20' };
     const signedQuery = await signRequest(params);
@@ -35,28 +39,36 @@ async function getMyAds(): Promise<any> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Error fetching ads:', errorText);
-      return null;
+      console.error('Error fetching ads:', response.status, errorText);
+      return { success: false, error: `HTTP ${response.status}: ${errorText}` };
     }
 
     const data = await response.json();
-    return data.data || data;
+
+    if (data.code && data.code !== 0) {
+      console.error('Binance API error:', data.code, data.msg);
+      return { success: false, error: `Binance error ${data.code}: ${data.msg}` };
+    }
+
+    return { success: true, data: data.data || data };
   } catch (error) {
     console.error('Error fetching ads:', error);
-    return null;
+    return { success: false, error: String(error) };
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const adsData = await getMyAds();
+    const result = await getMyAds();
 
-    if (!adsData) {
+    if (!result.success || !result.data) {
       return NextResponse.json(
-        { success: false, error: 'Failed to fetch ads from Binance' },
+        { success: false, error: result.error || 'Failed to fetch ads from Binance' },
         { status: 500 }
       );
     }
+
+    const adsData = result.data;
 
     // Extract sell ads (the ones we care about)
     const sellAds = adsData.sellList || [];
