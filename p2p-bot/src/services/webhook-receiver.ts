@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { webhookLogger as logger } from '../utils/logger.js';
 import { BankWebhookPayload } from '../types/binance.js';
+import * as db from './database-pg.js';
 
 export interface WebhookConfig {
   port: number;
@@ -133,17 +134,16 @@ export class WebhookReceiver extends EventEmitter {
    */
   private async handlePaymentWebhook(req: Request, res: Response): Promise<void> {
     try {
-      // Verify signature
-      const signature = req.headers['x-webhook-signature'] as string;
-      const timestamp = req.headers['x-webhook-timestamp'] as string;
+      // Verify authentication (multiple methods supported)
+      const isAuthenticated = this.verifyAuthentication(req);
 
-      if (!this.verifySignature((req as any).rawBody, signature, timestamp)) {
-        logger.warn({ signature }, 'Invalid webhook signature');
-        res.status(401).json({ error: 'Invalid signature' });
+      if (!isAuthenticated) {
+        logger.warn({ ip: this.getClientIP(req) }, 'Unauthorized webhook request');
+        res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
-      // Parse payload
+      // Parse payload (supports OPM format and generic format)
       const payload = this.parsePayload(req.body);
 
       if (!payload) {
@@ -158,7 +158,7 @@ export class WebhookReceiver extends EventEmitter {
         return;
       }
 
-      // Mark as received
+      // Mark as received in memory
       this.recentPayments.set(payload.transactionId, new Date());
 
       logger.info({
@@ -166,9 +166,18 @@ export class WebhookReceiver extends EventEmitter {
         amount: payload.amount,
         sender: payload.senderName,
         status: payload.status,
-      }, 'Payment webhook received');
+      }, '💰 Bank payment received via webhook');
 
-      // Only process completed payments
+      // ALWAYS save to database for later matching
+      try {
+        await db.savePayment(payload);
+        logger.info({ transactionId: payload.transactionId }, 'Payment saved to DB for matching');
+      } catch (dbError) {
+        logger.error({ error: dbError }, 'Failed to save payment to DB');
+        // Continue - don't fail the webhook
+      }
+
+      // Only emit event for completed payments
       if (payload.status === 'completed') {
         const event: WebhookEvent = {
           type: 'payment',
@@ -189,6 +198,37 @@ export class WebhookReceiver extends EventEmitter {
       logger.error({ error }, 'Error processing payment webhook');
       res.status(500).json({ error: 'Processing error' });
     }
+  }
+
+  /**
+   * Verify authentication using multiple methods
+   */
+  private verifyAuthentication(req: Request): boolean {
+    // Method 1: Bearer token
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      if (token === this.config.webhookSecret) {
+        return true;
+      }
+    }
+
+    // Method 2: x-webhook-signature (legacy)
+    const signature = req.headers['x-webhook-signature'] as string;
+    const timestamp = req.headers['x-webhook-timestamp'] as string;
+    if (signature && timestamp) {
+      return this.verifySignature((req as any).rawBody, signature, timestamp);
+    }
+
+    // Method 3: IP whitelist only (if configured and no other auth)
+    if (this.config.allowedIPs && this.config.allowedIPs.length > 0) {
+      const clientIP = this.getClientIP(req);
+      if (this.config.allowedIPs.includes(clientIP)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -281,22 +321,48 @@ export class WebhookReceiver extends EventEmitter {
 
   /**
    * Parse and validate webhook payload
+   * Supports: OPM format, generic bank format, legacy formats
    */
   private parsePayload(body: any): BankWebhookPayload | null {
     try {
-      // Support multiple bank payload formats
-      const payload: BankWebhookPayload = {
-        transactionId: body.transactionId || body.transaction_id || body.id,
-        amount: parseFloat(body.amount || body.monto || '0'),
-        currency: body.currency || body.moneda || 'MXN',
-        senderName: body.senderName || body.sender_name || body.ordenante || '',
-        senderAccount: body.senderAccount || body.sender_account || body.cuenta_origen || '',
-        receiverAccount: body.receiverAccount || body.receiver_account || body.cuenta_destino || '',
-        concept: body.concept || body.concepto || body.description || '',
-        timestamp: body.timestamp || body.fecha || new Date().toISOString(),
-        bankReference: body.bankReference || body.bank_reference || body.referencia || '',
-        status: this.normalizeStatus(body.status || body.estado),
-      };
+      // Detect OPM format (has trackingKey and payerName)
+      const isOpmFormat = body.trackingKey && body.payerName;
+
+      let payload: BankWebhookPayload;
+
+      if (isOpmFormat) {
+        // OPM Format from core bancario
+        payload = {
+          transactionId: body.trackingKey,
+          amount: parseFloat(body.amount || '0'),
+          currency: 'MXN',
+          senderName: body.payerName || '',
+          senderAccount: body.payerAccount || '',
+          receiverAccount: body.beneficiaryAccount || '',
+          concept: body.concept || '',
+          timestamp: body.receivedTimestamp
+            ? new Date(body.receivedTimestamp).toISOString()
+            : new Date().toISOString(),
+          bankReference: body.numericalReference?.toString() || '',
+          status: 'completed', // OPM webhooks are always completed deposits
+        };
+
+        logger.debug({ format: 'OPM', trackingKey: body.trackingKey }, 'Parsed OPM format payload');
+      } else {
+        // Generic/legacy format
+        payload = {
+          transactionId: body.transactionId || body.transaction_id || body.id,
+          amount: parseFloat(body.amount || body.monto || '0'),
+          currency: body.currency || body.moneda || 'MXN',
+          senderName: body.senderName || body.sender_name || body.ordenante || '',
+          senderAccount: body.senderAccount || body.sender_account || body.cuenta_origen || '',
+          receiverAccount: body.receiverAccount || body.receiver_account || body.cuenta_destino || '',
+          concept: body.concept || body.concepto || body.description || '',
+          timestamp: body.timestamp || body.fecha || new Date().toISOString(),
+          bankReference: body.bankReference || body.bank_reference || body.referencia || '',
+          status: this.normalizeStatus(body.status || body.estado),
+        };
+      }
 
       // Validate required fields
       if (!payload.transactionId || payload.amount <= 0) {
