@@ -80,7 +80,14 @@ export async function saveOrder(order: OrderData): Promise<void> {
 
     logger.debug({ orderNumber: order.orderNumber }, 'Order saved to database');
   } catch (error) {
-    logger.error({ error, orderNumber: order.orderNumber }, 'Failed to save order');
+    const err = error as Error;
+    logger.error({
+      errorMessage: err.message,
+      errorName: err.name,
+      errorStack: err.stack,
+      orderNumber: order.orderNumber
+    }, 'Failed to save order');
+    throw error; // Re-throw so caller knows it failed
   }
 }
 
@@ -499,6 +506,28 @@ export async function logAction(
       error,
     },
   });
+}
+
+// ==================== CONNECTION ====================
+
+/**
+ * Test database connection
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    const db = getPrismaClient();
+    // Try a simple query
+    await db.$queryRaw`SELECT 1`;
+    logger.info('Database connection successful');
+    return true;
+  } catch (error) {
+    const err = error as Error;
+    logger.error({
+      errorMessage: err.message,
+      errorName: err.name,
+    }, 'Database connection failed');
+    return false;
+  }
 }
 
 // ==================== CLEANUP ====================

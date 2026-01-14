@@ -12,6 +12,7 @@ import { getChatHandler } from './services/chat-handler.js';
 import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
+import { testConnection, disconnect } from './services/database.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -52,6 +53,13 @@ async function initialize(): Promise<void> {
   // Validate required configuration
   if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_API_SECRET) {
     throw new Error('BINANCE_API_KEY and BINANCE_API_SECRET are required');
+  }
+
+  // Test database connection first
+  logger.info('Testing database connection...');
+  const dbConnected = await testConnection();
+  if (!dbConnected) {
+    logger.error('Database connection failed - orders will not be saved');
   }
 
   // Initialize Binance client (validates connection)
@@ -237,6 +245,7 @@ async function shutdown(): Promise<void> {
   chatHandler.disconnect();
   await webhookReceiver.stop();
   await ocrService.terminate();
+  await disconnect();
 
   logger.info('Goodbye!');
   process.exit(0);
