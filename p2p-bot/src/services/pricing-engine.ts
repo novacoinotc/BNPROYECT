@@ -269,14 +269,30 @@ export class PricingEngine {
       interval: this.config.updateIntervalMs,
     }, 'Starting auto price updates');
 
-    // Initial update
-    this.updateAdPrice(advNo, asset, fiat, tradeType);
+    // Initial update with error handling
+    this.safeUpdateAdPrice(advNo, asset, fiat, tradeType);
 
     // Schedule periodic updates
     this.updateInterval = setInterval(
-      () => this.updateAdPrice(advNo, asset, fiat, tradeType),
+      () => this.safeUpdateAdPrice(advNo, asset, fiat, tradeType),
       this.config.updateIntervalMs
     );
+  }
+
+  /**
+   * Safe wrapper for updateAdPrice with error handling
+   */
+  private async safeUpdateAdPrice(
+    advNo: string,
+    asset: string,
+    fiat: string,
+    tradeType: TradeType
+  ): Promise<void> {
+    try {
+      await this.updateAdPrice(advNo, asset, fiat, tradeType);
+    } catch (error) {
+      logger.warn({ advNo, error }, 'Failed to update ad price - will retry next interval');
+    }
   }
 
   /**
