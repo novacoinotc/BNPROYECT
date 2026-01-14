@@ -88,17 +88,21 @@ export class OrderManager extends EventEmitter {
    */
   private async pollOrders(): Promise<void> {
     try {
-      // Get pending orders (waiting for payment)
-      const pendingOrders = await this.client.listOrders({
-        orderStatus: OrderStatus.PENDING,
+      // Get pending orders using the working endpoint
+      const pendingOrders = await this.client.listPendingOrders(20);
+
+      // Get recent order history
+      const recentOrders = await this.client.listOrders({
+        tradeType: TradeType.SELL,
+        rows: 20,
       });
 
-      // Get paid orders (waiting for release)
-      const paidOrders = await this.client.listOrders({
-        orderStatus: OrderStatus.PAID,
-      });
+      // Filter recent orders to only include active ones (TRADING or BUYER_PAYED)
+      const activeRecentOrders = recentOrders.filter(
+        o => o.orderStatus === 'TRADING' || o.orderStatus === 'BUYER_PAYED'
+      );
 
-      const allOrders = [...pendingOrders, ...paidOrders];
+      const allOrders = [...pendingOrders, ...activeRecentOrders];
 
       // Process each order
       for (const order of allOrders) {
@@ -110,7 +114,7 @@ export class OrderManager extends EventEmitter {
 
       logger.debug({
         pending: pendingOrders.length,
-        paid: paidOrders.length,
+        activeRecent: activeRecentOrders.length,
         active: this.activeOrders.size,
       }, 'Order poll complete');
     } catch (error) {
@@ -157,18 +161,13 @@ export class OrderManager extends EventEmitter {
       logger.error({ orderNumber: order.orderNumber, error: dbError }, 'Failed to save order to database');
     }
 
-    // Check if buyer meets requirements
-    if (order.tradeType === TradeType.SELL) {
-      const buyerMeetsRequirements = await this.validateBuyer(order.buyer.userNo);
-
-      if (!buyerMeetsRequirements) {
-        logger.warn({
-          orderNumber: order.orderNumber,
-          buyer: order.buyer.nickName,
-        }, 'Buyer does not meet requirements');
-        // Optionally cancel order
-        // await this.client.cancelOrder(order.orderNumber);
-      }
+    // Check if buyer meets requirements (for SELL orders, counterpart is the buyer)
+    if (order.tradeType === TradeType.SELL && order.counterPartNickName) {
+      // Note: API doesn't provide userNo for counterpart, skip validation for now
+      logger.info({
+        orderNumber: order.orderNumber,
+        counterPart: order.counterPartNickName,
+      }, 'SELL order - counterpart is buyer');
     }
 
     // Check max open orders
@@ -213,25 +212,25 @@ export class OrderManager extends EventEmitter {
       logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
     }
 
+    // Status is now a string like "TRADING", "BUYER_PAYED", etc.
     switch (newOrder.orderStatus) {
-      case OrderStatus.PAID:
+      case 'BUYER_PAYED':
         // Buyer marked as paid
         this.emit('order', { type: 'paid', order: newOrder } as OrderEvent);
         break;
 
-      case OrderStatus.COMPLETED:
+      case 'COMPLETED':
         // Order completed (crypto released)
         this.handleOrderCompleted(newOrder);
         break;
 
-      case OrderStatus.CANCELLED:
-      case OrderStatus.CANCELLED_SYSTEM:
-      case OrderStatus.CANCELLED_TIMEOUT:
+      case 'CANCELLED':
+      case 'CANCELLED_BY_SYSTEM':
         // Order cancelled
         this.handleOrderCancelled(newOrder);
         break;
 
-      case OrderStatus.APPEALING:
+      case 'APPEALING':
         logger.warn({
           orderNumber: newOrder.orderNumber,
         }, 'Order in appeal');
@@ -276,9 +275,9 @@ export class OrderManager extends EventEmitter {
     const now = Date.now();
 
     for (const [orderNumber, order] of this.activeOrders) {
-      // Check payment timeout
+      // Check payment timeout (TRADING = waiting for payment)
       if (
-        order.orderStatus === OrderStatus.PENDING &&
+        order.orderStatus === 'TRADING' &&
         order.confirmPayEndTime &&
         now > order.confirmPayEndTime
       ) {
@@ -340,7 +339,8 @@ export class OrderManager extends EventEmitter {
     for (const [orderNumber, match] of this.pendingMatches) {
       const order = this.activeOrders.get(orderNumber);
 
-      if (!order || order.orderStatus !== OrderStatus.PAID) {
+      // BUYER_PAYED = buyer marked as paid, waiting for release
+      if (!order || order.orderStatus !== 'BUYER_PAYED') {
         continue;
       }
 
@@ -413,12 +413,14 @@ export class OrderManager extends EventEmitter {
     }
 
     // Optional: Verify sender name
-    if (ocrSenderName && order.buyer.realName) {
-      const nameMatch = this.fuzzyNameMatch(ocrSenderName, order.buyer.realName);
+    // Note: API returns counterPartNickName, not buyer.realName
+    const counterPartName = order.counterPartNickName || order.buyer?.realName;
+    if (ocrSenderName && counterPartName) {
+      const nameMatch = this.fuzzyNameMatch(ocrSenderName, counterPartName);
       if (!nameMatch) {
         logger.warn({
           orderNumber,
-          expected: order.buyer.realName,
+          expected: counterPartName,
           ocr: ocrSenderName,
         }, 'Sender name mismatch');
         // Don't fail on name mismatch, just log

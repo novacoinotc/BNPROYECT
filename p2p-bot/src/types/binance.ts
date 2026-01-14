@@ -10,6 +10,16 @@ export enum TradeType {
   SELL = 'SELL'
 }
 
+// Order status as returned by the API (string values)
+export type OrderStatusString =
+  | 'TRADING'           // Wait for payment
+  | 'BUYER_PAYED'       // Buyer marked as paid, wait for release
+  | 'APPEALING'         // In dispute/appeal
+  | 'COMPLETED'         // Order completed
+  | 'CANCELLED'         // Cancelled by user
+  | 'CANCELLED_BY_SYSTEM';  // Cancelled by system/timeout
+
+// Legacy numeric status (for database compatibility)
 export enum OrderStatus {
   PENDING = 1,           // Wait for payment
   PAID = 2,              // Wait for release (buyer marked as paid)
@@ -18,6 +28,19 @@ export enum OrderStatus {
   CANCELLED = 5,         // Cancelled by user
   CANCELLED_SYSTEM = 6,  // Cancelled by system
   CANCELLED_TIMEOUT = 7  // Cancelled by timeout
+}
+
+// Map string status to database status
+export function mapOrderStatus(status: OrderStatusString): string {
+  const statusMap: Record<OrderStatusString, string> = {
+    'TRADING': 'PENDING',
+    'BUYER_PAYED': 'PAID',
+    'APPEALING': 'APPEALING',
+    'COMPLETED': 'COMPLETED',
+    'CANCELLED': 'CANCELLED',
+    'CANCELLED_BY_SYSTEM': 'CANCELLED_SYSTEM',
+  };
+  return statusMap[status] || 'PENDING';
 }
 
 export enum PriceType {
@@ -170,25 +193,34 @@ export interface Advertiser {
   proMerchant?: boolean;
 }
 
+// Order data as returned by listUserOrderHistory API
 export interface OrderData {
   orderNumber: string;
-  orderStatus: OrderStatus;
+  orderStatus: OrderStatusString;  // String like "TRADING", "BUYER_PAYED", etc.
   tradeType: TradeType;
   asset: string;
-  fiatUnit: string;
+  fiat: string;              // API returns 'fiat', not 'fiatUnit'
+  fiatUnit?: string;         // Keep for compatibility
+  fiatSymbol: string;        // e.g., "Mex$"
   amount: string;
   totalPrice: string;
   unitPrice: string;
   commission: string;
-  commissionRate: string;
+  takerCommission?: string;
+  takerCommissionRate?: string;
+  takerAmount?: string;
   createTime: number;
-  payMethods: TradeMethod[];
-  buyer: UserInfo;
-  seller: UserInfo;
+  counterPartNickName: string;  // API returns this instead of buyer/seller objects
+  payMethodName: string;        // e.g., "BANK"
+  additionalKycVerify?: number;
+  advNo: string;
+  // Legacy fields (may be present in order detail endpoint)
+  payMethods?: TradeMethod[];
+  buyer?: UserInfo;
+  seller?: UserInfo;
   confirmPayEndTime?: number;
   notifyPayEndTime?: number;
-  chatEnabled: boolean;
-  advNo: string;
+  chatEnabled?: boolean;
 }
 
 export interface UserInfo {

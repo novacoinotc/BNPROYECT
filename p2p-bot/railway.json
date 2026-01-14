@@ -6,7 +6,7 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "node dist/test-api.js",
-    "restartPolicyType": "NEVER"
+    "startCommand": "npm start",
+    "restartPolicyType": "ON_FAILURE"
   }
 }
