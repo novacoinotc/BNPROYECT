@@ -216,6 +216,86 @@ export async function matchPaymentToOrder(
   logger.info({ transactionId, orderNumber }, 'Payment matched to order');
 }
 
+/**
+ * Find unmatched payments within amount tolerance (for bidirectional matching)
+ * Used when: order becomes BUYER_PAYED -> search for existing bank payments
+ */
+export async function findUnmatchedPaymentsByAmount(
+  expectedAmount: number,
+  tolerancePercent: number = 1,
+  maxAgeMinutes: number = 60
+): Promise<Array<{
+  id: string;
+  transactionId: string;
+  amount: number;
+  senderName: string;
+  senderAccount: string;
+  createdAt: Date;
+}>> {
+  const db = getPool();
+  const tolerance = expectedAmount * (tolerancePercent / 100);
+  const minAmount = expectedAmount - tolerance;
+  const maxAmount = expectedAmount + tolerance;
+  const minTime = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+
+  const result = await db.query(
+    `SELECT id, "transactionId", amount, "senderName", "senderAccount", "createdAt"
+     FROM "Payment"
+     WHERE status = 'PENDING'
+       AND amount BETWEEN $1 AND $2
+       AND "createdAt" >= $3
+     ORDER BY "createdAt" DESC
+     LIMIT 10`,
+    [minAmount, maxAmount, minTime]
+  );
+
+  return result.rows;
+}
+
+/**
+ * Find orders awaiting payment verification (BUYER_PAYED status)
+ * Used when: bank webhook arrives -> search for orders waiting for this payment
+ */
+export async function findOrdersAwaitingPayment(
+  amount: number,
+  tolerancePercent: number = 1
+): Promise<Array<{
+  orderNumber: string;
+  totalPrice: string;
+  buyerNickName: string;
+  createdAt: Date;
+}>> {
+  const db = getPool();
+  const tolerance = amount * (tolerancePercent / 100);
+  const minAmount = amount - tolerance;
+  const maxAmount = amount + tolerance;
+
+  const result = await db.query(
+    `SELECT "orderNumber", "totalPrice", "buyerNickName", "createdAt"
+     FROM "Order"
+     WHERE status = 'PAID'
+       AND "totalPrice"::numeric BETWEEN $1 AND $2
+       AND "releasedAt" IS NULL
+     ORDER BY "createdAt" DESC
+     LIMIT 10`,
+    [minAmount, maxAmount]
+  );
+
+  return result.rows;
+}
+
+/**
+ * Get payment by transaction ID
+ */
+export async function getPaymentByTransactionId(transactionId: string) {
+  const db = getPool();
+  const result = await db.query(
+    'SELECT * FROM "Payment" WHERE "transactionId" = $1',
+    [transactionId]
+  );
+  return result.rows[0] || null;
+}
+
 export async function markPaymentReleased(orderNumber: string): Promise<void> {
   const db = getPool();
 

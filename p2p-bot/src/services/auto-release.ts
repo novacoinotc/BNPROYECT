@@ -10,6 +10,7 @@ import { WebhookReceiver, WebhookEvent } from './webhook-receiver.js';
 import { OCRService } from './ocr-service.js';
 import { getBinanceClient } from './binance-client.js';
 import { logger } from '../utils/logger.js';
+import * as db from './database-pg.js';
 import {
   OrderData,
   OrderStatus,
@@ -162,16 +163,113 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Handle bank payment webhook
+   * Implements bidirectional matching: searches for orders awaiting this payment
    */
   private async handleBankPayment(event: WebhookEvent): Promise<void> {
-    const match = this.orderManager.matchBankPayment(event.payload);
+    const payment = event.payload;
+
+    logger.info({
+      transactionId: payment.transactionId,
+      amount: payment.amount,
+      sender: payment.senderName,
+    }, '💰 Processing bank payment webhook');
+
+    // First try in-memory match (for orders already being tracked)
+    const match = this.orderManager.matchBankPayment(payment);
 
     if (match) {
       const order = this.orderManager.getOrder(match.orderNumber);
       if (order) {
+        logger.info({
+          orderNumber: match.orderNumber,
+          transactionId: payment.transactionId,
+        }, '✅ Bank payment matched (in-memory)');
+
+        await db.matchPaymentToOrder(payment.transactionId, match.orderNumber, 'BANK_WEBHOOK');
         await this.handlePaymentMatch(order, match);
+        return;
       }
     }
+
+    // BIDIRECTIONAL MATCH: Search database for orders awaiting payment
+    try {
+      const awaitingOrders = await db.findOrdersAwaitingPayment(payment.amount, 1); // 1% tolerance
+
+      if (awaitingOrders.length > 0) {
+        logger.info({
+          transactionId: payment.transactionId,
+          foundOrders: awaitingOrders.length,
+          orderNumbers: awaitingOrders.map(o => o.orderNumber),
+        }, '🔍 Found orders awaiting this payment amount');
+
+        // Try to match with best candidate
+        for (const dbOrder of awaitingOrders) {
+          const nameMatch = this.compareNames(payment.senderName, dbOrder.buyerNickName);
+
+          logger.info({
+            orderNumber: dbOrder.orderNumber,
+            paymentSender: payment.senderName,
+            orderBuyer: dbOrder.buyerNickName,
+            nameMatch,
+          }, 'Comparing payment sender with order buyer');
+
+          if (nameMatch > 0.3 || awaitingOrders.length === 1) {
+            // Found a match!
+            logger.info({
+              orderNumber: dbOrder.orderNumber,
+              transactionId: payment.transactionId,
+            }, '✅ Bank payment matched to order (order was marked paid first)');
+
+            // Update DB
+            await db.matchPaymentToOrder(payment.transactionId, dbOrder.orderNumber, 'BANK_WEBHOOK');
+
+            // Get full order from order manager or create match
+            const order = this.orderManager.getOrder(dbOrder.orderNumber);
+
+            if (order) {
+              const orderMatch: OrderMatch = {
+                orderNumber: dbOrder.orderNumber,
+                bankTransactionId: payment.transactionId,
+                receivedAmount: payment.amount,
+                expectedAmount: parseFloat(dbOrder.totalPrice),
+                senderName: payment.senderName,
+                verified: true,
+                matchedAt: new Date(),
+              };
+
+              await this.handlePaymentMatch(order, orderMatch);
+            } else {
+              // Order not in memory - just log and alert
+              await db.createAlert({
+                type: 'payment_matched',
+                severity: 'info',
+                title: 'Bank payment matched',
+                message: `Payment ${payment.transactionId} matched to order ${dbOrder.orderNumber}`,
+                orderNumber: dbOrder.orderNumber,
+                metadata: { transactionId: payment.transactionId, amount: payment.amount },
+              });
+            }
+
+            return;
+          }
+        }
+
+        // No name match found
+        logger.warn({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+        }, '⚠️ Payment amount matches orders but names do not match');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Error searching for matching orders');
+    }
+
+    // No match found - payment is saved in DB by webhook-receiver for future matching
+    logger.info({
+      transactionId: payment.transactionId,
+      amount: payment.amount,
+    }, '📝 Payment saved, waiting for order to be marked as paid');
   }
 
   /**
@@ -208,6 +306,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Start verification process for paid order
+   * Implements bidirectional matching: checks for existing bank payments
    */
   private async startVerification(order: OrderData): Promise<void> {
     logger.info({
@@ -232,6 +331,64 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     this.pendingReleases.set(order.orderNumber, pending);
 
+    // BIDIRECTIONAL MATCH: Check if bank payment already arrived before order was marked paid
+    try {
+      const expectedAmount = parseFloat(order.totalPrice);
+      const existingPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120); // 1% tolerance, last 2 hours
+
+      if (existingPayments.length > 0) {
+        logger.info({
+          orderNumber: order.orderNumber,
+          foundPayments: existingPayments.length,
+          amounts: existingPayments.map(p => p.amount),
+        }, '🔍 Found existing bank payment(s) for order');
+
+        // Try to match with the best candidate
+        for (const payment of existingPayments) {
+          const nameMatch = this.compareNames(
+            payment.senderName,
+            order.counterPartNickName || order.buyer?.nickName || ''
+          );
+
+          logger.info({
+            orderNumber: order.orderNumber,
+            paymentSender: payment.senderName,
+            orderBuyer: order.counterPartNickName,
+            nameMatch,
+          }, 'Comparing payment sender with order buyer');
+
+          // If amount matches (already filtered) and name is somewhat similar, consider it a match
+          if (nameMatch > 0.3 || existingPayments.length === 1) {
+            // Found a match!
+            const match: OrderMatch = {
+              orderNumber: order.orderNumber,
+              bankTransactionId: payment.transactionId,
+              receivedAmount: payment.amount,
+              expectedAmount: expectedAmount,
+              senderName: payment.senderName,
+              verified: true,
+              matchedAt: new Date(),
+            };
+
+            logger.info({
+              orderNumber: order.orderNumber,
+              transactionId: payment.transactionId,
+              amount: payment.amount,
+            }, '✅ Bank payment matched to order (payment arrived first)');
+
+            // Update DB
+            await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+
+            // Handle the match
+            await this.handlePaymentMatch(order, match);
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ error }, 'Error checking for existing payments');
+    }
+
     // Look for existing receipt images in chat
     const existingImages = await this.chatHandler.findReceiptImages(order.orderNumber);
 
@@ -239,6 +396,34 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       // Process the most recent image
       await this.handleReceiptImage(existingImages[existingImages.length - 1]);
     }
+  }
+
+  /**
+   * Compare two names and return similarity score (0-1)
+   */
+  private compareNames(name1: string, name2: string): number {
+    if (!name1 || !name2) return 0;
+
+    const normalize = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9\s]/g, '');
+    const n1 = normalize(name1);
+    const n2 = normalize(name2);
+
+    if (n1 === n2) return 1;
+
+    // Check if one contains the other
+    if (n1.includes(n2) || n2.includes(n1)) return 0.8;
+
+    // Check word overlap
+    const words1 = new Set(n1.split(/\s+/).filter(w => w.length > 2));
+    const words2 = new Set(n2.split(/\s+/).filter(w => w.length > 2));
+
+    let matches = 0;
+    for (const word of words1) {
+      if (words2.has(word)) matches++;
+    }
+
+    const totalWords = Math.max(words1.size, words2.size);
+    return totalWords > 0 ? matches / totalWords : 0;
   }
 
   /**
