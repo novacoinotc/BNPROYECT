@@ -260,6 +260,12 @@ export class PricingEngine {
     fiat: string,
     tradeType: TradeType
   ): void {
+    // Check if price updates are disabled
+    if (process.env.ENABLE_PRICE_UPDATES === 'false') {
+      logger.info('Price auto-updates DISABLED via ENABLE_PRICE_UPDATES=false');
+      return;
+    }
+
     if (this.updateInterval) {
       this.stopAutoUpdate();
     }
