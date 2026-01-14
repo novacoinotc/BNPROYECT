@@ -63,7 +63,7 @@ async function testGetOrders() {
   const data = await request('/sapi/v1/c2c/orderMatch/listUserOrderHistory', {
     tradeType: 'SELL',
     rows: 5,
-  });
+  }, 'GET');
 
   if (data && data.data && data.data.length > 0) {
     console.log('\n📦 First order structure:');
@@ -92,7 +92,7 @@ async function testGetAds() {
   // First try to list ads
   const listData = await request('/sapi/v1/c2c/ads/getDetailV2', {
     advNos: process.env.BINANCE_ADV_NO || '',
-  });
+  }, 'GET');
 
   if (listData) {
     console.log('\n📦 Ad structure:');
@@ -111,7 +111,7 @@ async function testGetOrderDetail() {
   const orders = await request('/sapi/v1/c2c/orderMatch/listUserOrderHistory', {
     tradeType: 'SELL',
     rows: 1,
-  });
+  }, 'GET');
 
   if (orders && orders.data && orders.data.length > 0) {
     const orderNo = orders.data[0].orderNumber || orders.data[0].orderNo;
@@ -119,7 +119,7 @@ async function testGetOrderDetail() {
 
     const detail = await request('/sapi/v1/c2c/orderMatch/getUserOrderDetail', {
       orderNo,
-    });
+    }, 'GET');
 
     if (detail) {
       console.log('\n📦 Order detail structure:');
@@ -153,7 +153,7 @@ async function testMarketPrice() {
     fiat: 'MXN',
     tradeType: 'SELL',
     rows: 5,
-  });
+  }, 'GET');
 
   if (p2pData) {
     console.log('\n📦 P2P market search result:');
