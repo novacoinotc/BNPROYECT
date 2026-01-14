@@ -17,6 +17,7 @@ import {
   AuthType,
   BankWebhookPayload,
   OrderMatch,
+  VerificationStatus,
 } from '../types/binance.js';
 
 export interface AutoReleaseConfig {
@@ -220,6 +221,31 @@ export class AutoReleaseOrchestrator extends EventEmitter {
               transactionId: payment.transactionId,
             }, '✅ Bank payment matched to order (order was marked paid first)');
 
+            // Track: payment received and matched
+            await db.addVerificationStep(
+              dbOrder.orderNumber,
+              VerificationStatus.BANK_PAYMENT_RECEIVED,
+              `Pago bancario recibido de ${payment.senderName}`,
+              {
+                transactionId: payment.transactionId,
+                receivedAmount: payment.amount,
+                senderName: payment.senderName,
+              }
+            );
+
+            await db.addVerificationStep(
+              dbOrder.orderNumber,
+              VerificationStatus.PAYMENT_MATCHED,
+              `Pago vinculado a orden (orden marcada primero)`,
+              {
+                transactionId: payment.transactionId,
+                receivedAmount: payment.amount,
+                expectedAmount: dbOrder.totalPrice,
+                nameMatch: nameMatch.toFixed(2),
+                matchType: 'order_marked_first',
+              }
+            );
+
             // Update DB
             await db.matchPaymentToOrder(payment.transactionId, dbOrder.orderNumber, 'BANK_WEBHOOK');
 
@@ -314,6 +340,18 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       amount: order.totalPrice,
     }, 'Starting payment verification');
 
+    // Track: buyer marked as paid
+    await db.addVerificationStep(
+      order.orderNumber,
+      VerificationStatus.BUYER_MARKED_PAID,
+      `Comprador marcó como pagado - Esperando confirmación bancaria`,
+      {
+        expectedAmount: order.totalPrice,
+        buyerName: order.counterPartNickName,
+        timestamp: new Date().toISOString(),
+      }
+    );
+
     this.emit('release', {
       type: 'verification_started',
       orderNumber: order.orderNumber,
@@ -375,6 +413,19 @@ export class AutoReleaseOrchestrator extends EventEmitter {
               transactionId: payment.transactionId,
               amount: payment.amount,
             }, '✅ Bank payment matched to order (payment arrived first)');
+
+            // Track: payment matched
+            await db.addVerificationStep(
+              order.orderNumber,
+              VerificationStatus.PAYMENT_MATCHED,
+              `Pago bancario vinculado (pago llegó primero)`,
+              {
+                transactionId: payment.transactionId,
+                receivedAmount: payment.amount,
+                senderName: payment.senderName,
+                matchType: 'payment_arrived_first',
+              }
+            );
 
             // Update DB
             await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
@@ -528,6 +579,105 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       bankAmount: match.receivedAmount,
       expectedAmount: match.expectedAmount,
     }, 'Bank payment matched to order');
+
+    // VERIFY AMOUNT
+    const expectedAmount = match.expectedAmount || parseFloat(order.totalPrice);
+    const receivedAmount = match.receivedAmount || 0;
+    const amountDiff = Math.abs(receivedAmount - expectedAmount);
+    const amountTolerance = expectedAmount * 0.01; // 1% tolerance
+    const amountMatches = amountDiff <= amountTolerance;
+
+    if (amountMatches) {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.AMOUNT_VERIFIED,
+        `Monto verificado: $${receivedAmount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)} (diferencia: $${amountDiff.toFixed(2)})`,
+        {
+          receivedAmount,
+          expectedAmount,
+          difference: amountDiff,
+          tolerance: amountTolerance,
+          withinTolerance: true,
+        }
+      );
+    } else {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.AMOUNT_MISMATCH,
+        `⚠️ ALERTA: Monto no coincide - Recibido: $${receivedAmount.toFixed(2)} vs Esperado: $${expectedAmount.toFixed(2)}`,
+        {
+          receivedAmount,
+          expectedAmount,
+          difference: amountDiff,
+          tolerance: amountTolerance,
+          withinTolerance: false,
+        }
+      );
+    }
+
+    // VERIFY NAME
+    const buyerName = order.counterPartNickName || order.buyer?.nickName || '';
+    const senderName = match.senderName || '';
+    const nameMatchScore = this.compareNames(senderName, buyerName);
+    const nameMatches = nameMatchScore > 0.3;
+
+    if (nameMatches) {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.NAME_VERIFIED,
+        `Nombre verificado: "${senderName}" ≈ "${buyerName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+        {
+          senderName,
+          buyerName,
+          matchScore: nameMatchScore,
+        }
+      );
+    } else {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.NAME_MISMATCH,
+        `⚠️ ALERTA: Nombre no coincide - SPEI: "${senderName}" vs Binance: "${buyerName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+        {
+          senderName,
+          buyerName,
+          matchScore: nameMatchScore,
+        }
+      );
+    }
+
+    // FINAL DETERMINATION
+    if (amountMatches && nameMatches) {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.READY_TO_RELEASE,
+        `✅ VERIFICACIÓN COMPLETA - Todas las validaciones pasaron`,
+        {
+          amountVerified: true,
+          nameVerified: true,
+          recommendation: 'RELEASE',
+          autoReleaseEnabled: this.config.enableAutoRelease,
+        }
+      );
+
+      if (!this.config.enableAutoRelease) {
+        logger.info({
+          orderNumber: order.orderNumber,
+          amount: receivedAmount,
+          sender: senderName,
+        }, '🔒 [MODO AUDITORÍA] Verificación completa - Auto-release DESHABILITADO');
+      }
+    } else {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.MANUAL_REVIEW,
+        `👤 REQUIERE REVISIÓN MANUAL - ${!amountMatches ? 'Monto no coincide' : ''} ${!nameMatches ? 'Nombre no coincide' : ''}`,
+        {
+          amountVerified: amountMatches,
+          nameVerified: nameMatches,
+          recommendation: 'MANUAL_REVIEW',
+        }
+      );
+    }
 
     // Check if ready for release
     await this.checkReadyForRelease(order.orderNumber);

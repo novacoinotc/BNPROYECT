@@ -299,6 +299,62 @@ export interface BankWebhookPayload {
   status: 'completed' | 'pending' | 'failed';
 }
 
+// ==================== VERIFICATION STATES ====================
+
+export enum VerificationStatus {
+  // Initial states
+  AWAITING_PAYMENT = 'AWAITING_PAYMENT',           // Order created, waiting for buyer to pay
+
+  // Payment arrival scenarios
+  BUYER_MARKED_PAID = 'BUYER_MARKED_PAID',         // Buyer clicked "paid", waiting for bank confirmation
+  BANK_PAYMENT_RECEIVED = 'BANK_PAYMENT_RECEIVED', // Bank payment received, waiting for buyer to mark paid
+
+  // Matching states
+  PAYMENT_MATCHED = 'PAYMENT_MATCHED',             // Bank payment linked to order
+
+  // Verification states
+  AMOUNT_VERIFIED = 'AMOUNT_VERIFIED',             // Amount matches within tolerance
+  AMOUNT_MISMATCH = 'AMOUNT_MISMATCH',             // Amount doesn't match
+  NAME_VERIFIED = 'NAME_VERIFIED',                 // Payer name matches buyer name
+  NAME_MISMATCH = 'NAME_MISMATCH',                 // Names don't match
+
+  // Final states
+  READY_TO_RELEASE = 'READY_TO_RELEASE',           // All checks passed, ready for release
+  RELEASED = 'RELEASED',                           // Crypto released
+  MANUAL_REVIEW = 'MANUAL_REVIEW',                 // Needs human intervention
+}
+
+export interface VerificationStep {
+  timestamp: Date;
+  status: VerificationStatus;
+  message: string;
+  details?: Record<string, any>;
+}
+
+export interface VerificationResult {
+  orderNumber: string;
+  currentStatus: VerificationStatus;
+  timeline: VerificationStep[];
+  recommendation: 'RELEASE' | 'MANUAL_REVIEW' | 'WAIT';
+  checks: {
+    bankPaymentReceived: boolean;
+    buyerMarkedPaid: boolean;
+    amountMatches: boolean;
+    nameMatches: boolean | null; // null = not checked yet
+  };
+  bankPayment?: {
+    transactionId: string;
+    amount: number;
+    senderName: string;
+    receivedAt: Date;
+  };
+  orderDetails?: {
+    expectedAmount: number;
+    buyerName: string;
+    createdAt: Date;
+  };
+}
+
 // ==================== BOT INTERNAL TYPES ====================
 
 export interface PricingConfig {

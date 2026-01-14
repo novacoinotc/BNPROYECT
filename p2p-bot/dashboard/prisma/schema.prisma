@@ -69,6 +69,10 @@ model Order {
   sellerUserNo      String
   sellerNickName    String
 
+  // Verification tracking
+  verificationStatus   String?     // Current verification state
+  verificationTimeline Json?       // Array of verification steps with timestamps
+
   // Timestamps
   binanceCreateTime DateTime
   confirmPayEndTime DateTime?
@@ -87,6 +91,7 @@ model Order {
   @@index([status])
   @@index([buyerUserNo])
   @@index([binanceCreateTime])
+  @@index([verificationStatus])
 }
 
 /// Bank payments received via webhook

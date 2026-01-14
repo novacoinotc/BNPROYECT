@@ -11,6 +11,9 @@ import {
   mapOrderStatus,
   BankWebhookPayload,
   ChatMessage,
+  VerificationStatus,
+  VerificationStep,
+  VerificationResult,
 } from '../types/binance.js';
 
 const { Pool } = pg;
@@ -490,6 +493,165 @@ export async function blockBuyer(userNo: string, reason: string): Promise<void> 
   );
 
   logger.warn({ userNo, reason }, 'Buyer blocked');
+}
+
+// ==================== VERIFICATION TRACKING ====================
+
+/**
+ * Add a verification step to an order's timeline
+ */
+export async function addVerificationStep(
+  orderNumber: string,
+  status: VerificationStatus,
+  message: string,
+  details?: Record<string, any>
+): Promise<void> {
+  const db = getPool();
+
+  const step: VerificationStep = {
+    timestamp: new Date(),
+    status,
+    message,
+    details,
+  };
+
+  // Update order with new verification status and append to timeline
+  await db.query(
+    `UPDATE "Order" SET
+      "verificationStatus" = $1,
+      "verificationTimeline" = COALESCE("verificationTimeline", '[]'::jsonb) || $2::jsonb,
+      "updatedAt" = NOW()
+    WHERE "orderNumber" = $3`,
+    [status, JSON.stringify([step]), orderNumber]
+  );
+
+  // Log with emoji for visibility
+  const emoji = getStatusEmoji(status);
+  logger.info({ orderNumber, status, message }, `${emoji} ${message}`);
+}
+
+/**
+ * Get verification timeline for an order
+ */
+export async function getVerificationTimeline(orderNumber: string): Promise<VerificationStep[]> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT "verificationTimeline" FROM "Order" WHERE "orderNumber" = $1`,
+    [orderNumber]
+  );
+
+  return result.rows[0]?.verificationTimeline || [];
+}
+
+/**
+ * Get full verification result for an order
+ */
+export async function getVerificationResult(orderNumber: string): Promise<VerificationResult | null> {
+  const db = getPool();
+
+  // Get order info
+  const orderResult = await db.query(
+    `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName",
+            "verificationStatus", "verificationTimeline", "binanceCreateTime", status
+     FROM "Order" WHERE "orderNumber" = $1`,
+    [orderNumber]
+  );
+
+  if (orderResult.rows.length === 0) return null;
+  const order = orderResult.rows[0];
+
+  // Get matched payment if any
+  const paymentResult = await db.query(
+    `SELECT p."transactionId", p.amount, p."senderName", p."createdAt"
+     FROM "Payment" p
+     JOIN "Order" o ON p."matchedOrderId" = o.id
+     WHERE o."orderNumber" = $1 AND p.status IN ('MATCHED', 'RELEASED')`,
+    [orderNumber]
+  );
+
+  const timeline = order.verificationTimeline || [];
+  const currentStatus = order.verificationStatus || VerificationStatus.AWAITING_PAYMENT;
+  const payment = paymentResult.rows[0];
+
+  // Determine checks status
+  const checks = {
+    bankPaymentReceived: !!payment,
+    buyerMarkedPaid: order.status === 'PAID' || order.status === 'COMPLETED',
+    amountMatches: payment ? Math.abs(payment.amount - parseFloat(order.totalPrice)) < 1 : false,
+    nameMatches: null as boolean | null,
+  };
+
+  // Determine recommendation
+  let recommendation: 'RELEASE' | 'MANUAL_REVIEW' | 'WAIT' = 'WAIT';
+  if (currentStatus === VerificationStatus.READY_TO_RELEASE) {
+    recommendation = 'RELEASE';
+  } else if (currentStatus === VerificationStatus.MANUAL_REVIEW ||
+             currentStatus === VerificationStatus.NAME_MISMATCH ||
+             currentStatus === VerificationStatus.AMOUNT_MISMATCH) {
+    recommendation = 'MANUAL_REVIEW';
+  }
+
+  return {
+    orderNumber,
+    currentStatus,
+    timeline,
+    recommendation,
+    checks,
+    bankPayment: payment ? {
+      transactionId: payment.transactionId,
+      amount: payment.amount,
+      senderName: payment.senderName,
+      receivedAt: payment.createdAt,
+    } : undefined,
+    orderDetails: {
+      expectedAmount: parseFloat(order.totalPrice),
+      buyerName: order.buyerRealName || order.buyerNickName,
+      createdAt: order.binanceCreateTime,
+    },
+  };
+}
+
+/**
+ * Get orders pending verification (for dashboard)
+ */
+export async function getOrdersPendingVerification(): Promise<Array<{
+  orderNumber: string;
+  totalPrice: string;
+  buyerNickName: string;
+  verificationStatus: VerificationStatus;
+  verificationTimeline: VerificationStep[];
+  createdAt: Date;
+}>> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT "orderNumber", "totalPrice", "buyerNickName",
+            "verificationStatus", "verificationTimeline", "binanceCreateTime" as "createdAt"
+     FROM "Order"
+     WHERE status = 'PAID' AND "releasedAt" IS NULL
+     ORDER BY "binanceCreateTime" DESC
+     LIMIT 50`
+  );
+
+  return result.rows;
+}
+
+function getStatusEmoji(status: VerificationStatus): string {
+  const emojis: Record<VerificationStatus, string> = {
+    [VerificationStatus.AWAITING_PAYMENT]: '⏳',
+    [VerificationStatus.BUYER_MARKED_PAID]: '📝',
+    [VerificationStatus.BANK_PAYMENT_RECEIVED]: '💰',
+    [VerificationStatus.PAYMENT_MATCHED]: '🔗',
+    [VerificationStatus.AMOUNT_VERIFIED]: '✅',
+    [VerificationStatus.AMOUNT_MISMATCH]: '⚠️',
+    [VerificationStatus.NAME_VERIFIED]: '✅',
+    [VerificationStatus.NAME_MISMATCH]: '⚠️',
+    [VerificationStatus.READY_TO_RELEASE]: '🚀',
+    [VerificationStatus.RELEASED]: '✨',
+    [VerificationStatus.MANUAL_REVIEW]: '👤',
+  };
+  return emojis[status] || '📋';
 }
 
 // ==================== CLEANUP ====================
