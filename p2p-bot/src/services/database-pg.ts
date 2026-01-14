@@ -7,7 +7,8 @@ import pg from 'pg';
 import { logger } from '../utils/logger.js';
 import {
   OrderData,
-  OrderStatus as BinanceOrderStatus,
+  OrderStatusString,
+  mapOrderStatus,
   BankWebhookPayload,
   ChatMessage,
 } from '../types/binance.js';
@@ -56,26 +57,24 @@ export async function testConnection(): Promise<boolean> {
 
 // ==================== ORDER OPERATIONS ====================
 
-const statusMap: Record<number, string> = {
-  1: 'PENDING',
-  2: 'PAID',
-  3: 'APPEALING',
-  4: 'COMPLETED',
-  5: 'CANCELLED',
-  6: 'CANCELLED_SYSTEM',
-  7: 'CANCELLED_TIMEOUT',
-};
-
 export async function saveOrder(order: OrderData): Promise<void> {
   const db = getPool();
-  const status = statusMap[order.orderStatus] || 'PENDING';
 
-  // Handle potentially undefined buyer/seller with safe access
-  const buyerUserNo = order.buyer?.userNo || (order as any).buyerUserNo || 'unknown';
-  const buyerNickName = order.buyer?.nickName || (order as any).buyerNickName || 'unknown';
-  const buyerRealName = order.buyer?.realName || (order as any).buyerRealName || null;
-  const sellerUserNo = order.seller?.userNo || (order as any).sellerUserNo || 'unknown';
-  const sellerNickName = order.seller?.nickName || (order as any).sellerNickName || 'unknown';
+  // Handle string status from API (e.g., "TRADING", "BUYER_PAYED")
+  const status = mapOrderStatus(order.orderStatus);
+
+  // API returns counterPartNickName instead of buyer/seller objects
+  // For SELL orders: counterPart is the buyer
+  // For BUY orders: counterPart is the seller
+  const isSellOrder = order.tradeType === 'SELL';
+  const counterPartNick = order.counterPartNickName || (order as any).counterPartNickName || 'unknown';
+
+  // Map to buyer/seller based on trade type
+  const buyerUserNo = isSellOrder ? 'counterpart' : 'self';
+  const buyerNickName = isSellOrder ? counterPartNick : 'self';
+  const buyerRealName = null; // Not available in API response
+  const sellerUserNo = isSellOrder ? 'self' : 'counterpart';
+  const sellerNickName = isSellOrder ? 'self' : counterPartNick;
 
   try {
     // Try to update first
@@ -107,7 +106,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
           order.advNo,
           order.tradeType,
           order.asset,
-          order.fiatUnit,
+          order.fiat || order.fiatUnit || 'MXN',  // API returns 'fiat', fallback to fiatUnit
           order.amount,
           order.totalPrice,
           order.unitPrice,

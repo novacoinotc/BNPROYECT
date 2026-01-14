@@ -262,11 +262,13 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       const ocrResult = await this.ocrService.processReceiptUrl(image.imageUrl);
 
       // Verify against order
+      // Note: API returns counterPartNickName, not buyer.realName
       const expectedAmount = parseFloat(pending.order.totalPrice);
+      const counterPartName = pending.order.counterPartNickName || pending.order.buyer?.realName;
       const verification = this.ocrService.verifyReceipt(
         ocrResult,
         expectedAmount,
-        pending.order.buyer.realName
+        counterPartName
       );
 
       pending.ocrVerified = verification.verified;
@@ -326,7 +328,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     pending.bankMatch = {
       transactionId: match.bankTransactionId || '',
       amount: match.receivedAmount || 0,
-      currency: order.fiatUnit,
+      currency: order.fiat || order.fiatUnit || 'MXN',
       senderName: match.senderName || '',
       senderAccount: '',
       receiverAccount: '',
@@ -476,10 +478,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       return;
     }
 
-    // Check order is still in PAID status
+    // Check order is still in BUYER_PAYED status (waiting for release)
     const currentOrder = this.orderManager.getOrder(orderNumber);
 
-    if (!currentOrder || currentOrder.orderStatus !== OrderStatus.PAID) {
+    if (!currentOrder || currentOrder.orderStatus !== 'BUYER_PAYED') {
       logger.warn({
         orderNumber,
         status: currentOrder?.orderStatus,

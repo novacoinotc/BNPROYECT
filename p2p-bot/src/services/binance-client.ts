@@ -139,39 +139,81 @@ export class BinanceC2CClient {
 
   /**
    * Search competitor ads
-   * POST /sapi/v1/c2c/ads/search
+   * Note: SAPI /search endpoint returns errors - using public P2P API instead
    */
   async searchAds(request: SearchAdsRequest): Promise<AdData[]> {
-    const response = await this.signedPost<AdData[]>(
-      '/sapi/v1/c2c/ads/search',
-      request
-    );
-    return response;
+    try {
+      // Try the public P2P API endpoint (no auth required)
+      const response = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          asset: request.asset,
+          fiat: request.fiat,
+          tradeType: request.tradeType,
+          page: request.page || 1,
+          rows: request.rows || 10,
+          payTypes: request.payTypes || [],
+          publisherType: request.publisherType || null,
+          transAmount: request.transAmount || null,
+        }),
+      });
+
+      const data = await response.json() as { success?: boolean; data?: AdData[] };
+      if (data.success && data.data) {
+        return data.data;
+      }
+      logger.warn({ response: data }, 'Search ads returned no data');
+      return [];
+    } catch (error) {
+      logger.warn({ error }, 'Failed to search competitor ads');
+      return [];
+    }
   }
 
   /**
    * Get reference price for asset/fiat pair
-   * POST /sapi/v1/c2c/ads/getReferencePrice
+   * Uses market index price endpoint (tested and working)
+   * Fallback: /sapi/v1/c2c/market/getIndexPrice
    */
   async getReferencePrice(
     asset: string,
     fiat: string,
     tradeType: TradeType
   ): Promise<ReferencePrice> {
-    const response = await this.signedPost<ReferencePrice>(
-      '/sapi/v1/c2c/ads/getReferencePrice',
-      { asset, fiat, tradeType }
-    );
-    return response;
+    try {
+      // Primary: Try market index price which works
+      const response = await this.signedGet<{ indexPrice: string }>(
+        '/sapi/v1/c2c/market/getIndexPrice',
+        { asset, fiat }
+      );
+      return {
+        price: (response as any)?.indexPrice || '0',
+        fiatUnit: fiat,
+        asset,
+        tradeType,
+      };
+    } catch (error) {
+      logger.warn({ asset, fiat, error }, 'Failed to get reference price');
+      // Return a fallback
+      return {
+        price: '0',
+        fiatUnit: fiat,
+        asset,
+        tradeType,
+      };
+    }
   }
 
   /**
    * List my ads with pagination
-   * POST /sapi/v1/c2c/ads/listWithPagination
+   * GET /sapi/v1/c2c/ads/list (tested and working)
    */
   async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
-    const response = await this.signedPost<MerchantAdsDetail>(
-      '/sapi/v1/c2c/ads/listWithPagination',
+    const response = await this.signedGet<MerchantAdsDetail>(
+      '/sapi/v1/c2c/ads/list',
       { page, rows }
     );
     return response;
@@ -205,18 +247,32 @@ export class BinanceC2CClient {
 
   /**
    * List orders with filters
-   * POST /sapi/v1/c2c/orderMatch/listOrders
+   * GET /sapi/v1/c2c/orderMatch/listUserOrderHistory (tested and working)
+   * Note: /listOrders endpoint doesn't work, use listUserOrderHistory instead
    */
   async listOrders(request: ListOrdersRequest = {}): Promise<OrderData[]> {
-    const response = await this.signedPost<OrderData[]>(
-      '/sapi/v1/c2c/orderMatch/listOrders',
+    const response = await this.signedGet<{ data: OrderData[] }>(
+      '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
       {
-        page: request.page || 1,
+        tradeType: request.tradeType || 'SELL',
         rows: request.rows || 20,
-        ...request,
+        page: request.page || 1,
       }
     );
-    return response;
+    // API returns { data: [...] }
+    return (response as any)?.data || response || [];
+  }
+
+  /**
+   * List pending orders
+   * GET /sapi/v1/c2c/orderMatch/listPendingOrders (tested and working)
+   */
+  async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
+    const response = await this.signedGet<{ data: OrderData[] }>(
+      '/sapi/v1/c2c/orderMatch/listPendingOrders',
+      { rows }
+    );
+    return (response as any)?.data || response || [];
   }
 
   /**
@@ -298,10 +354,10 @@ export class BinanceC2CClient {
 
   /**
    * Get chat messages for an order
-   * GET /sapi/v1/c2c/chat/retrieveChatMessagesWithPagination
+   * GET /sapi/v1/c2c/chat/retrieveChatMessagesWithPagination (tested and working)
    */
   async getChatMessages(request: ChatMessagesRequest): Promise<ChatMessage[]> {
-    const response = await this.signedGet<ChatMessage[]>(
+    const response = await this.signedGet<{ data: ChatMessage[] }>(
       '/sapi/v1/c2c/chat/retrieveChatMessagesWithPagination',
       {
         orderNo: request.orderNo,
@@ -309,7 +365,8 @@ export class BinanceC2CClient {
         rows: request.rows || 50,
       }
     );
-    return response;
+    // API returns { data: [...] }
+    return (response as any)?.data || response || [];
   }
 
   /**
