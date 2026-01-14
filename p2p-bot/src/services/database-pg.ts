@@ -70,6 +70,13 @@ export async function saveOrder(order: OrderData): Promise<void> {
   const db = getPool();
   const status = statusMap[order.orderStatus] || 'PENDING';
 
+  // Handle potentially undefined buyer/seller with safe access
+  const buyerUserNo = order.buyer?.userNo || (order as any).buyerUserNo || 'unknown';
+  const buyerNickName = order.buyer?.nickName || (order as any).buyerNickName || 'unknown';
+  const buyerRealName = order.buyer?.realName || (order as any).buyerRealName || null;
+  const sellerUserNo = order.seller?.userNo || (order as any).sellerUserNo || 'unknown';
+  const sellerNickName = order.seller?.nickName || (order as any).sellerNickName || 'unknown';
+
   try {
     // Try to update first
     const updateResult = await db.query(
@@ -106,18 +113,18 @@ export async function saveOrder(order: OrderData): Promise<void> {
           order.unitPrice,
           order.commission,
           status,
-          order.buyer.userNo,
-          order.buyer.nickName,
-          order.buyer.realName || null,
-          order.seller.userNo,
-          order.seller.nickName,
+          buyerUserNo,
+          buyerNickName,
+          buyerRealName,
+          sellerUserNo,
+          sellerNickName,
           new Date(order.createTime),
           order.confirmPayEndTime ? new Date(order.confirmPayEndTime) : null,
         ]
       );
     }
 
-    logger.debug({ orderNumber: order.orderNumber }, 'Order saved to database');
+    logger.info({ orderNumber: order.orderNumber }, 'Order saved to database');
   } catch (error) {
     const err = error as Error;
     // Ignore duplicate key errors
