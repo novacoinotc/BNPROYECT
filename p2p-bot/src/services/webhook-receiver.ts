@@ -105,13 +105,25 @@ export class WebhookReceiver extends EventEmitter {
         status: 'ok',
         service: 'p2p-bot-webhook',
         timestamp: new Date().toISOString(),
+        endpoints: [
+          'POST /webhook/bank - Bank core webhook',
+          'POST /webhook/opm - OPM direct webhook',
+          'POST /webhook/payment - Generic payment webhook',
+        ],
       });
     });
 
-    // Bank payment webhook
+    // Bank payment webhook (primary endpoint)
+    this.app.post('/webhook/bank', this.handlePaymentWebhook.bind(this));
+
+    // OPM direct webhook (if core forwards directly)
+    this.app.post('/webhook/opm', this.handlePaymentWebhook.bind(this));
+
+    // Legacy/configured path
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
     // Payment reversal webhook (chargebacks)
+    this.app.post('/webhook/reversal', this.handleReversalWebhook.bind(this));
     this.app.post(`${this.config.webhookPath}/reversal`, this.handleReversalWebhook.bind(this));
 
     // 404 handler
@@ -133,17 +145,14 @@ export class WebhookReceiver extends EventEmitter {
    */
   private async handlePaymentWebhook(req: Request, res: Response): Promise<void> {
     try {
-      // Verify signature
-      const signature = req.headers['x-webhook-signature'] as string;
-      const timestamp = req.headers['x-webhook-timestamp'] as string;
-
-      if (!this.verifySignature((req as any).rawBody, signature, timestamp)) {
-        logger.warn({ signature }, 'Invalid webhook signature');
-        res.status(401).json({ error: 'Invalid signature' });
+      // Verify authentication (support multiple methods)
+      if (!this.verifyAuth(req)) {
+        logger.warn({ ip: this.getClientIP(req) }, 'Unauthorized webhook request');
+        res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
-      // Parse payload
+      // Parse payload (supports multiple formats including OPM)
       const payload = this.parsePayload(req.body);
 
       if (!payload) {
@@ -166,7 +175,7 @@ export class WebhookReceiver extends EventEmitter {
         amount: payload.amount,
         sender: payload.senderName,
         status: payload.status,
-      }, 'Payment webhook received');
+      }, '💰 Bank payment webhook received');
 
       // Only process completed payments
       if (payload.status === 'completed') {
@@ -189,6 +198,43 @@ export class WebhookReceiver extends EventEmitter {
       logger.error({ error }, 'Error processing payment webhook');
       res.status(500).json({ error: 'Processing error' });
     }
+  }
+
+  /**
+   * Verify authentication (supports Bearer token or signature)
+   */
+  private verifyAuth(req: Request): boolean {
+    // Method 1: Bearer token
+    const authHeader = req.headers['authorization'] as string;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      if (token === this.config.webhookSecret) {
+        return true;
+      }
+    }
+
+    // Method 2: X-API-Key header
+    const apiKey = req.headers['x-api-key'] as string;
+    if (apiKey === this.config.webhookSecret) {
+      return true;
+    }
+
+    // Method 3: HMAC signature (original method)
+    const signature = req.headers['x-webhook-signature'] as string;
+    const timestamp = req.headers['x-webhook-timestamp'] as string;
+    if (signature && timestamp) {
+      return this.verifySignature((req as any).rawBody, signature, timestamp);
+    }
+
+    // Method 4: Allow if from whitelisted IP and no auth required
+    if (this.config.allowedIPs && this.config.allowedIPs.length > 0) {
+      const clientIP = this.getClientIP(req);
+      if (this.config.allowedIPs.includes(clientIP)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -281,22 +327,35 @@ export class WebhookReceiver extends EventEmitter {
 
   /**
    * Parse and validate webhook payload
+   * Supports: Standard format, OPM format, and generic bank formats
    */
   private parsePayload(body: any): BankWebhookPayload | null {
     try {
-      // Support multiple bank payload formats
-      const payload: BankWebhookPayload = {
-        transactionId: body.transactionId || body.transaction_id || body.id,
-        amount: parseFloat(body.amount || body.monto || '0'),
-        currency: body.currency || body.moneda || 'MXN',
-        senderName: body.senderName || body.sender_name || body.ordenante || '',
-        senderAccount: body.senderAccount || body.sender_account || body.cuenta_origen || '',
-        receiverAccount: body.receiverAccount || body.receiver_account || body.cuenta_destino || '',
-        concept: body.concept || body.concepto || body.description || '',
-        timestamp: body.timestamp || body.fecha || new Date().toISOString(),
-        bankReference: body.bankReference || body.bank_reference || body.referencia || '',
-        status: this.normalizeStatus(body.status || body.estado),
-      };
+      let payload: BankWebhookPayload;
+
+      // Detect OPM format (has trackingKey and payerName)
+      if (body.trackingKey || body.payerName || body.beneficiaryAccount) {
+        payload = this.parseOPMFormat(body);
+      }
+      // Detect wrapped OPM format (type: "supply", data: {...})
+      else if (body.type === 'supply' && body.data) {
+        payload = this.parseOPMFormat(body.data);
+      }
+      // Standard/generic format
+      else {
+        payload = {
+          transactionId: body.transactionId || body.transaction_id || body.id,
+          amount: parseFloat(body.amount || body.monto || '0'),
+          currency: body.currency || body.moneda || 'MXN',
+          senderName: body.senderName || body.sender_name || body.ordenante || '',
+          senderAccount: body.senderAccount || body.sender_account || body.cuenta_origen || '',
+          receiverAccount: body.receiverAccount || body.receiver_account || body.cuenta_destino || '',
+          concept: body.concept || body.concepto || body.description || '',
+          timestamp: body.timestamp || body.fecha || new Date().toISOString(),
+          bankReference: body.bankReference || body.bank_reference || body.referencia || '',
+          status: this.normalizeStatus(body.status || body.estado || 'completed'),
+        };
+      }
 
       // Validate required fields
       if (!payload.transactionId || payload.amount <= 0) {
@@ -309,6 +368,26 @@ export class WebhookReceiver extends EventEmitter {
       logger.error({ error, body }, 'Error parsing webhook payload');
       return null;
     }
+  }
+
+  /**
+   * Parse OPM (Open Payment Mexico) format
+   */
+  private parseOPMFormat(data: any): BankWebhookPayload {
+    return {
+      transactionId: data.trackingKey || data.id || `opm_${Date.now()}`,
+      amount: parseFloat(data.amount || data.monto || '0'),
+      currency: 'MXN',
+      senderName: data.payerName || data.ordenante || '',
+      senderAccount: data.payerAccount || data.cuenta_ordenante || '',
+      receiverAccount: data.beneficiaryAccount || data.cuenta_beneficiario || '',
+      concept: data.concept || data.concepto || '',
+      timestamp: data.receivedTimestamp
+        ? new Date(data.receivedTimestamp).toISOString()
+        : new Date().toISOString(),
+      bankReference: data.numericalReference?.toString() || data.referencia || '',
+      status: 'completed', // OPM webhooks are always for completed deposits
+    };
   }
 
   /**
