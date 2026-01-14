@@ -6,7 +6,7 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "npx tsx src/test-api.ts",
+    "startCommand": "node dist/test-api.js",
     "restartPolicyType": "NEVER"
   }
 }
