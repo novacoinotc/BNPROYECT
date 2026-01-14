@@ -224,9 +224,10 @@ export async function saveChatMessage(message: ChatMessage): Promise<void> {
         binanceTime: new Date(message.createTime),
       },
     });
-  } catch (err: unknown) {
+  } catch (err) {
     // Ignore duplicate key errors
-    if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+    const prismaError = err as { code?: string };
+    if (prismaError.code !== 'P2002') {
       logger.error({ error: err }, 'Failed to save chat message');
     }
   }
