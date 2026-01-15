@@ -336,7 +336,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
         console.log('SSE event:', data);
 
         // Refresh orders on relevant events
-        if (['payment_received', 'order_released', 'order_updated'].includes(data.type)) {
+        if (['payment_received', 'order_released', 'order_update', 'order_updated'].includes(data.type)) {
           onRefresh?.();
         }
       } catch (err) {

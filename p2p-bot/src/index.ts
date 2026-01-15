@@ -136,13 +136,24 @@ async function initializeServices(): Promise<void> {
 }
 
 function setupEventHandlers(): void {
-  // Order events
+  // Order events - broadcast to SSE clients for real-time updates
   orderManager.on('order', (event) => {
     logger.info({
       type: event.type,
       orderNumber: event.order.orderNumber,
       amount: event.order.totalPrice,
     }, 'Order event');
+
+    // Broadcast to SSE clients for real-time dashboard updates
+    webhookReceiver.broadcastSSE({
+      type: 'order_update',
+      eventType: event.type,
+      orderNumber: event.order.orderNumber,
+      status: event.order.orderStatus,
+      amount: event.order.totalPrice,
+      buyer: event.order.counterPartNickName,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // Price update events
