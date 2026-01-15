@@ -12,6 +12,7 @@ import { getChatHandler } from './services/chat-handler.js';
 import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
+import { createTOTPService, TOTPService } from './services/totp-service.js';
 import { testConnection, disconnect } from './services/database-pg.js';
 import { TradeType, AuthType } from './types/binance.js';
 
@@ -42,6 +43,7 @@ let chatHandler: ReturnType<typeof getChatHandler>;
 let webhookReceiver: ReturnType<typeof createWebhookReceiver>;
 let ocrService: ReturnType<typeof createOCRService>;
 let autoRelease: ReturnType<typeof createAutoReleaseOrchestrator>;
+let totpService: TOTPService;
 
 // ==================== INITIALIZATION ====================
 
@@ -109,6 +111,14 @@ async function initializeServices(): Promise<void> {
     logger.info('OCR service initialized');
   }
 
+  // TOTP Service for 2FA code generation
+  totpService = createTOTPService();
+  if (totpService.isConfigured()) {
+    logger.info('TOTP service configured - auto-release 2FA ready');
+  } else {
+    logger.warn('TOTP_SECRET not configured - auto-release will require manual 2FA');
+  }
+
   // Auto Release Orchestrator
   autoRelease = createAutoReleaseOrchestrator(
     {},
@@ -118,21 +128,34 @@ async function initializeServices(): Promise<void> {
     ocrService
   );
 
-  // Setup 2FA code provider
+  // Setup 2FA code provider using TOTP
   autoRelease.setVerificationCodeProvider(async (orderNumber, authType) => {
-    // TODO: Implement TOTP generation or manual input
-    // For now, this requires manual intervention
+    // Check if TOTP is configured for automatic code generation
+    if (totpService.isConfigured() && authType === AuthType.GOOGLE) {
+      const code = totpService.generateCode();
+      logger.info({
+        orderNumber,
+        authType,
+        timeRemaining: totpService.getTimeRemaining(),
+      }, '🔐 Generated TOTP code for auto-release');
+      return code;
+    }
+
+    // If TOTP not configured, log and throw error for manual handling
     logger.warn({
       orderNumber,
       authType,
-    }, 'Manual 2FA code required for release');
+      totpConfigured: totpService.isConfigured(),
+    }, '⚠️ Manual 2FA code required - TOTP not available');
 
-    // This should be replaced with actual TOTP generation
-    // using a library like 'otplib' with the secret from env
-    throw new Error('2FA code provider not implemented');
+    throw new Error('TOTP not configured - manual release required');
   });
 
-  logger.info('Auto-release orchestrator initialized');
+  logger.info({
+    autoReleaseEnabled: BOT_CONFIG.enableAutoRelease,
+    totpConfigured: totpService.isConfigured(),
+    maxAmount: process.env.MAX_AUTO_RELEASE_AMOUNT || '50000',
+  }, 'Auto-release orchestrator initialized');
 }
 
 function setupEventHandlers(): void {

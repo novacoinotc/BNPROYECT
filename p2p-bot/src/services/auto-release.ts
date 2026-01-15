@@ -1016,9 +1016,9 @@ export function createAutoReleaseOrchestrator(
   ocrService: OCRService
 ): AutoReleaseOrchestrator {
   const defaultConfig: AutoReleaseConfig = {
-    // IMPORTANTE: Auto-release está DESHABILITADO por defecto
-    // Solo habilitar después de pasar todas las pruebas de producción
-    enableAutoRelease: false, // Forzado a false hasta completar pruebas
+    // Auto-release controlado por variable de entorno
+    // ENABLE_AUTO_RELEASE=true para habilitar
+    enableAutoRelease: process.env.ENABLE_AUTO_RELEASE === 'true',
     requireBankMatch: process.env.REQUIRE_BANK_MATCH === 'true',
     requireOcrVerification: process.env.REQUIRE_OCR_VERIFICATION !== 'false',
     authType: (process.env.RELEASE_AUTH_TYPE as AuthType) || AuthType.GOOGLE,
