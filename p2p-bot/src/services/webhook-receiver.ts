@@ -319,17 +319,24 @@ export class WebhookReceiver extends EventEmitter {
                   await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
                 }
 
-                // Verify amount
-                const amountDiff = Math.abs(payment.amount - expectedAmount);
+                // Verify amount - ensure numeric types
+                const paymentAmount = typeof payment.amount === 'string' ? parseFloat(payment.amount) : payment.amount;
+                const amountDiff = Math.abs(paymentAmount - expectedAmount);
                 const amountTolerance = expectedAmount * 0.01;
                 const amountMatches = amountDiff <= amountTolerance;
+
+                logger.info(
+                  `🔢 [SYNC] Amount check for ${order.orderNumber}: ` +
+                  `received=${paymentAmount}, expected=${expectedAmount}, ` +
+                  `diff=${amountDiff.toFixed(2)}, tolerance=${amountTolerance.toFixed(2)}, matches=${amountMatches}`
+                );
 
                 if (amountMatches) {
                   await db.addVerificationStep(
                     order.orderNumber,
                     'AMOUNT_VERIFIED' as any,
-                    `Monto verificado: $${payment.amount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)}`,
-                    { receivedAmount: payment.amount, expectedAmount, withinTolerance: true }
+                    `Monto verificado: $${paymentAmount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)}`,
+                    { receivedAmount: paymentAmount, expectedAmount, withinTolerance: true }
                   );
 
                   // Set to READY_TO_RELEASE if amount matches
@@ -345,7 +352,7 @@ export class WebhookReceiver extends EventEmitter {
                     order,
                     payment: {
                       transactionId: payment.transactionId,
-                      amount: payment.amount,
+                      amount: paymentAmount,
                       senderName: payment.senderName,
                     },
                   });
@@ -358,8 +365,8 @@ export class WebhookReceiver extends EventEmitter {
                   await db.addVerificationStep(
                     order.orderNumber,
                     'AMOUNT_MISMATCH' as any,
-                    `⚠️ Monto diferente: Recibido $${payment.amount.toFixed(2)} vs Esperado $${expectedAmount.toFixed(2)}`,
-                    { receivedAmount: payment.amount, expectedAmount, withinTolerance: false }
+                    `⚠️ Monto diferente: Recibido $${paymentAmount.toFixed(2)} vs Esperado $${expectedAmount.toFixed(2)}`,
+                    { receivedAmount: paymentAmount, expectedAmount, withinTolerance: false }
                   );
 
                   await db.addVerificationStep(
@@ -375,8 +382,13 @@ export class WebhookReceiver extends EventEmitter {
             }
           }
         } catch (err: any) {
-          // Likely duplicate, just log at debug level
-          logger.debug({ orderNumber: order.orderNumber, error: err.message }, 'Order save skipped');
+          // Log errors - use warn level to ensure visibility
+          const isDuplicate = err.message?.includes('duplicate') || err.code === '23505';
+          if (isDuplicate) {
+            logger.debug({ orderNumber: order.orderNumber, error: err.message }, 'Order save skipped (duplicate)');
+          } else {
+            logger.warn({ orderNumber: order.orderNumber, error: err.message, stack: err.stack }, '⚠️ Sync error for order');
+          }
           errorCount++;
         }
       }
