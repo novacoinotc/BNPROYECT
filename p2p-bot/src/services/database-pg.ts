@@ -141,7 +141,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
       );
     }
 
-    logger.info({ orderNumber: order.orderNumber }, 'Order saved to database');
+    logger.debug({ orderNumber: order.orderNumber }, 'Order saved to database');
   } catch (error) {
     const err = error as Error;
     // Ignore duplicate key errors

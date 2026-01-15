@@ -277,7 +277,7 @@ export class OrderManager extends EventEmitter {
     // Save order to database
     try {
       await saveOrder(order);
-      logger.info({ orderNumber: order.orderNumber }, 'Order saved to database');
+      logger.debug({ orderNumber: order.orderNumber }, 'Order saved to database');
     } catch (dbError) {
       logger.error({ orderNumber: order.orderNumber, error: dbError }, 'Failed to save order to database');
     }

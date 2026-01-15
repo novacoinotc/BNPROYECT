@@ -83,7 +83,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       enableAutoRelease: config.enableAutoRelease,
       requireBankMatch: config.requireBankMatch,
       requireOcr: config.requireOcrVerification,
-    }, 'Auto-release orchestrator initialized');
+      maxAutoReleaseAmount: config.maxAutoReleaseAmount,
+      authType: config.authType,
+    }, '🤖 Auto-release orchestrator initialized');
   }
 
   // ==================== EVENT SETUP ====================
@@ -715,14 +717,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const meetsConfidence = pending.ocrConfidence >= this.config.minConfidence || !this.config.requireOcrVerification;
     const underLimit = parseFloat(pending.order.totalPrice) <= this.config.maxAutoReleaseAmount;
 
-    logger.debug({
+    logger.info({
       orderNumber,
       hasBankMatch,
       hasOcrVerification,
       meetsConfidence,
       underLimit,
       autoReleaseEnabled: this.config.enableAutoRelease,
-    }, 'Checking release conditions');
+      requireOcr: this.config.requireOcrVerification,
+      maxAmount: this.config.maxAutoReleaseAmount,
+      orderAmount: pending.order.totalPrice,
+    }, '🔍 Checking release conditions');
 
     if (!this.config.enableAutoRelease) {
       this.emit('release', {
