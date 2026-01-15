@@ -126,6 +126,9 @@ export class WebhookReceiver extends EventEmitter {
     // Ads proxy - allows dashboard to fetch ads through Railway (bypasses geo-restriction)
     this.app.get('/api/ads', this.handleAdsProxy.bind(this));
 
+    // Orders sync - fetches orders from Binance and saves to DB
+    this.app.post('/api/orders/sync', this.handleOrdersSync.bind(this));
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
@@ -175,6 +178,98 @@ export class WebhookReceiver extends EventEmitter {
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to fetch ads from Binance',
+      });
+    }
+  }
+
+  /**
+   * Handle orders sync request (for dashboard)
+   * Fetches orders from Binance and saves them to the database
+   */
+  private async handleOrdersSync(_req: Request, res: Response): Promise<void> {
+    try {
+      const client = getBinanceClient();
+
+      logger.info('Starting orders sync from Binance...');
+
+      // Fetch pending orders (TRADING, BUYER_PAYED)
+      let pendingOrders: any[] = [];
+      try {
+        pendingOrders = await client.listPendingOrders(50);
+        logger.info({ count: pendingOrders.length }, 'Fetched pending orders');
+      } catch (err: any) {
+        logger.warn({ error: err.message }, 'Failed to fetch pending orders');
+      }
+
+      // Fetch recent order history (includes COMPLETED, CANCELLED)
+      let recentOrders: any[] = [];
+      try {
+        recentOrders = await client.listOrderHistory({
+          tradeType: 'SELL' as any,
+          rows: 50,
+        });
+        logger.info({ count: recentOrders.length }, 'Fetched recent orders');
+      } catch (err: any) {
+        logger.warn({ error: err.message }, 'Failed to fetch recent orders');
+      }
+
+      // Combine and deduplicate
+      const allOrders = new Map<string, any>();
+      for (const order of [...pendingOrders, ...recentOrders]) {
+        allOrders.set(order.orderNumber, order);
+      }
+
+      logger.info({ total: allOrders.size }, 'Total unique orders to sync');
+
+      // Save all orders to database
+      let savedCount = 0;
+      let errorCount = 0;
+      const savedOrders: any[] = [];
+
+      for (const order of allOrders.values()) {
+        try {
+          await db.saveOrder(order);
+          savedCount++;
+          savedOrders.push({
+            orderNumber: order.orderNumber,
+            status: order.orderStatus,
+            amount: order.totalPrice,
+            buyer: order.counterPartNickName || order.buyer?.nickName,
+          });
+        } catch (err: any) {
+          // Likely duplicate, just log at debug level
+          logger.debug({ orderNumber: order.orderNumber, error: err.message }, 'Order save skipped');
+          errorCount++;
+        }
+      }
+
+      // Log status breakdown
+      const statusCounts: Record<string, number> = {};
+      for (const order of allOrders.values()) {
+        statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
+      }
+
+      logger.info({
+        savedCount,
+        errorCount,
+        statusCounts
+      }, 'Orders sync complete');
+
+      res.json({
+        success: true,
+        message: `Synced ${savedCount} orders from Binance`,
+        total: allOrders.size,
+        saved: savedCount,
+        skipped: errorCount,
+        statusBreakdown: statusCounts,
+        orders: savedOrders,
+        source: 'railway-proxy',
+      });
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Orders sync error');
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to sync orders from Binance',
       });
     }
   }

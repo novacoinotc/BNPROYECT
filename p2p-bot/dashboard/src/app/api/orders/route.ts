@@ -2,6 +2,35 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
+const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
+
+// Sync orders from Binance via Railway proxy
+async function syncOrdersFromRailway(): Promise<{ success: boolean; synced?: number; error?: string }> {
+  if (!RAILWAY_API_URL) {
+    return { success: false, error: 'RAILWAY_API_URL not configured' };
+  }
+
+  try {
+    const response = await fetch(`${RAILWAY_API_URL}/api/orders/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15000), // 15 second timeout
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Railway sync error: ${response.status} - ${errorText}`);
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    console.log(`Railway sync result: ${data.message || 'OK'}`);
+    return { success: true, synced: data.saved || 0 };
+  } catch (error: any) {
+    console.error('Railway sync failed:', error.message);
+    return { success: false, error: error.message };
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,6 +38,17 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50');
     const status = searchParams.get('status');
     const showAll = searchParams.get('showAll') === 'true';
+    const skipSync = searchParams.get('skipSync') === 'true';
+
+    // Sync orders from Binance via Railway (unless skipSync is set)
+    if (!skipSync) {
+      const syncResult = await syncOrdersFromRailway();
+      if (syncResult.success) {
+        console.log(`Synced ${syncResult.synced} orders from Railway`);
+      } else {
+        console.warn(`Sync failed: ${syncResult.error} - showing cached orders`);
+      }
+    }
 
     // By default, only show active orders (PENDING, PAID, APPEALING)
     // Note: Binance "TRADING" status is mapped to "PENDING" when saved to DB
