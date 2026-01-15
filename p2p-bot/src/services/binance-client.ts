@@ -42,6 +42,7 @@ export class BinanceC2CClient {
       headers: {
         'Content-Type': 'application/json',
         'X-MBX-APIKEY': this.apiKey,
+        'clientType': 'web',  // Required by Binance C2C API
       },
     });
 
@@ -209,11 +210,11 @@ export class BinanceC2CClient {
 
   /**
    * List my ads with pagination
-   * GET /sapi/v1/c2c/ads/list (tested and working)
+   * POST /sapi/v1/c2c/ads/listWithPagination (per SAPI v7.4 docs)
    */
   async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
-    const response = await this.signedGet<MerchantAdsDetail>(
-      '/sapi/v1/c2c/ads/list',
+    const response = await this.signedPost<MerchantAdsDetail>(
+      '/sapi/v1/c2c/ads/listWithPagination',
       { page, rows }
     );
     return response;
@@ -247,30 +248,71 @@ export class BinanceC2CClient {
 
   /**
    * List orders with filters
-   * GET /sapi/v1/c2c/orderMatch/listUserOrderHistory (tested and working)
-   * Note: /listOrders endpoint doesn't work, use listUserOrderHistory instead
+   * POST /sapi/v1/c2c/orderMatch/listOrders (per SAPI v7.4 docs)
    */
   async listOrders(request: ListOrdersRequest = {}): Promise<OrderData[]> {
+    const body: Record<string, any> = {
+      tradeType: request.tradeType || 'SELL',
+      rows: request.rows || 20,
+      page: request.page || 1,
+    };
+
+    // Add optional filters
+    if (request.orderStatus) {
+      body.orderStatusList = [request.orderStatus];
+    }
+    if (request.asset) {
+      body.asset = request.asset;
+    }
+    if (request.startTimestamp) {
+      body.startDate = request.startTimestamp;
+    }
+    if (request.endTimestamp) {
+      body.endDate = request.endTimestamp;
+    }
+
+    const response = await this.signedPost<{ data: OrderData[] }>(
+      '/sapi/v1/c2c/orderMatch/listOrders',
+      body
+    );
+    // API returns { data: [...] } or array directly
+    return (response as any)?.data || response || [];
+  }
+
+  /**
+   * List pending/active orders (orders in status 1, 2, or 3)
+   * POST /sapi/v1/c2c/orderMatch/listOrders with status filter
+   */
+  async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
+    const body = {
+      tradeType: 'SELL',
+      rows,
+      page: 1,
+      // Status 1=PENDING, 2=PAID, 3=APPEALING (active orders)
+      orderStatusList: [1, 2, 3],
+    };
+
+    const response = await this.signedPost<{ data: OrderData[] }>(
+      '/sapi/v1/c2c/orderMatch/listOrders',
+      body
+    );
+    return (response as any)?.data || response || [];
+  }
+
+  /**
+   * Get order history (completed/cancelled orders)
+   * GET /sapi/v1/c2c/orderMatch/listUserOrderHistory
+   */
+  async listOrderHistory(request: ListOrdersRequest = {}): Promise<OrderData[]> {
     const response = await this.signedGet<{ data: OrderData[] }>(
       '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
       {
         tradeType: request.tradeType || 'SELL',
         rows: request.rows || 20,
         page: request.page || 1,
+        startTimestamp: request.startTimestamp,
+        endTimestamp: request.endTimestamp,
       }
-    );
-    // API returns { data: [...] }
-    return (response as any)?.data || response || [];
-  }
-
-  /**
-   * List pending orders
-   * GET /sapi/v1/c2c/orderMatch/listPendingOrders (tested and working)
-   */
-  async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
-    const response = await this.signedGet<{ data: OrderData[] }>(
-      '/sapi/v1/c2c/orderMatch/listPendingOrders',
-      { rows }
     );
     return (response as any)?.data || response || [];
   }
@@ -278,11 +320,12 @@ export class BinanceC2CClient {
   /**
    * Get order detail
    * POST /sapi/v1/c2c/orderMatch/getUserOrderDetail
+   * Note: API expects 'adOrderNo' not 'orderNumber' (per SAPI v7.4 docs)
    */
   async getOrderDetail(orderNumber: string): Promise<OrderData> {
     const response = await this.signedPost<OrderData>(
       '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
-      { orderNumber }
+      { adOrderNo: orderNumber }
     );
     return response;
   }

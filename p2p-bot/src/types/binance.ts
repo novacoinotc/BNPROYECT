@@ -19,15 +19,15 @@ export type OrderStatusString =
   | 'CANCELLED'         // Cancelled by user
   | 'CANCELLED_BY_SYSTEM';  // Cancelled by system/timeout
 
-// Legacy numeric status (for database compatibility)
+// Numeric status as per Binance API documentation (SAPI v7.4)
+// Note: Status 5 does NOT exist in Binance API
 export enum OrderStatus {
-  PENDING = 1,           // Wait for payment
-  PAID = 2,              // Wait for release (buyer marked as paid)
+  PENDING = 1,           // Wait for payment (TRADING)
+  PAID = 2,              // Wait for release (BUYER_PAYED)
   APPEALING = 3,         // In dispute/appeal
   COMPLETED = 4,         // Order completed
-  CANCELLED = 5,         // Cancelled by user
-  CANCELLED_SYSTEM = 6,  // Cancelled by system
-  CANCELLED_TIMEOUT = 7  // Cancelled by timeout
+  CANCELLED = 6,         // Cancelled by user
+  CANCELLED_SYSTEM = 7,  // Cancelled by system/timeout
 }
 
 // Map string status to database status

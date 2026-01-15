@@ -102,7 +102,7 @@ export class OrderManager extends EventEmitter {
       // Get recent order history (includes completed/cancelled)
       let recentOrders: OrderData[] = [];
       try {
-        recentOrders = await this.client.listOrders({
+        recentOrders = await this.client.listOrderHistory({
           tradeType: TradeType.SELL,
           rows: 20,
         });

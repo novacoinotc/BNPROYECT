@@ -8,28 +8,43 @@ const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY || process.env.BINANCE_API_SECRET;
 const BINANCE_BASE_URL = 'https://api.binance.com';
 
-// Sign request for Binance API
-async function signRequest(params: Record<string, string>): Promise<string> {
-  const crypto = await import('crypto');
-  const queryString = new URLSearchParams(params).toString();
-  const signature = crypto
+// Generate signature for Binance API
+function generateSignature(queryString: string): string {
+  const crypto = require('crypto');
+  return crypto
     .createHmac('sha256', BINANCE_SECRET_KEY || '')
     .update(queryString)
     .digest('hex');
+}
+
+// Build signed query string
+function buildSignedQuery(params: Record<string, any> = {}): string {
+  const timestamp = Date.now();
+  const allParams = { ...params, timestamp };
+
+  const queryString = Object.entries(allParams)
+    .filter(([_, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&');
+
+  const signature = generateSignature(queryString);
   return `${queryString}&signature=${signature}`;
 }
 
 // Get order detail from Binance
-// Returns: { success: true, data: orderData } or { success: false, error: string }
+// POST /sapi/v1/c2c/orderMatch/getUserOrderDetail
+// Body: { adOrderNo: string } (per SAPI v7.4 docs)
 async function getOrderFromBinance(orderNumber: string): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
       return { success: false, error: 'Missing API credentials' };
     }
 
-    const timestamp = Date.now().toString();
-    const params = { orderNumber, timestamp };
-    const signedQuery = await signRequest(params);
+    // Build signed query string (timestamp + signature in query)
+    const signedQuery = buildSignedQuery({});
+
+    // Body uses adOrderNo, not orderNumber (per SAPI v7.4 docs)
+    const body = { adOrderNo: orderNumber };
 
     const response = await fetch(
       `${BINANCE_BASE_URL}/sapi/v1/c2c/orderMatch/getUserOrderDetail?${signedQuery}`,
@@ -37,8 +52,10 @@ async function getOrderFromBinance(orderNumber: string): Promise<{ success: bool
         method: 'POST',
         headers: {
           'X-MBX-APIKEY': BINANCE_API_KEY || '',
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
+          'clientType': 'web',  // Required by Binance C2C API
         },
+        body: JSON.stringify(body),
       }
     );
 
@@ -51,10 +68,10 @@ async function getOrderFromBinance(orderNumber: string): Promise<{ success: bool
     const data = await response.json();
 
     // Check if Binance returned an error
-    if (data.code && data.code !== 0) {
-      console.log(`Binance returned code ${data.code} for order ${orderNumber}: ${data.msg}`);
-      // Code -100001 or similar usually means order not found
-      return { success: true, data: null }; // Order not found is a valid response
+    if (data.code && data.code !== '000000' && data.code !== 0) {
+      console.log(`Binance returned code ${data.code} for order ${orderNumber}: ${data.message || data.msg}`);
+      // Order not found is a valid response
+      return { success: true, data: null };
     }
 
     return { success: true, data: data.data || data };
