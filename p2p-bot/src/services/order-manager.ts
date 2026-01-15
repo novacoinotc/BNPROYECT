@@ -88,14 +88,28 @@ export class OrderManager extends EventEmitter {
    */
   private async pollOrders(): Promise<void> {
     try {
+      logger.debug('Starting order poll...');
+
       // Get pending orders using the working endpoint
-      const pendingOrders = await this.client.listPendingOrders(20);
+      let pendingOrders: OrderData[] = [];
+      try {
+        pendingOrders = await this.client.listPendingOrders(20);
+        logger.debug({ count: pendingOrders.length }, 'Got pending orders from Binance');
+      } catch (pendingError) {
+        logger.error({ error: pendingError }, 'Failed to get pending orders');
+      }
 
       // Get recent order history (includes completed/cancelled)
-      const recentOrders = await this.client.listOrders({
-        tradeType: TradeType.SELL,
-        rows: 20,
-      });
+      let recentOrders: OrderData[] = [];
+      try {
+        recentOrders = await this.client.listOrders({
+          tradeType: TradeType.SELL,
+          rows: 20,
+        });
+        logger.debug({ count: recentOrders.length }, 'Got recent orders from Binance');
+      } catch (recentError) {
+        logger.error({ error: recentError }, 'Failed to get recent orders');
+      }
 
       // Process pending orders first
       for (const order of pendingOrders) {
@@ -108,6 +122,11 @@ export class OrderManager extends EventEmitter {
         const trackedOrder = this.activeOrders.get(order.orderNumber);
         if (trackedOrder && trackedOrder.orderStatus !== order.orderStatus) {
           // Status changed! Process it
+          logger.info({
+            orderNumber: order.orderNumber,
+            oldStatus: trackedOrder.orderStatus,
+            newStatus: order.orderStatus,
+          }, 'Detected status change from recent orders');
           await this.processOrder(order);
         }
       }
@@ -115,11 +134,14 @@ export class OrderManager extends EventEmitter {
       // Check for expired/cancelled orders
       await this.checkExpiredOrders();
 
-      logger.debug({
-        pending: pendingOrders.length,
-        recent: recentOrders.length,
-        active: this.activeOrders.size,
-      }, 'Order poll complete');
+      // Log poll results (info level so it shows up)
+      if (pendingOrders.length > 0 || this.activeOrders.size > 0) {
+        logger.info({
+          pending: pendingOrders.length,
+          recent: recentOrders.length,
+          tracking: this.activeOrders.size,
+        }, 'Order poll complete');
+      }
     } catch (error) {
       logger.error({ error }, 'Error polling orders');
     }
