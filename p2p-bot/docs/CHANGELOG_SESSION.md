@@ -353,6 +353,19 @@ const transformResponse = (response: any): MerchantAdsDetail | null => {
 - Proxy retorna correctamente 3 sell ads y 7 buy ads
 - Anuncio activo: USDT/MXN a $18.25 (advStatus=1)
 
+### 13. Mejora del componente AdInfo - Vista compacta (2025-01-14 UTC)
+
+**Problema:** Los anuncios se mostraban muy largos y con status incorrecto (OFFLINE cuando debería ser ONLINE).
+
+**Cambios en `dashboard/src/components/AdInfo.tsx`:**
+- Vista compacta colapsable - click para expandir
+- Status correcto basado en `advStatus` (1=ONLINE, 3=OFFLINE)
+- Por defecto solo muestra anuncios activos
+- Toggle "Ver todos" para incluir offline
+- Botón "Editar en Binance" que abre la página de anuncios
+- Botón para copiar ID del anuncio
+- Borde verde para anuncios activos
+
 ---
 
 ## Archivos Importantes
