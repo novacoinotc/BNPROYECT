@@ -1,6 +1,6 @@
 # Binance P2P Bot - Session Changelog
 
-**Última actualización:** 2025-01-15 04:10 UTC
+**Última actualización:** 2025-01-14 UTC
 
 Este documento contiene todos los cambios realizados durante la sesión de desarrollo para poder continuar en caso de reiniciar el chat.
 
@@ -370,20 +370,35 @@ const transformResponse = (response: any): MerchantAdsDetail | null => {
 
 **Problema:** El dashboard mostraba "No orders yet" aunque había órdenes nuevas en Binance. Las órdenes con status TRADING (esperando pago del comprador) no se mostraban.
 
-**Cambios:**
+**Cambios (reverted en sección 15):**
+- Se intentó agregar `TRADING` a `activeStatuses` pero causó error de Prisma
+
+---
+
+### 15. Fix: Prisma enum validation error para TRADING (2025-01-14 UTC)
+
+**Problema:** Error en Vercel: `PrismaClientValidationError: Invalid value for argument 'in'. Expected OrderStatus.`
+
+El status `TRADING` no existe en el enum `OrderStatus` de Prisma. Cuando Binance envía status `TRADING`, este se mapea a `PENDING` al guardar en la base de datos (ver `mapOrderStatus()` en `src/types/binance.ts`).
+
+**Solución:**
 
 1. **`dashboard/src/app/api/orders/route.ts`:**
-   - Agregado `TRADING` a `activeStatuses` para incluir órdenes nuevas
+   - Removido `TRADING` del array `activeStatuses`
+   - El filtro ahora usa solo valores válidos del enum: `['PENDING', 'PAID', 'APPEALING']`
 
 2. **`dashboard/src/components/OrdersTable.tsx`:**
-   - Agregado color azul para status TRADING
-   - Agregado label "Esperando pago" para TRADING
+   - Removido `TRADING` de `statusColors` y `statusLabels`
+   - `PENDING` ahora muestra "Esperando pago" (label que antes tenía TRADING)
 
-**Estados de órdenes en Binance:**
-- `TRADING` = Esperando que el comprador pague (azul)
-- `PAID` = Comprador marcó como pagado (amarillo)
-- `COMPLETED` = Crypto liberado (verde)
-- `CANCELLED` = Cancelado (rojo)
+**Mapeo de estados Binance → DB:**
+```typescript
+// En src/types/binance.ts
+'TRADING' → 'PENDING'      // Esperando que comprador pague
+'BUYER_PAYED' → 'PAID'     // Comprador marcó pagado
+'APPEALING' → 'APPEALING'  // En disputa
+'COMPLETED' → 'COMPLETED'  // Completado
+```
 
 ---
 
