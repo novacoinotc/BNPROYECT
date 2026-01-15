@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface VerificationStep {
   timestamp: string;
@@ -15,6 +15,17 @@ interface Payment {
   senderName: string;
   status: string;
   matchedAt: string | null;
+}
+
+interface ChatMessage {
+  id: string;
+  content: string;
+  type: string;
+  fromNickName: string;
+  isSelf: boolean;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  timestamp: number;
 }
 
 interface Order {
@@ -92,8 +103,111 @@ const stepEmojis: Record<string, string> = {
   MANUAL_REVIEW: '👤',
 };
 
+function ChatSection({ orderNumber }: { orderNumber: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchChat() {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await fetch(`/api/chat/${orderNumber}`);
+        const data = await response.json();
+
+        if (data.success) {
+          setMessages(data.messages || []);
+        } else {
+          setError(data.error || 'Error al cargar chat');
+        }
+      } catch (err: any) {
+        setError(err.message || 'Error de conexion');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchChat();
+  }, [orderNumber]);
+
+  if (loading) {
+    return (
+      <div className="p-3 bg-[#2b2f36] rounded-lg">
+        <div className="flex items-center gap-2 text-gray-400">
+          <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full"></div>
+          <span className="text-sm">Cargando chat...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-3 bg-[#2b2f36] rounded-lg">
+        <p className="text-sm text-red-400">{error}</p>
+      </div>
+    );
+  }
+
+  if (messages.length === 0) {
+    return (
+      <div className="p-3 bg-[#2b2f36] rounded-lg">
+        <p className="text-sm text-gray-500">No hay mensajes en el chat</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 bg-[#2b2f36] rounded-lg max-h-80 overflow-y-auto">
+      <div className="space-y-2">
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg p-2 ${
+                msg.isSelf
+                  ? 'bg-blue-600/30 text-blue-100'
+                  : 'bg-[#1e2126] text-gray-200'
+              }`}
+            >
+              {!msg.isSelf && (
+                <div className="text-xs text-gray-400 mb-1">{msg.fromNickName}</div>
+              )}
+              {msg.type === 'IMAGE' && msg.thumbnailUrl ? (
+                <a
+                  href={msg.imageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block"
+                >
+                  <img
+                    src={msg.thumbnailUrl}
+                    alt="Imagen"
+                    className="max-w-full rounded cursor-pointer hover:opacity-80"
+                    style={{ maxHeight: '150px' }}
+                  />
+                  <span className="text-xs text-blue-400 mt-1 block">Ver imagen completa</span>
+                </a>
+              ) : (
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              )}
+              <div className="text-xs text-gray-500 mt-1 text-right">
+                {new Date(msg.timestamp).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function OrdersTable({ orders }: { orders: Order[] }) {
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'verification' | 'chat'>('verification');
 
   if (orders.length === 0) {
     return (
@@ -122,9 +236,12 @@ export function OrdersTable({ orders }: { orders: Order[] }) {
               <tr
                 key={order.orderNumber}
                 className="hover:bg-[#2b2f36]/50 transition cursor-pointer"
-                onClick={() => setExpandedOrder(
-                  expandedOrder === order.orderNumber ? null : order.orderNumber
-                )}
+                onClick={() => {
+                  setExpandedOrder(
+                    expandedOrder === order.orderNumber ? null : order.orderNumber
+                  );
+                  setActiveTab('verification');
+                }}
               >
                 <td className="px-4 py-3">
                   <span className="font-mono text-sm text-gray-300">
@@ -170,7 +287,7 @@ export function OrdersTable({ orders }: { orders: Order[] }) {
                 </td>
               </tr>
 
-              {/* Expanded verification timeline */}
+              {/* Expanded section with tabs */}
               {expandedOrder === order.orderNumber && (
                 <tr key={`${order.orderNumber}-expanded`}>
                   <td colSpan={6} className="px-4 py-4 bg-[#1a1d24]">
@@ -191,119 +308,160 @@ export function OrdersTable({ orders }: { orders: Order[] }) {
                         </div>
                       </div>
 
-                      {/* Payment info */}
-                      {order.payments.length > 0 && (
-                        <div className="p-3 bg-[#2b2f36] rounded-lg">
-                          <h4 className="text-sm font-medium text-gray-300 mb-2">Pago Bancario</h4>
-                          {order.payments.map((payment) => (
-                            <div key={payment.transactionId} className="text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">ID:</span>
-                                <span className="text-white font-mono">{payment.transactionId.slice(0, 20)}...</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Monto:</span>
-                                <span className="text-white">${parseFloat(payment.amount).toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Pagador:</span>
-                                <span className="text-white">{payment.senderName}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Estado:</span>
-                                <span className={`${payment.status === 'MATCHED' ? 'text-green-400' : 'text-yellow-400'}`}>
-                                  {payment.status}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Verification timeline */}
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-300 mb-3">Timeline de Verificacion</h4>
-                        {order.verificationTimeline && order.verificationTimeline.length > 0 ? (
-                          <div className="space-y-2">
-                            {order.verificationTimeline.map((step, index) => (
-                              <div
-                                key={index}
-                                className="flex items-start gap-3 p-2 bg-[#2b2f36] rounded-lg"
-                              >
-                                <span className="text-lg">
-                                  {stepEmojis[step.status] || '📋'}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between">
-                                    <span className={`text-sm font-medium ${
-                                      verificationStatusColors[step.status]?.includes('green')
-                                        ? 'text-green-400'
-                                        : verificationStatusColors[step.status]?.includes('red')
-                                        ? 'text-red-400'
-                                        : 'text-white'
-                                    }`}>
-                                      {step.message}
-                                    </span>
-                                    <span className="text-xs text-gray-500">
-                                      {new Date(step.timestamp).toLocaleTimeString()}
-                                    </span>
-                                  </div>
-                                  {step.details && (
-                                    <div className="mt-1 text-xs text-gray-400 space-y-0.5">
-                                      {step.details.receivedAmount !== undefined && (
-                                        <div>Recibido: ${step.details.receivedAmount}</div>
-                                      )}
-                                      {step.details.expectedAmount !== undefined && (
-                                        <div>Esperado: ${step.details.expectedAmount}</div>
-                                      )}
-                                      {step.details.senderName && (
-                                        <div>Pagador: {step.details.senderName}</div>
-                                      )}
-                                      {step.details.buyerName && (
-                                        <div>Comprador: {step.details.buyerName}</div>
-                                      )}
-                                      {step.details.matchScore !== undefined && (
-                                        <div>Similitud nombre: {(step.details.matchScore * 100).toFixed(0)}%</div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-500 p-3 bg-[#2b2f36] rounded-lg">
-                            No hay timeline de verificacion para esta orden
-                          </div>
-                        )}
+                      {/* Tabs */}
+                      <div className="flex gap-2 border-b border-[#2b2f36]">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveTab('verification');
+                          }}
+                          className={`px-4 py-2 text-sm font-medium transition ${
+                            activeTab === 'verification'
+                              ? 'text-yellow-400 border-b-2 border-yellow-400'
+                              : 'text-gray-400 hover:text-gray-300'
+                          }`}
+                        >
+                          Verificacion
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveTab('chat');
+                          }}
+                          className={`px-4 py-2 text-sm font-medium transition ${
+                            activeTab === 'chat'
+                              ? 'text-yellow-400 border-b-2 border-yellow-400'
+                              : 'text-gray-400 hover:text-gray-300'
+                          }`}
+                        >
+                          Chat
+                        </button>
                       </div>
 
-                      {/* Recommendation */}
-                      {order.verificationStatus === 'READY_TO_RELEASE' && (
-                        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">🚀</span>
-                            <span className="text-emerald-400 font-medium">
-                              Verificacion completa - Listo para liberar
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-400 mt-1">
-                            Auto-release esta deshabilitado. Libera manualmente en Binance.
-                          </p>
-                        </div>
-                      )}
+                      {/* Tab content */}
+                      {activeTab === 'verification' ? (
+                        <>
+                          {/* Payment info */}
+                          {order.payments.length > 0 && (
+                            <div className="p-3 bg-[#2b2f36] rounded-lg">
+                              <h4 className="text-sm font-medium text-gray-300 mb-2">Pago Bancario</h4>
+                              {order.payments.map((payment) => (
+                                <div key={payment.transactionId} className="text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">ID:</span>
+                                    <span className="text-white font-mono">{payment.transactionId.slice(0, 20)}...</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Monto:</span>
+                                    <span className="text-white">${parseFloat(payment.amount).toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Pagador:</span>
+                                    <span className="text-white">{payment.senderName}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Estado:</span>
+                                    <span className={`${payment.status === 'MATCHED' ? 'text-green-400' : 'text-yellow-400'}`}>
+                                      {payment.status}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
-                      {order.verificationStatus === 'MANUAL_REVIEW' && (
-                        <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">👤</span>
-                            <span className="text-orange-400 font-medium">
-                              Requiere revision manual
-                            </span>
+                          {/* Verification timeline */}
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-300 mb-3">Timeline de Verificacion</h4>
+                            {order.verificationTimeline && order.verificationTimeline.length > 0 ? (
+                              <div className="space-y-2">
+                                {order.verificationTimeline.map((step, index) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-start gap-3 p-2 bg-[#2b2f36] rounded-lg"
+                                  >
+                                    <span className="text-lg">
+                                      {stepEmojis[step.status] || '📋'}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center justify-between">
+                                        <span className={`text-sm font-medium ${
+                                          verificationStatusColors[step.status]?.includes('green')
+                                            ? 'text-green-400'
+                                            : verificationStatusColors[step.status]?.includes('red')
+                                            ? 'text-red-400'
+                                            : 'text-white'
+                                        }`}>
+                                          {step.message}
+                                        </span>
+                                        <span className="text-xs text-gray-500">
+                                          {new Date(step.timestamp).toLocaleTimeString()}
+                                        </span>
+                                      </div>
+                                      {step.details && (
+                                        <div className="mt-1 text-xs text-gray-400 space-y-0.5">
+                                          {step.details.receivedAmount !== undefined && (
+                                            <div>Recibido: ${step.details.receivedAmount}</div>
+                                          )}
+                                          {step.details.expectedAmount !== undefined && (
+                                            <div>Esperado: ${step.details.expectedAmount}</div>
+                                          )}
+                                          {step.details.senderName && (
+                                            <div>Pagador: {step.details.senderName}</div>
+                                          )}
+                                          {step.details.buyerName && (
+                                            <div>Comprador: {step.details.buyerName}</div>
+                                          )}
+                                          {step.details.matchScore !== undefined && (
+                                            <div>Similitud nombre: {(step.details.matchScore * 100).toFixed(0)}%</div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-500 p-3 bg-[#2b2f36] rounded-lg">
+                                No hay timeline de verificacion para esta orden
+                              </div>
+                            )}
                           </div>
-                          <p className="text-sm text-gray-400 mt-1">
-                            Revisa los detalles arriba antes de liberar.
-                          </p>
+
+                          {/* Recommendation */}
+                          {order.verificationStatus === 'READY_TO_RELEASE' && (
+                            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg">🚀</span>
+                                <span className="text-emerald-400 font-medium">
+                                  Verificacion completa - Listo para liberar
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-400 mt-1">
+                                Auto-release esta deshabilitado. Libera manualmente en Binance.
+                              </p>
+                            </div>
+                          )}
+
+                          {order.verificationStatus === 'MANUAL_REVIEW' && (
+                            <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg">👤</span>
+                                <span className="text-orange-400 font-medium">
+                                  Requiere revision manual
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-400 mt-1">
+                                Revisa los detalles arriba antes de liberar.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        /* Chat tab */
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-300 mb-3">Chat de la Orden</h4>
+                          <ChatSection orderNumber={order.orderNumber} />
                         </div>
                       )}
                     </div>

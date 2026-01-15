@@ -129,6 +129,9 @@ export class WebhookReceiver extends EventEmitter {
     // Orders sync - fetches orders from Binance and saves to DB
     this.app.post('/api/orders/sync', this.handleOrdersSync.bind(this));
 
+    // Chat proxy - fetches chat messages for an order from Binance
+    this.app.get('/api/chat/:orderNumber', this.handleChatProxy.bind(this));
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
@@ -362,6 +365,57 @@ export class WebhookReceiver extends EventEmitter {
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to sync orders from Binance',
+      });
+    }
+  }
+
+  /**
+   * Handle chat proxy request (for dashboard)
+   * Fetches chat messages for a specific order from Binance
+   */
+  private async handleChatProxy(req: Request, res: Response): Promise<void> {
+    try {
+      const { orderNumber } = req.params;
+
+      if (!orderNumber) {
+        res.status(400).json({ success: false, error: 'Order number is required' });
+        return;
+      }
+
+      const client = getBinanceClient();
+      const messages = await client.getChatMessages({ orderNo: orderNumber, page: 1 });
+
+      // Also save messages to database for history
+      for (const msg of messages) {
+        try {
+          await db.saveChatMessage(msg);
+        } catch (err) {
+          // Ignore duplicate errors
+        }
+      }
+
+      logger.info({ orderNumber, count: messages.length }, 'Fetched chat messages');
+
+      res.json({
+        success: true,
+        orderNumber,
+        messages: messages.map(msg => ({
+          id: msg.id,
+          content: msg.content,
+          type: msg.type,
+          fromNickName: msg.fromNickName,
+          isSelf: msg.self,
+          imageUrl: msg.imageUrl,
+          thumbnailUrl: msg.thumbnailUrl,
+          timestamp: msg.createTime,
+        })),
+        source: 'railway-proxy',
+      });
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Chat proxy error');
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to fetch chat messages',
       });
     }
   }
