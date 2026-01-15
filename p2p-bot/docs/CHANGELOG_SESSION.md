@@ -1,6 +1,6 @@
 # Binance P2P Bot - Session Changelog
 
-**Última actualización:** 2025-01-15 03:45 UTC
+**Última actualización:** 2025-01-15 04:00 UTC
 
 Este documento contiene todos los cambios realizados durante la sesión de desarrollo para poder continuar en caso de reiniciar el chat.
 
@@ -225,6 +225,38 @@ Got recent orders from Binance
 💰 Bank payment received via webhook
 Payment saved to DB for matching
 ```
+
+### 9. Sincronización de Órdenes al Iniciar Bot (2025-01-15 04:00 UTC)
+
+**Problema:** El dashboard mostraba "No orders yet" aunque Binance tenía órdenes activas con status "Payment received" (BUYER_PAYED). El bot solo guardaba órdenes cuando las detectaba como "nuevas", pero al reiniciarse perdía el tracking.
+
+**Archivos modificados:**
+
+1. **`src/services/order-manager.ts`**:
+   - Cambiado `start()` a `async start()`
+   - Agregada función `syncAllOrders()` que:
+     - Obtiene órdenes pendientes via `listPendingOrders()`
+     - Obtiene órdenes activas via `listOrders()` (incluye BUYER_PAYED)
+     - Obtiene historial via `listOrderHistory()`
+     - Combina y deduplica todas las órdenes
+     - Guarda TODAS en la base de datos al iniciar
+     - Muestra breakdown de estados para debugging
+
+2. **`src/index.ts`**:
+   - Cambiado `orderManager.start()` a `await orderManager.start()`
+
+**Comportamiento nuevo:**
+```
+Syncing all orders from Binance to database...
+Found pending orders to sync { count: X }
+Found active orders via listOrders { count: Y }
+Found recent orders to sync { count: Z }
+Total unique orders to sync { total: N }
+Order status breakdown { statusCounts: { TRADING: 1, BUYER_PAYED: 5, COMPLETED: 20 } }
+Order sync complete { savedCount: N, activeTracking: M }
+```
+
+**Nota:** Ahora al reiniciar el bot, TODAS las órdenes existentes en Binance se guardarán en la DB y aparecerán en el dashboard.
 
 ---
 

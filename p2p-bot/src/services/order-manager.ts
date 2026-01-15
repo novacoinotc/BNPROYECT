@@ -52,7 +52,7 @@ export class OrderManager extends EventEmitter {
   /**
    * Start polling for order updates
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this.isRunning) {
       logger.warn('Order manager already running');
       return;
@@ -60,6 +60,9 @@ export class OrderManager extends EventEmitter {
 
     this.isRunning = true;
     logger.info({ interval: this.config.pollIntervalMs }, 'Starting order polling');
+
+    // Sync existing orders from Binance to database first
+    await this.syncAllOrders();
 
     // Initial poll
     this.pollOrders();
@@ -69,6 +72,80 @@ export class OrderManager extends EventEmitter {
       () => this.pollOrders(),
       this.config.pollIntervalMs
     );
+  }
+
+  /**
+   * Sync all orders from Binance to database (runs at startup)
+   * This ensures orders created before bot restart are in the DB
+   */
+  private async syncAllOrders(): Promise<void> {
+    logger.info('Syncing all orders from Binance to database...');
+
+    try {
+      // Get pending orders (includes TRADING and BUYER_PAYED)
+      const pendingOrders = await this.client.listPendingOrders(50);
+      logger.info({ count: pendingOrders.length }, 'Found pending orders to sync');
+
+      // Also get orders via listOrders which may include more statuses
+      let activeOrders: OrderData[] = [];
+      try {
+        activeOrders = await this.client.listOrders({
+          tradeType: TradeType.SELL,
+          rows: 50,
+        });
+        logger.info({ count: activeOrders.length }, 'Found active orders via listOrders');
+      } catch (err) {
+        logger.warn({ error: err }, 'listOrders failed, continuing with pendingOrders only');
+      }
+
+      // Get recent order history (includes COMPLETED, CANCELLED)
+      const recentOrders = await this.client.listOrderHistory({
+        tradeType: TradeType.SELL,
+        rows: 100, // Get more history
+      });
+      logger.info({ count: recentOrders.length }, 'Found recent orders to sync');
+
+      // Combine and deduplicate
+      const allOrders = new Map<string, OrderData>();
+      for (const order of [...pendingOrders, ...activeOrders, ...recentOrders]) {
+        allOrders.set(order.orderNumber, order);
+      }
+
+      logger.info({ total: allOrders.size }, 'Total unique orders to sync');
+
+      // Log order statuses for debugging
+      const statusCounts: Record<string, number> = {};
+      for (const order of allOrders.values()) {
+        statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
+      }
+      logger.info({ statusCounts }, 'Order status breakdown');
+
+      // Save all orders to database
+      let savedCount = 0;
+      for (const order of allOrders.values()) {
+        try {
+          await saveOrder(order);
+          savedCount++;
+
+          // Track active orders in memory (not completed/cancelled)
+          if (!['COMPLETED', 'CANCELLED', 'CANCELLED_BY_SYSTEM'].includes(order.orderStatus)) {
+            this.activeOrders.set(order.orderNumber, order);
+            this.pendingMatches.set(order.orderNumber, {
+              orderNumber: order.orderNumber,
+              expectedAmount: parseFloat(order.totalPrice),
+              verified: false,
+            });
+          }
+        } catch (err) {
+          // Continue on error (might be duplicate)
+          logger.debug({ orderNumber: order.orderNumber }, 'Order sync skipped (likely exists)');
+        }
+      }
+
+      logger.info({ savedCount, activeTracking: this.activeOrders.size }, 'Order sync complete');
+    } catch (error) {
+      logger.error({ error }, 'Failed to sync orders from Binance');
+    }
   }
 
   /**

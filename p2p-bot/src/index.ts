@@ -206,8 +206,8 @@ function setupEventHandlers(): void {
 }
 
 async function startServices(): Promise<void> {
-  // Start order polling
-  orderManager.start();
+  // Start order polling (includes initial sync)
+  await orderManager.start();
   logger.info('Order polling started');
 
   // Start chat WebSocket
