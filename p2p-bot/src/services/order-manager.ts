@@ -91,22 +91,25 @@ export class OrderManager extends EventEmitter {
       // Get pending orders using the working endpoint
       const pendingOrders = await this.client.listPendingOrders(20);
 
-      // Get recent order history
+      // Get recent order history (includes completed/cancelled)
       const recentOrders = await this.client.listOrders({
         tradeType: TradeType.SELL,
         rows: 20,
       });
 
-      // Filter recent orders to only include active ones (TRADING or BUYER_PAYED)
-      const activeRecentOrders = recentOrders.filter(
-        o => o.orderStatus === 'TRADING' || o.orderStatus === 'BUYER_PAYED'
-      );
-
-      const allOrders = [...pendingOrders, ...activeRecentOrders];
-
-      // Process each order
-      for (const order of allOrders) {
+      // Process pending orders first
+      for (const order of pendingOrders) {
         await this.processOrder(order);
+      }
+
+      // Check recent orders for status changes on orders we're tracking
+      // This catches COMPLETED/CANCELLED orders that are no longer in pending
+      for (const order of recentOrders) {
+        const trackedOrder = this.activeOrders.get(order.orderNumber);
+        if (trackedOrder && trackedOrder.orderStatus !== order.orderStatus) {
+          // Status changed! Process it
+          await this.processOrder(order);
+        }
       }
 
       // Check for expired/cancelled orders
@@ -114,7 +117,7 @@ export class OrderManager extends EventEmitter {
 
       logger.debug({
         pending: pendingOrders.length,
-        activeRecent: activeRecentOrders.length,
+        recent: recentOrders.length,
         active: this.activeOrders.size,
       }, 'Order poll complete');
     } catch (error) {
@@ -129,15 +132,22 @@ export class OrderManager extends EventEmitter {
     const existingOrder = this.activeOrders.get(order.orderNumber);
 
     if (!existingOrder) {
-      // New order detected
-      await this.handleNewOrder(order);
+      // New order detected - only track if not completed/cancelled
+      if (!['COMPLETED', 'CANCELLED', 'CANCELLED_BY_SYSTEM'].includes(order.orderStatus)) {
+        await this.handleNewOrder(order);
+        this.activeOrders.set(order.orderNumber, order);
+      }
     } else if (existingOrder.orderStatus !== order.orderStatus) {
       // Status changed
       await this.handleStatusChange(existingOrder, order);
-    }
 
-    // Update stored order
-    this.activeOrders.set(order.orderNumber, order);
+      // Only keep in activeOrders if still active
+      if (['COMPLETED', 'CANCELLED', 'CANCELLED_BY_SYSTEM'].includes(order.orderStatus)) {
+        // Already removed by handleOrderCompleted/handleOrderCancelled
+      } else {
+        this.activeOrders.set(order.orderNumber, order);
+      }
+    }
   }
 
   // ==================== ORDER HANDLERS ====================
