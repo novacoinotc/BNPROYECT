@@ -310,20 +310,22 @@ async function main() {
 
     for (const params of releaseTests) {
       // We'll use a FAKE order number to test the endpoint format safely
-      const safeParams = { ...params };
-      Object.keys(safeParams).forEach(k => {
-        safeParams[k] = 'FAKE_' + safeParams[k]; // Modify to ensure we don't actually release
+      const safeParams: Record<string, any> = {};
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined) {
+          safeParams[k] = 'FAKE_' + v; // Modify to ensure we don't actually release
+        }
       });
 
       const result = await signedRequest('POST', '/sapi/v1/c2c/orderMatch/releaseOrder', safeParams);
-      console.log(`\n   Params: ${JSON.stringify(Object.keys(params))}`);
+      console.log(`\n   Params: ${JSON.stringify(Object.keys(safeParams))}`);
       console.log(`   Status: ${result.status}`);
       console.log(`   Response: ${JSON.stringify(result.data).substring(0, 150)}`);
 
       // If we get "order not found" or similar, the param format is correct
       const msg = result.data?.msg || result.data?.message || '';
       if (msg.toLowerCase().includes('order') || result.data?.code === '704001') {
-        console.log(`   ✅ Parameter format "${Object.keys(params)[0]}" is recognized!`);
+        console.log(`   ✅ Parameter format "${Object.keys(safeParams)[0]}" is recognized!`);
       }
     }
   } else {

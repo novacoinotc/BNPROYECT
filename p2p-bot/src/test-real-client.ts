@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { BinanceC2CClient } from './services/binance-client.js';
+import { TradeType } from './types/binance.js';
 
 const client = new BinanceC2CClient(
   process.env.BINANCE_API_KEY!,
@@ -44,7 +45,7 @@ async function main() {
   // 3. Test list orders (all)
   console.log('\n3️⃣ listOrders()');
   try {
-    const orders = await client.listOrders({ tradeType: 'SELL', rows: 5 });
+    const orders = await client.listOrders({ tradeType: TradeType.SELL, rows: 5 });
     console.log(`   ✅ Success! Found ${orders.length} orders`);
     if (orders.length > 0) {
       const order = orders[0];
@@ -68,7 +69,7 @@ async function main() {
   // 5. Test reference price
   console.log('\n5️⃣ getReferencePrice()');
   try {
-    const price = await client.getReferencePrice('USDT', 'MXN', 'SELL');
+    const price = await client.getReferencePrice('USDT', 'MXN', TradeType.SELL);
     console.log(`   ✅ Success! Price: ${price.price} ${price.fiatUnit}`);
   } catch (error: any) {
     console.log(`   ❌ Failed: ${error.message}`);
@@ -80,7 +81,7 @@ async function main() {
     const ads = await client.searchAds({
       asset: 'USDT',
       fiat: 'MXN',
-      tradeType: 'SELL',
+      tradeType: TradeType.SELL,
       page: 1,
       rows: 5,
     });
