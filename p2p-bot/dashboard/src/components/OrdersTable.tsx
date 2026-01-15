@@ -31,6 +31,7 @@ interface Order {
 }
 
 const statusColors: Record<string, string> = {
+  TRADING: 'bg-blue-500/20 text-blue-400',
   PENDING: 'status-pending',
   PAID: 'status-paid',
   COMPLETED: 'status-completed',
@@ -38,6 +39,17 @@ const statusColors: Record<string, string> = {
   CANCELLED_SYSTEM: 'status-cancelled',
   CANCELLED_TIMEOUT: 'status-cancelled',
   APPEALING: 'bg-orange-500/20 text-orange-400',
+};
+
+const statusLabels: Record<string, string> = {
+  TRADING: 'Esperando pago',
+  PENDING: 'PENDING',
+  PAID: 'PAID',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+  CANCELLED_SYSTEM: 'CANCELLED',
+  CANCELLED_TIMEOUT: 'CANCELLED',
+  APPEALING: 'APPEAL',
 };
 
 const verificationStatusColors: Record<string, string> = {
@@ -138,7 +150,7 @@ export function OrdersTable({ orders }: { orders: Order[] }) {
                       statusColors[order.status] || 'bg-gray-500/20 text-gray-400'
                     }`}
                   >
-                    {order.status}
+                    {statusLabels[order.status] || order.status}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-center">

@@ -10,9 +10,11 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const showAll = searchParams.get('showAll') === 'true';
 
-    // By default, only show active orders (PENDING, PAID, APPEALING)
+    // By default, only show active orders (TRADING, PENDING, PAID, APPEALING)
+    // TRADING = waiting for buyer to pay
+    // PENDING/PAID = buyer marked as paid, waiting for release
     // Use showAll=true to see completed/cancelled orders
-    const activeStatuses = ['PENDING', 'PAID', 'APPEALING'];
+    const activeStatuses = ['TRADING', 'PENDING', 'PAID', 'APPEALING'];
 
     const whereClause = status
       ? { status: status as any }
