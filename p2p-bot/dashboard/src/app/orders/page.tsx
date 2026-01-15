@@ -19,15 +19,22 @@ export default function OrdersPage() {
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: activeOrders, isLoading: loadingActive } = useQuery({
+  const { data: activeOrders, isLoading: loadingActive, refetch: refetchActive } = useQuery({
     queryKey: ['orders', 'active'],
     queryFn: () => fetchOrders(false),
+    refetchInterval: 30000,
   });
 
-  const { data: allOrders, isLoading: loadingAll } = useQuery({
+  const { data: allOrders, isLoading: loadingAll, refetch: refetchAll } = useQuery({
     queryKey: ['orders', 'all'],
     queryFn: () => fetchOrders(true),
+    refetchInterval: 30000,
   });
+
+  const handleRefresh = () => {
+    refetchActive();
+    refetchAll();
+  };
 
   // Filter completed orders from all orders
   const completedOrders = allOrders?.filter((order: any) =>
@@ -165,7 +172,7 @@ export default function OrdersPage() {
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
             </div>
           ) : (
-            <OrdersTable orders={orders || []} />
+            <OrdersTable orders={orders || []} onRefresh={handleRefresh} />
           )}
         </div>
       </div>

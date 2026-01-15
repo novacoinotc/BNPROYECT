@@ -35,6 +35,9 @@ export class WebhookReceiver extends EventEmitter {
   private recentPayments: Map<string, Date> = new Map();
   private readonly DUPLICATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
+  // SSE clients for real-time updates
+  private sseClients: Set<express.Response> = new Set();
+
   constructor(config: WebhookConfig) {
     super();
     this.config = config;
@@ -131,6 +134,12 @@ export class WebhookReceiver extends EventEmitter {
 
     // Chat proxy - fetches chat messages for an order from Binance
     this.app.get('/api/chat/:orderNumber', this.handleChatProxy.bind(this));
+
+    // Release order - releases crypto to buyer (requires 2FA)
+    this.app.post('/api/orders/release', this.handleReleaseOrder.bind(this));
+
+    // Real-time updates via Server-Sent Events
+    this.app.get('/api/events', this.handleSSE.bind(this));
 
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
@@ -420,6 +429,108 @@ export class WebhookReceiver extends EventEmitter {
     }
   }
 
+  /**
+   * Handle order release request (requires 2FA)
+   */
+  private async handleReleaseOrder(req: Request, res: Response): Promise<void> {
+    try {
+      const { orderNumber, authType, code } = req.body;
+
+      if (!orderNumber || !authType || !code) {
+        res.status(400).json({
+          success: false,
+          error: 'orderNumber, authType, and code are required',
+        });
+        return;
+      }
+
+      const client = getBinanceClient();
+
+      logger.info({ orderNumber, authType }, '🔓 Attempting to release order');
+
+      await client.releaseCoin({
+        orderNumber,
+        authType,
+        code,
+      });
+
+      // Update order status in database
+      await db.addVerificationStep(
+        orderNumber,
+        'RELEASED' as any,
+        'Crypto liberado manualmente desde dashboard',
+        { authType, releasedBy: 'dashboard', timestamp: new Date().toISOString() }
+      );
+
+      // Broadcast update to SSE clients
+      this.broadcastSSE({
+        type: 'order_released',
+        orderNumber,
+        timestamp: new Date().toISOString(),
+      });
+
+      logger.info({ orderNumber }, '✅ Order released successfully');
+
+      res.json({
+        success: true,
+        message: 'Order released successfully',
+        orderNumber,
+      });
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Release order error');
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to release order',
+      });
+    }
+  }
+
+  /**
+   * Handle Server-Sent Events connection for real-time updates
+   */
+  private handleSSE(req: Request, res: Response): void {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    // Add client to set
+    this.sseClients.add(res);
+    logger.info({ clients: this.sseClients.size }, 'SSE client connected');
+
+    // Send initial connection message
+    res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
+
+    // Keep-alive ping every 30 seconds
+    const keepAlive = setInterval(() => {
+      res.write(`data: ${JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() })}\n\n`);
+    }, 30000);
+
+    // Handle client disconnect
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      this.sseClients.delete(res);
+      logger.info({ clients: this.sseClients.size }, 'SSE client disconnected');
+    });
+  }
+
+  /**
+   * Broadcast message to all SSE clients
+   */
+  public broadcastSSE(data: any): void {
+    const message = `data: ${JSON.stringify(data)}\n\n`;
+    for (const client of this.sseClients) {
+      try {
+        client.write(message);
+      } catch (err) {
+        // Client disconnected, remove from set
+        this.sseClients.delete(client);
+      }
+    }
+  }
+
   // ==================== WEBHOOK HANDLERS ====================
 
   /**
@@ -480,6 +591,15 @@ export class WebhookReceiver extends EventEmitter {
         };
 
         this.emit('payment', event);
+
+        // Broadcast to SSE clients
+        this.broadcastSSE({
+          type: 'payment_received',
+          transactionId: payload.transactionId,
+          amount: payload.amount,
+          senderName: payload.senderName,
+          timestamp: new Date().toISOString(),
+        });
       }
 
       // Acknowledge receipt

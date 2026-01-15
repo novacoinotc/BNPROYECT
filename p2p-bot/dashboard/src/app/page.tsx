@@ -17,9 +17,11 @@ async function fetchDashboardData() {
 }
 
 export default function Dashboard() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboardData,
+    // Fallback polling in case SSE disconnects
+    refetchInterval: 30000,
   });
 
   if (isLoading) {
@@ -55,7 +57,7 @@ export default function Dashboard() {
               </a>
             </div>
             <div className="card-body p-0">
-              <OrdersTable orders={data?.orders || []} />
+              <OrdersTable orders={data?.orders || []} onRefresh={refetch} />
             </div>
           </div>
         </div>
