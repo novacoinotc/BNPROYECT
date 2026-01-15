@@ -366,6 +366,25 @@ const transformResponse = (response: any): MerchantAdsDetail | null => {
 - Botón para copiar ID del anuncio
 - Borde verde para anuncios activos
 
+### 14. Mostrar órdenes TRADING en el dashboard (2025-01-14 UTC)
+
+**Problema:** El dashboard mostraba "No orders yet" aunque había órdenes nuevas en Binance. Las órdenes con status TRADING (esperando pago del comprador) no se mostraban.
+
+**Cambios:**
+
+1. **`dashboard/src/app/api/orders/route.ts`:**
+   - Agregado `TRADING` a `activeStatuses` para incluir órdenes nuevas
+
+2. **`dashboard/src/components/OrdersTable.tsx`:**
+   - Agregado color azul para status TRADING
+   - Agregado label "Esperando pago" para TRADING
+
+**Estados de órdenes en Binance:**
+- `TRADING` = Esperando que el comprador pague (azul)
+- `PAID` = Comprador marcó como pagado (amarillo)
+- `COMPLETED` = Crypto liberado (verde)
+- `CANCELLED` = Cancelado (rojo)
+
 ---
 
 ## Archivos Importantes
