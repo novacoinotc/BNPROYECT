@@ -281,6 +281,7 @@ export async function findOrdersAwaitingPayment(
   orderNumber: string;
   totalPrice: string;
   buyerNickName: string;
+  buyerRealName: string | null;
   createdAt: Date;
 }>> {
   const db = getPool();
@@ -288,16 +289,28 @@ export async function findOrdersAwaitingPayment(
   const minAmount = amount - tolerance;
   const maxAmount = amount + tolerance;
 
+  logger.info({
+    amount,
+    tolerancePercent,
+    minAmount,
+    maxAmount,
+  }, 'Searching for orders awaiting payment');
+
   const result = await db.query(
-    `SELECT "orderNumber", "totalPrice", "buyerNickName", "createdAt"
+    `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", "createdAt"
      FROM "Order"
-     WHERE status = 'PAID'
+     WHERE status = 'PAID'::"OrderStatus"
        AND "totalPrice"::numeric BETWEEN $1 AND $2
        AND "releasedAt" IS NULL
-     ORDER BY "createdAt" DESC
+     ORDER BY "binanceCreateTime" DESC
      LIMIT 10`,
     [minAmount, maxAmount]
   );
+
+  logger.info({
+    foundOrders: result.rows.length,
+    orders: result.rows.map(o => ({ orderNumber: o.orderNumber, totalPrice: o.totalPrice })),
+  }, 'Orders awaiting payment search result');
 
   return result.rows;
 }

@@ -205,16 +205,21 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
         // Try to match with best candidate
         for (const dbOrder of awaitingOrders) {
-          const nameMatch = this.compareNames(payment.senderName, dbOrder.buyerNickName);
+          // Use real name if available (matches bank sender name better than nickname)
+          const buyerNameToCompare = dbOrder.buyerRealName || dbOrder.buyerNickName;
+          const nameMatch = this.compareNames(payment.senderName, buyerNameToCompare);
 
           logger.info({
             orderNumber: dbOrder.orderNumber,
             paymentSender: payment.senderName,
-            orderBuyer: dbOrder.buyerNickName,
+            orderBuyerNick: dbOrder.buyerNickName,
+            orderBuyerReal: dbOrder.buyerRealName,
+            comparingWith: buyerNameToCompare,
             nameMatch,
           }, 'Comparing payment sender with order buyer');
 
-          if (nameMatch > 0.3 || awaitingOrders.length === 1) {
+          // Match if: name similarity > 30%, OR only one order matches the amount, OR we have real name
+          if (nameMatch > 0.3 || awaitingOrders.length === 1 || dbOrder.buyerRealName) {
             // Found a match!
             logger.info({
               orderNumber: dbOrder.orderNumber,
