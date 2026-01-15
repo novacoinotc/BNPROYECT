@@ -31,7 +31,6 @@ interface Order {
 }
 
 const statusColors: Record<string, string> = {
-  TRADING: 'bg-blue-500/20 text-blue-400',
   PENDING: 'status-pending',
   PAID: 'status-paid',
   COMPLETED: 'status-completed',
@@ -42,8 +41,7 @@ const statusColors: Record<string, string> = {
 };
 
 const statusLabels: Record<string, string> = {
-  TRADING: 'Esperando pago',
-  PENDING: 'PENDING',
+  PENDING: 'Esperando pago',
   PAID: 'PAID',
   COMPLETED: 'COMPLETED',
   CANCELLED: 'CANCELLED',
