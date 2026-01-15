@@ -316,8 +316,23 @@ export class WebhookReceiver extends EventEmitter {
                     order.orderNumber,
                     'READY_TO_RELEASE' as any,
                     'Verificación completa - Listo para liberar',
-                    { autoRelease: false, reason: 'sync_verification' }
+                    { autoRelease: true, reason: 'sync_verification' }
                   );
+
+                  // Emit event for auto-release orchestrator
+                  this.emit('sync_matched', {
+                    order,
+                    payment: {
+                      transactionId: payment.transactionId,
+                      amount: payment.amount,
+                      senderName: payment.senderName,
+                    },
+                  });
+
+                  logger.info({
+                    orderNumber: order.orderNumber,
+                    amount: order.totalPrice,
+                  }, '🚀 Emitting sync_matched event for auto-release');
                 } else {
                   await db.addVerificationStep(
                     order.orderNumber,

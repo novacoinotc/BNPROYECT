@@ -112,6 +112,51 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     this.webhookReceiver.on('reversal', (event: WebhookEvent) => {
       this.handleBankReversal(event);
     });
+
+    // Sync endpoint matched a payment - trigger auto-release check
+    this.webhookReceiver.on('sync_matched', (event: { order: OrderData; payment: { transactionId: string; amount: number; senderName: string } }) => {
+      this.handleSyncMatched(event);
+    });
+  }
+
+  /**
+   * Handle payment matched during sync endpoint
+   */
+  private async handleSyncMatched(event: { order: OrderData; payment: { transactionId: string; amount: number; senderName: string } }): Promise<void> {
+    const { order, payment } = event;
+
+    logger.info({
+      orderNumber: order.orderNumber,
+      amount: order.totalPrice,
+      transactionId: payment.transactionId,
+    }, '📥 Received sync_matched event - checking auto-release');
+
+    // Create pending release record
+    const pending: PendingRelease = {
+      orderNumber: order.orderNumber,
+      order,
+      bankMatch: {
+        transactionId: payment.transactionId,
+        amount: payment.amount,
+        currency: order.fiat || 'MXN',
+        senderName: payment.senderName,
+        senderAccount: '',
+        receiverAccount: '',
+        concept: '',
+        timestamp: new Date().toISOString(),
+        bankReference: '',
+        status: 'completed',
+      },
+      ocrVerified: true, // Skip OCR for sync matches
+      ocrConfidence: 1.0,
+      queuedAt: new Date(),
+      attempts: 0,
+    };
+
+    this.pendingReleases.set(order.orderNumber, pending);
+
+    // Check if ready for release
+    await this.checkReadyForRelease(order.orderNumber);
   }
 
   // ==================== EVENT HANDLERS ====================
