@@ -301,15 +301,38 @@ export class BinanceC2CClient {
    * Uses GET /sapi/v1/c2c/ads/list which works reliably
    */
   async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
+    // Helper to transform API response to MerchantAdsDetail format
+    const transformResponse = (response: any): MerchantAdsDetail | null => {
+      // If response already has sellList/buyList format
+      if (response?.sellList || response?.buyList) {
+        return response as MerchantAdsDetail;
+      }
+
+      // If response has data array (POST /listWithPagination format)
+      if (Array.isArray(response)) {
+        const sellList = response.filter((ad: any) => ad.tradeType === 'SELL');
+        const buyList = response.filter((ad: any) => ad.tradeType === 'BUY');
+        logger.info({ sellCount: sellList.length, buyCount: buyList.length }, 'listMyAds: Transformed data array');
+        return {
+          sellList,
+          buyList,
+          merchant: {} as any,
+        };
+      }
+
+      return null;
+    };
+
     try {
       // Primary: GET /sapi/v1/c2c/ads/list (discovered as working)
-      const response = await this.signedGet<MerchantAdsDetail>(
+      const response = await this.signedGet<any>(
         '/sapi/v1/c2c/ads/list',
         { page, rows }
       );
-      if (response) {
-        logger.info({ sellCount: response.sellList?.length || 0 }, 'listMyAds: Success');
-        return response;
+      const transformed = transformResponse(response);
+      if (transformed) {
+        logger.info({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: GET Success');
+        return transformed;
       }
     } catch (error: any) {
       logger.warn({ error: error?.message }, 'listMyAds: GET /ads/list failed, trying alternative');
@@ -317,13 +340,14 @@ export class BinanceC2CClient {
 
     // Fallback: POST /sapi/v1/c2c/ads/listWithPagination
     try {
-      const response = await this.signedPost<MerchantAdsDetail>(
+      const response = await this.signedPost<any>(
         '/sapi/v1/c2c/ads/listWithPagination',
         { page, rows }
       );
-      if (response) {
-        logger.info({ sellCount: response.sellList?.length || 0 }, 'listMyAds: Fallback success');
-        return response;
+      const transformed = transformResponse(response);
+      if (transformed) {
+        logger.info({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: POST Fallback success');
+        return transformed;
       }
     } catch (error: any) {
       logger.error({ error: error?.message }, 'listMyAds: All methods failed');
