@@ -79,13 +79,21 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     this.setupEventListeners();
 
-    logger.info({
-      enableAutoRelease: config.enableAutoRelease,
-      requireBankMatch: config.requireBankMatch,
-      requireOcr: config.requireOcrVerification,
-      maxAutoReleaseAmount: config.maxAutoReleaseAmount,
-      authType: config.authType,
-    }, '🤖 Auto-release orchestrator initialized');
+    // EXPLICIT startup logging
+    logger.info(
+      `🤖 [AUTO-RELEASE CONFIG] ` +
+      `enableAutoRelease=${config.enableAutoRelease}, ` +
+      `maxAmount=$${config.maxAutoReleaseAmount} MXN, ` +
+      `requireOcr=${config.requireOcrVerification}, ` +
+      `requireBankMatch=${config.requireBankMatch}, ` +
+      `authType=${config.authType}`
+    );
+
+    if (!config.enableAutoRelease) {
+      logger.warn('⚠️ [AUTO-RELEASE] Auto-release is DISABLED. Set ENABLE_AUTO_RELEASE=true to enable.');
+    } else {
+      logger.info(`✅ [AUTO-RELEASE] Auto-release ENABLED for orders up to $${config.maxAutoReleaseAmount} MXN`);
+    }
   }
 
   // ==================== EVENT SETUP ====================
@@ -125,11 +133,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   private async handleSyncMatched(event: { order: OrderData; payment: { transactionId: string; amount: number; senderName: string } }): Promise<void> {
     const { order, payment } = event;
 
-    logger.info({
-      orderNumber: order.orderNumber,
-      amount: order.totalPrice,
-      transactionId: payment.transactionId,
-    }, '📥 Received sync_matched event - checking auto-release');
+    logger.info(
+      `📥 [SYNC_MATCHED] Order ${order.orderNumber}: ` +
+      `amount=$${order.totalPrice} MXN, payment=$${payment.amount} from ${payment.senderName}`
+    );
 
     // Create pending release record
     const pending: PendingRelease = {
@@ -760,21 +767,20 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const hasBankMatch = !this.config.requireBankMatch || !!pending.bankMatch;
     const hasOcrVerification = !this.config.requireOcrVerification || pending.ocrVerified;
     const meetsConfidence = pending.ocrConfidence >= this.config.minConfidence || !this.config.requireOcrVerification;
-    const underLimit = parseFloat(pending.order.totalPrice) <= this.config.maxAutoReleaseAmount;
+    const orderAmount = parseFloat(pending.order.totalPrice);
+    const underLimit = orderAmount <= this.config.maxAutoReleaseAmount;
 
-    logger.info({
-      orderNumber,
-      hasBankMatch,
-      hasOcrVerification,
-      meetsConfidence,
-      underLimit,
-      autoReleaseEnabled: this.config.enableAutoRelease,
-      requireOcr: this.config.requireOcrVerification,
-      maxAmount: this.config.maxAutoReleaseAmount,
-      orderAmount: pending.order.totalPrice,
-    }, '🔍 Checking release conditions');
+    // EXPLICIT LOGGING - Show exactly why auto-release may fail
+    logger.info(
+      `🔍 [AUTO-RELEASE CHECK] Order ${orderNumber}: ` +
+      `amount=$${orderAmount} MXN, limit=$${this.config.maxAutoReleaseAmount} MXN, ` +
+      `underLimit=${underLimit}, autoReleaseEnabled=${this.config.enableAutoRelease}, ` +
+      `hasBankMatch=${hasBankMatch}, hasOcrVerification=${hasOcrVerification}, ` +
+      `requireOcr=${this.config.requireOcrVerification}`
+    );
 
     if (!this.config.enableAutoRelease) {
+      logger.warn(`❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Auto-release is DISABLED (ENABLE_AUTO_RELEASE env var not set to 'true')`);
       this.emit('release', {
         type: 'manual_required',
         orderNumber,
@@ -784,6 +790,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     }
 
     if (!underLimit) {
+      logger.warn(`❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Amount $${orderAmount} exceeds limit $${this.config.maxAutoReleaseAmount}`);
       this.emit('release', {
         type: 'manual_required',
         orderNumber,
@@ -794,6 +801,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     if (hasBankMatch && hasOcrVerification && meetsConfidence) {
       // Ready for release!
+      logger.info(`✅ [AUTO-RELEASE READY] Order ${orderNumber}: All conditions met, queueing for release`);
+
       this.emit('release', {
         type: 'verification_complete',
         orderNumber,
@@ -809,12 +818,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       const missing: string[] = [];
       if (!hasBankMatch) missing.push('bank confirmation');
       if (!hasOcrVerification) missing.push('OCR verification');
-      if (!meetsConfidence) missing.push(`sufficient confidence (${(pending.ocrConfidence * 100).toFixed(0)}% < ${(this.config.minConfidence * 100).toFixed(0)}%)`);
+      if (!meetsConfidence) missing.push(`confidence too low (${(pending.ocrConfidence * 100).toFixed(0)}% < ${(this.config.minConfidence * 100).toFixed(0)}%)`);
 
-      logger.debug({
-        orderNumber,
-        missing,
-      }, 'Not ready for release yet');
+      logger.info(`⏳ [AUTO-RELEASE WAITING] Order ${orderNumber}: Missing ${missing.join(', ')}`);
     }
   }
 
