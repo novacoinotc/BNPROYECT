@@ -9,6 +9,7 @@ import { EventEmitter } from 'events';
 import { webhookLogger as logger } from '../utils/logger.js';
 import { BankWebhookPayload } from '../types/binance.js';
 import * as db from './database-pg.js';
+import { getBinanceClient } from './binance-client.js';
 
 export interface WebhookConfig {
   port: number;
@@ -100,6 +101,17 @@ export class WebhookReceiver extends EventEmitter {
    * Setup webhook routes
    */
   private setupRoutes(): void {
+    // CORS middleware for API endpoints
+    this.app.use('/api', (req, res, next) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+      }
+      next();
+    });
+
     // Health check
     this.app.get('/health', (_req, res) => {
       res.json({
@@ -108,6 +120,11 @@ export class WebhookReceiver extends EventEmitter {
         timestamp: new Date().toISOString(),
       });
     });
+
+    // ==================== PROXY ENDPOINTS (for dashboard) ====================
+
+    // Ads proxy - allows dashboard to fetch ads through Railway (bypasses geo-restriction)
+    this.app.get('/api/ads', this.handleAdsProxy.bind(this));
 
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
@@ -128,6 +145,38 @@ export class WebhookReceiver extends EventEmitter {
       logger.error({ error: err }, 'Webhook error');
       res.status(500).json({ error: 'Internal server error' });
     });
+  }
+
+  // ==================== PROXY HANDLERS ====================
+
+  /**
+   * Handle ads proxy request (for dashboard)
+   * This bypasses Binance geo-restriction by running from Railway (EU)
+   */
+  private async handleAdsProxy(_req: Request, res: Response): Promise<void> {
+    try {
+      const client = getBinanceClient();
+      const adsData = await client.listMyAds();
+
+      // listMyAds returns MerchantAdsDetail with sellList, buyList, merchant
+      const sellAds = adsData.sellList || [];
+      const buyAds = adsData.buyList || [];
+      const merchant = adsData.merchant || null;
+
+      res.json({
+        success: true,
+        sellAds,
+        buyAds,
+        merchant,
+        source: 'railway-proxy',
+      });
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Ads proxy error');
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to fetch ads from Binance',
+      });
+    }
   }
 
   // ==================== WEBHOOK HANDLERS ====================

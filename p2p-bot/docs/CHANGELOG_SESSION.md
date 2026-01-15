@@ -273,6 +273,51 @@ Order sync complete { savedCount: N, activeTracking: M }
 
 **IMPORTANTE:** Después de agregar variables en Vercel, hay que hacer **Redeploy** para que tomen efecto.
 
+### 11. Proxy de Ads en Railway para evitar geo-restricción (2025-01-14 UTC)
+
+**Problema:** Después de agregar las credenciales de Binance en Vercel, los anuncios seguían sin cargar. El error era: `"Service unavailable from a restricted location"`. Binance bloquea llamadas API desde servidores en USA (Vercel está en Cleveland, Ohio).
+
+**Diagnóstico:**
+- Railway está en EU West (Amsterdam) → SIN restricción
+- Vercel está en USA → CON restricción de Binance
+
+**Solución:** Crear un proxy en el backend de Railway que el dashboard de Vercel pueda llamar.
+
+**Archivos modificados:**
+
+1. **`src/services/webhook-receiver.ts`**:
+   - Agregado import de `getBinanceClient`
+   - Agregado middleware CORS para `/api/*`
+   - Agregado endpoint `GET /api/ads` que llama a `listMyAds()` y devuelve los datos
+   ```typescript
+   // CORS para endpoints API
+   this.app.use('/api', (req, res, next) => {
+     res.header('Access-Control-Allow-Origin', '*');
+     ...
+   });
+
+   // Proxy de ads
+   this.app.get('/api/ads', this.handleAdsProxy.bind(this));
+   ```
+
+2. **`dashboard/src/app/api/ads/route.ts`**:
+   - Agregada función `tryRailwayProxy()` que intenta el proxy primero
+   - Fallback a llamada directa a Binance si el proxy falla
+   - Nueva variable de entorno: `RAILWAY_API_URL`
+
+**Configuración necesaria en Vercel:**
+```
+RAILWAY_API_URL=https://tu-app.up.railway.app
+```
+
+**Flujo:**
+1. Dashboard llama a `/api/ads` (ruta interna de Next.js)
+2. La ruta intenta `RAILWAY_API_URL/api/ads` (proxy en Railway EU)
+3. Railway llama a Binance API (sin restricción desde EU)
+4. Si el proxy falla, intenta llamada directa (fallback)
+
+**Puerto del proxy:** El endpoint `/api/ads` corre en el mismo puerto que el webhook (WEBHOOK_PORT=3001)
+
 ---
 
 ## Archivos Importantes
@@ -332,11 +377,23 @@ TRADING_FIAT=MXN
 
 ---
 
+## Variables de Entorno (Vercel Dashboard)
+
+```
+DATABASE_URL=postgresql://...
+BINANCE_API_KEY=***
+BINANCE_API_SECRET=***
+RAILWAY_API_URL=https://tu-app.up.railway.app  # <-- NUEVO: URL del backend en Railway
+```
+
+---
+
 ## Problemas Conocidos / Pendientes
 
 1. **Auto-release deshabilitado** - Forzado a `false` hasta completar pruebas
 2. **Verificación de nombres** - OCR muestra mismatches frecuentes (comportamiento esperado cuando nombres no coinciden)
 3. **Dashboard no actualiza en tiempo real** - Auto-refresh cada 10 segundos configurado
+4. **Geo-restricción de Binance** - Solucionado con proxy en Railway (ver sección 11)
 
 ---
 

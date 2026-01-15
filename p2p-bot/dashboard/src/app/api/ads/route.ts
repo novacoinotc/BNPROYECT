@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Railway proxy URL - bypasses Binance geo-restriction
+const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
+
 // Binance API configuration - support both env var names
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY || process.env.BINANCE_API_SECRET;
@@ -28,9 +31,45 @@ function buildSignedQuery(params: Record<string, any> = {}): string {
   return `${queryString}&signature=${signature}`;
 }
 
-// Get my ads from Binance
+// Try Railway proxy first (bypasses Binance geo-restriction from US Vercel servers)
+async function tryRailwayProxy(): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!RAILWAY_API_URL) {
+    return { success: false, error: 'RAILWAY_API_URL not configured' };
+  }
+
+  try {
+    const response = await fetch(`${RAILWAY_API_URL}/api/ads`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      // 10 second timeout
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log('Railway proxy failed:', response.status, errorText);
+      return { success: false, error: `Proxy HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      return { success: false, error: data.error || 'Proxy returned error' };
+    }
+
+    console.log('Ads fetched via Railway proxy');
+    return { success: true, data };
+  } catch (error: any) {
+    console.log('Railway proxy exception:', error.message);
+    return { success: false, error: `Proxy failed: ${error.message}` };
+  }
+}
+
+// Get my ads from Binance directly
 // Tries GET first, then POST as fallback
-async function getMyAds(): Promise<{ success: boolean; data?: any; error?: string }> {
+async function getMyAdsDirect(): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
       return { success: false, error: 'Missing BINANCE_API_KEY or BINANCE_SECRET_KEY/BINANCE_API_SECRET' };
@@ -136,56 +175,104 @@ async function tryPostAds(): Promise<{ success: boolean; data?: any; error?: str
   }
 }
 
+// Format ads from proxy response
+function formatProxyResponse(data: any) {
+  const sellAds = (data.sellAds || []).map((ad: any) => ({
+    advNo: ad.advNo,
+    asset: ad.asset,
+    fiatUnit: ad.fiatUnit,
+    price: ad.price,
+    priceType: ad.priceType,
+    priceFloatingRatio: ad.priceFloatingRatio,
+    minAmount: ad.minSingleTransAmount,
+    maxAmount: ad.maxSingleTransAmount,
+    surplusAmount: ad.surplusAmount,
+    tradeMethods: ad.tradeMethods?.map((m: any) => ({
+      payType: m.payType,
+      payBank: m.payBank,
+    })) || [],
+    status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
+    autoReplyMsg: ad.autoReplyMsg,
+    remarks: ad.remarks,
+    buyerRegDaysLimit: ad.buyerRegDaysLimit,
+    buyerBtcPositionLimit: ad.buyerBtcPositionLimit,
+  }));
+
+  return {
+    success: true,
+    sellAds,
+    buyAds: data.buyAds?.length || 0,
+    merchant: data.merchant || {},
+    source: data.source || 'proxy',
+  };
+}
+
+// Format ads from direct Binance response
+function formatDirectResponse(adsData: any) {
+  const sellAds = adsData.sellList || [];
+  const buyAds = adsData.buyList || [];
+  const merchant = adsData.merchant || {};
+
+  return {
+    success: true,
+    sellAds: sellAds.map((ad: any) => ({
+      advNo: ad.advNo,
+      asset: ad.asset,
+      fiatUnit: ad.fiatUnit,
+      price: ad.price,
+      priceType: ad.priceType,
+      priceFloatingRatio: ad.priceFloatingRatio,
+      minAmount: ad.minSingleTransAmount,
+      maxAmount: ad.maxSingleTransAmount,
+      surplusAmount: ad.surplusAmount,
+      tradeMethods: ad.tradeMethods?.map((m: any) => ({
+        payType: m.payType,
+        payBank: m.payBank,
+      })) || [],
+      status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
+      autoReplyMsg: ad.autoReplyMsg,
+      remarks: ad.remarks,
+      buyerRegDaysLimit: ad.buyerRegDaysLimit,
+      buyerBtcPositionLimit: ad.buyerBtcPositionLimit,
+      dynamicMaxSingleTransAmount: ad.dynamicMaxSingleTransAmount,
+      dynamicMaxSingleTransQuantity: ad.dynamicMaxSingleTransQuantity,
+    })),
+    buyAds: buyAds.length,
+    merchant: {
+      monthFinishRate: merchant.monthFinishRate,
+      monthOrderCount: merchant.monthOrderCount,
+      onlineStatus: merchant.onlineStatus,
+    },
+    source: 'direct',
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const result = await getMyAds();
+    // 1. Try Railway proxy first (bypasses geo-restriction)
+    const proxyResult = await tryRailwayProxy();
+    if (proxyResult.success && proxyResult.data) {
+      return NextResponse.json(formatProxyResponse(proxyResult.data));
+    }
 
-    if (!result.success || !result.data) {
+    console.log('Railway proxy failed, trying direct Binance API...');
+
+    // 2. Fallback to direct Binance API
+    const directResult = await getMyAdsDirect();
+
+    if (!directResult.success || !directResult.data) {
+      // Return the most informative error
+      const error = proxyResult.error?.includes('restricted')
+        ? proxyResult.error
+        : directResult.error || proxyResult.error || 'Failed to fetch ads';
+
       return NextResponse.json(
-        { success: false, error: result.error || 'Failed to fetch ads from Binance' },
+        { success: false, error },
         { status: 500 }
       );
     }
 
-    const adsData = result.data;
-
-    // Extract sell ads (the ones we care about)
-    const sellAds = adsData.sellList || [];
-    const buyAds = adsData.buyList || [];
-    const merchant = adsData.merchant || {};
-
-    // Format response
-    return NextResponse.json({
-      success: true,
-      sellAds: sellAds.map((ad: any) => ({
-        advNo: ad.advNo,
-        asset: ad.asset,
-        fiatUnit: ad.fiatUnit,
-        price: ad.price,
-        priceType: ad.priceType,
-        priceFloatingRatio: ad.priceFloatingRatio,
-        minAmount: ad.minSingleTransAmount,
-        maxAmount: ad.maxSingleTransAmount,
-        surplusAmount: ad.surplusAmount,
-        tradeMethods: ad.tradeMethods?.map((m: any) => ({
-          payType: m.payType,
-          payBank: m.payBank,
-        })) || [],
-        status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
-        autoReplyMsg: ad.autoReplyMsg,
-        remarks: ad.remarks,
-        buyerRegDaysLimit: ad.buyerRegDaysLimit,
-        buyerBtcPositionLimit: ad.buyerBtcPositionLimit,
-        dynamicMaxSingleTransAmount: ad.dynamicMaxSingleTransAmount,
-        dynamicMaxSingleTransQuantity: ad.dynamicMaxSingleTransQuantity,
-      })),
-      buyAds: buyAds.length,
-      merchant: {
-        monthFinishRate: merchant.monthFinishRate,
-        monthOrderCount: merchant.monthOrderCount,
-        onlineStatus: merchant.onlineStatus,
-      },
-    });
+    return NextResponse.json(formatDirectResponse(directResult.data));
   } catch (error) {
     console.error('Error fetching ads:', error);
     return NextResponse.json(
