@@ -22,13 +22,13 @@ export default function OrdersPage() {
   const { data: activeOrders, isLoading: loadingActive, refetch: refetchActive } = useQuery({
     queryKey: ['orders', 'active'],
     queryFn: () => fetchOrders(false),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const { data: allOrders, isLoading: loadingAll, refetch: refetchAll } = useQuery({
     queryKey: ['orders', 'all'],
     queryFn: () => fetchOrders(true),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const handleRefresh = () => {

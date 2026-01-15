@@ -20,8 +20,8 @@ export default function Dashboard() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboardData,
-    // Fallback polling in case SSE disconnects
-    refetchInterval: 30000,
+    // Fast polling - SSE will handle real-time when connected
+    refetchInterval: 5000,
   });
 
   if (isLoading) {
