@@ -669,6 +669,47 @@ function getStatusEmoji(status: VerificationStatus): string {
   return emojis[status] || '📋';
 }
 
+// ==================== PRICE HISTORY ====================
+
+/**
+ * Save price snapshot for dashboard
+ */
+export async function savePriceHistory(data: {
+  asset: string;
+  fiat: string;
+  tradeType: string;
+  referencePrice: number;
+  bestCompetitor: number;
+  averagePrice: number;
+  ourPrice: number;
+  margin: number;
+}): Promise<void> {
+  const db = getPool();
+
+  try {
+    await db.query(
+      `INSERT INTO "PriceHistory"
+       (asset, fiat, "tradeType", "referencePrice", "bestCompetitor",
+        "averagePrice", "ourPrice", margin, "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+      [
+        data.asset,
+        data.fiat,
+        data.tradeType,
+        data.referencePrice,
+        data.bestCompetitor,
+        data.averagePrice,
+        data.ourPrice,
+        data.margin,
+      ]
+    );
+    logger.debug({ asset: data.asset, ourPrice: data.ourPrice }, 'Price history saved');
+  } catch (error) {
+    // Table might not exist yet, log but don't fail
+    logger.warn({ error }, 'Failed to save price history (table may not exist)');
+  }
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {

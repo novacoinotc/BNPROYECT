@@ -210,14 +210,47 @@ export class BinanceC2CClient {
 
   /**
    * List my ads with pagination
-   * POST /sapi/v1/c2c/ads/listWithPagination (per SAPI v7.4 docs)
+   * Tries GET first, then POST as fallback
+   * Some Binance API versions prefer different methods
    */
   async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
-    const response = await this.signedPost<MerchantAdsDetail>(
-      '/sapi/v1/c2c/ads/listWithPagination',
-      { page, rows }
-    );
-    return response;
+    // Try GET method first (works on some API versions)
+    try {
+      const response = await this.signedGet<MerchantAdsDetail>(
+        '/sapi/v1/c2c/ads/listWithPagination',
+        { page, rows }
+      );
+      if (response) {
+        logger.debug('listMyAds: GET method succeeded');
+        return response;
+      }
+    } catch (getError: any) {
+      const errorCode = getError?.response?.data?.code;
+      logger.debug({ errorCode, error: getError?.message }, 'listMyAds: GET failed, trying POST');
+    }
+
+    // Try POST method as fallback
+    try {
+      const response = await this.signedPost<MerchantAdsDetail>(
+        '/sapi/v1/c2c/ads/listWithPagination',
+        { page, rows }
+      );
+      if (response) {
+        logger.debug('listMyAds: POST method succeeded');
+        return response;
+      }
+    } catch (postError: any) {
+      const errorCode = postError?.response?.data?.code;
+      logger.warn({ errorCode, error: postError?.message }, 'listMyAds: POST also failed');
+    }
+
+    // Return empty structure if both fail
+    logger.warn('listMyAds: Both GET and POST failed, returning empty structure');
+    return {
+      sellList: [],
+      buyList: [],
+      merchant: {} as any,
+    };
   }
 
   /**

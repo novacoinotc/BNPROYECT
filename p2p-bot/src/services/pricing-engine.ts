@@ -5,6 +5,7 @@
 
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { pricingLogger as logger } from '../utils/logger.js';
+import { savePriceHistory } from './database-pg.js';
 import {
   AdData,
   TradeType,
@@ -199,6 +200,22 @@ export class PricingEngine {
     };
 
     this.lastAnalysis = analysis;
+
+    // Save price history for dashboard
+    try {
+      await savePriceHistory({
+        asset,
+        fiat,
+        tradeType: tradeType === TradeType.SELL ? 'SELL' : 'BUY',
+        referencePrice,
+        bestCompetitor: bestCompetitorPrice,
+        averagePrice,
+        ourPrice: recommendedPrice,
+        margin,
+      });
+    } catch (e) {
+      logger.warn({ error: e }, 'Failed to save price history');
+    }
 
     logger.info({
       referencePrice: referencePrice.toFixed(2),

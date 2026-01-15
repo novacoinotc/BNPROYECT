@@ -29,17 +29,76 @@ function buildSignedQuery(params: Record<string, any> = {}): string {
 }
 
 // Get my ads from Binance
-// POST /sapi/v1/c2c/ads/listWithPagination (per SAPI v7.4 docs)
+// Tries GET first, then POST as fallback
 async function getMyAds(): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
       return { success: false, error: 'Missing BINANCE_API_KEY or BINANCE_SECRET_KEY/BINANCE_API_SECRET' };
     }
 
-    // Build signed query string (timestamp + signature in query)
-    const signedQuery = buildSignedQuery({});
+    // Try GET method first (works on some API versions)
+    const getResult = await tryGetAds();
+    if (getResult.success && getResult.data) {
+      console.log('Ads fetched via GET method');
+      return getResult;
+    }
 
-    // Body with pagination params
+    // Try POST method as fallback
+    const postResult = await tryPostAds();
+    if (postResult.success && postResult.data) {
+      console.log('Ads fetched via POST method');
+      return postResult;
+    }
+
+    // Both failed
+    console.error('Both GET and POST failed for ads endpoint');
+    return { success: false, error: postResult.error || getResult.error || 'Failed to fetch ads' };
+  } catch (error) {
+    console.error('Error fetching ads:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
+// Try GET method
+async function tryGetAds(): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const signedQuery = buildSignedQuery({ page: 1, rows: 20 });
+
+    const response = await fetch(
+      `${BINANCE_BASE_URL}/sapi/v1/c2c/ads/listWithPagination?${signedQuery}`,
+      {
+        method: 'GET',
+        headers: {
+          'X-MBX-APIKEY': BINANCE_API_KEY || '',
+          'clientType': 'web',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log('GET ads failed:', response.status, errorText);
+      return { success: false, error: `GET HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    if (data.code && data.code !== '000000' && data.code !== 0) {
+      console.log('GET ads API error:', data.code, data.message || data.msg);
+      return { success: false, error: `GET Binance error ${data.code}` };
+    }
+
+    return { success: true, data: data.data || data };
+  } catch (error) {
+    console.log('GET ads exception:', error);
+    return { success: false, error: 'GET failed' };
+  }
+}
+
+// Try POST method
+async function tryPostAds(): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const signedQuery = buildSignedQuery({});
     const body = { page: 1, rows: 20 };
 
     const response = await fetch(
@@ -49,7 +108,7 @@ async function getMyAds(): Promise<{ success: boolean; data?: any; error?: strin
         headers: {
           'X-MBX-APIKEY': BINANCE_API_KEY || '',
           'Content-Type': 'application/json',
-          'clientType': 'web',  // Required by Binance C2C API
+          'clientType': 'web',
         },
         body: JSON.stringify(body),
       }
@@ -57,22 +116,21 @@ async function getMyAds(): Promise<{ success: boolean; data?: any; error?: strin
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Error fetching ads:', response.status, errorText);
-      return { success: false, error: `HTTP ${response.status}: ${errorText}` };
+      console.log('POST ads failed:', response.status, errorText);
+      return { success: false, error: `POST HTTP ${response.status}` };
     }
 
     const data = await response.json();
 
-    // Check for error response
     if (data.code && data.code !== '000000' && data.code !== 0) {
-      console.error('Binance API error:', data.code, data.message || data.msg);
-      return { success: false, error: `Binance error ${data.code}: ${data.message || data.msg}` };
+      console.log('POST ads API error:', data.code, data.message || data.msg);
+      return { success: false, error: `POST Binance error ${data.code}` };
     }
 
     return { success: true, data: data.data || data };
   } catch (error) {
-    console.error('Error fetching ads:', error);
-    return { success: false, error: String(error) };
+    console.log('POST ads exception:', error);
+    return { success: false, error: 'POST failed' };
   }
 }
 
