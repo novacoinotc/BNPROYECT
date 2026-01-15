@@ -11,9 +11,9 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import * as db from './services/database-pg.js';
-import { OrderStatus, VerificationStatus, BankWebhookPayload } from './types/binance.js';
+import { VerificationStatus, BankWebhookPayload } from './types/binance.js';
 
-// Test data
+// Test data - use string status 'BUYER_PAYED' which maps to 'PAID' in DB
 const TEST_ORDER = {
   orderNumber: 'TEST-' + Date.now(),
   advNo: process.env.BINANCE_ADV_NO || 'TEST-ADV-123',
@@ -23,11 +23,12 @@ const TEST_ORDER = {
   unitPrice: '20.50',
   totalPrice: '2050.00', // 100 USDT * 20.50
   amount: '100.00',
-  orderStatus: OrderStatus.BUYER_PAYED, // Comprador ya marcó como pagado
+  orderStatus: 'BUYER_PAYED', // String status - maps to 'PAID' in DB
   buyerNickName: 'Juan Pérez García',
   buyerRealName: 'JUAN PEREZ GARCIA', // Nombre real para matching
   sellerNickName: 'MerchantBot',
   createTime: Date.now(),
+  counterPartNickName: 'Juan Pérez García', // Required for saveOrder
 };
 
 const TEST_PAYMENT: BankWebhookPayload = {
@@ -59,7 +60,7 @@ async function runTest() {
     console.log(`     Amount: $${TEST_ORDER.totalPrice} MXN`);
     console.log(`     Buyer (nick): ${TEST_ORDER.buyerNickName}`);
     console.log(`     Buyer (real): ${TEST_ORDER.buyerRealName}`);
-    console.log(`     Status: ${TEST_ORDER.orderStatus} (BUYER_PAYED)`);
+    console.log(`     Status: ${TEST_ORDER.orderStatus} → maps to 'PAID' in DB`);
   } catch (error: any) {
     console.log(`  ❌ Error creating order: ${error.message}`);
     return;
