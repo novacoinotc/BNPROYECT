@@ -1,6 +1,6 @@
 # Binance P2P Bot - Session Changelog
 
-**Última actualización:** 2025-01-15 04:00 UTC
+**Última actualización:** 2025-01-15 04:10 UTC
 
 Este documento contiene todos los cambios realizados durante la sesión de desarrollo para poder continuar en caso de reiniciar el chat.
 
@@ -257,6 +257,21 @@ Order sync complete { savedCount: N, activeTracking: M }
 ```
 
 **Nota:** Ahora al reiniciar el bot, TODAS las órdenes existentes en Binance se guardarán en la DB y aparecerán en el dashboard.
+
+### 10. Configuración de Variables en Vercel (2025-01-15 04:10 UTC)
+
+**Problema:** El dashboard en Vercel mostraba "Error al cargar anuncios" porque faltaban las credenciales de Binance.
+
+**Solución:** Se agregaron las siguientes variables de entorno en Vercel:
+- `BINANCE_API_KEY` - API key de Binance
+- `BINANCE_API_SECRET` - API secret de Binance
+- `DATABASE_URL` - Ya estaba configurada
+
+**Mejora en componente AdInfo:**
+- Ahora muestra el mensaje de error real
+- Muestra sugerencia si el error es por variables faltantes
+
+**IMPORTANTE:** Después de agregar variables en Vercel, hay que hacer **Redeploy** para que tomen efecto.
 
 ---
 
