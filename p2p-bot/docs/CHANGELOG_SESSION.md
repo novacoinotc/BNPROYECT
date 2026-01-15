@@ -318,6 +318,41 @@ RAILWAY_API_URL=https://tu-app.up.railway.app
 
 **Puerto del proxy:** El endpoint `/api/ads` corre en el mismo puerto que el webhook (WEBHOOK_PORT=3001)
 
+### 12. Fix: Transformación de respuesta de API de anuncios (2025-01-14 UTC)
+
+**Problema:** Después de configurar el proxy, los anuncios seguían mostrando vacío aunque había anuncios activos en Binance.
+
+**Causa raíz:** El endpoint POST `/sapi/v1/c2c/ads/listWithPagination` retorna los datos en formato diferente al esperado:
+- **Formato recibido:** `{ code: "000000", data: [{ advNo, tradeType, ... }] }`
+- **Formato esperado:** `{ sellList: [...], buyList: [...], merchant: {...} }`
+
+**Solución en `src/services/binance-client.ts`:**
+- Agregada función `transformResponse()` dentro de `listMyAds()`
+- Detecta si la respuesta es un array (formato `data`) o ya tiene `sellList/buyList`
+- Transforma automáticamente filtrando por `tradeType === 'SELL'` o `'BUY'`
+
+```typescript
+const transformResponse = (response: any): MerchantAdsDetail | null => {
+  // Si ya tiene sellList/buyList, usar directamente
+  if (response?.sellList || response?.buyList) {
+    return response as MerchantAdsDetail;
+  }
+  // Si es array (formato data), transformar
+  if (Array.isArray(response)) {
+    return {
+      sellList: response.filter((ad: any) => ad.tradeType === 'SELL'),
+      buyList: response.filter((ad: any) => ad.tradeType === 'BUY'),
+      merchant: {} as any,
+    };
+  }
+  return null;
+};
+```
+
+**Resultado verificado:**
+- Proxy retorna correctamente 3 sell ads y 7 buy ads
+- Anuncio activo: USDT/MXN a $18.25 (advStatus=1)
+
 ---
 
 ## Archivos Importantes
