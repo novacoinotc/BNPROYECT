@@ -212,6 +212,7 @@ export class PricingEngine {
         averagePrice,
         ourPrice: recommendedPrice,
         margin,
+        pricePosition,
       });
     } catch (e) {
       logger.warn({ error: e }, 'Failed to save price history');

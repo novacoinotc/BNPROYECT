@@ -684,6 +684,13 @@ function getStatusEmoji(status: VerificationStatus): string {
 
 // ==================== PRICE HISTORY ====================
 
+// Generate a CUID-like ID (compatible with Prisma's cuid())
+function generateCuid(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 9);
+  return `c${timestamp}${random}`;
+}
+
 /**
  * Save price snapshot for dashboard
  */
@@ -696,16 +703,25 @@ export async function savePriceHistory(data: {
   averagePrice: number;
   ourPrice: number;
   margin: number;
+  pricePosition?: string;
 }): Promise<void> {
   const db = getPool();
+
+  // Determine price position if not provided
+  const pricePosition = data.pricePosition || (
+    data.ourPrice <= data.bestCompetitor ? 'best' :
+    data.ourPrice <= data.averagePrice ? 'competitive' :
+    'above_average'
+  );
 
   try {
     await db.query(
       `INSERT INTO "PriceHistory"
-       (asset, fiat, "tradeType", "referencePrice", "bestCompetitor",
-        "averagePrice", "ourPrice", margin, "createdAt")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+       (id, asset, fiat, "tradeType", "referencePrice", "bestCompetitor",
+        "averagePrice", "ourPrice", margin, "pricePosition", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
       [
+        generateCuid(),
         data.asset,
         data.fiat,
         data.tradeType,
@@ -714,6 +730,7 @@ export async function savePriceHistory(data: {
         data.averagePrice,
         data.ourPrice,
         data.margin,
+        pricePosition,
       ]
     );
     logger.debug({ asset: data.asset, ourPrice: data.ourPrice }, 'Price history saved');

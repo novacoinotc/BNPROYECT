@@ -162,11 +162,52 @@ export class BinanceC2CClient {
         }),
       });
 
-      const data = await response.json() as { success?: boolean; data?: AdData[] };
-      if (data.success && data.data) {
-        return data.data;
+      const rawData = await response.json() as {
+        code?: string;
+        data?: Array<{
+          adv: {
+            advNo: string;
+            tradeType: string;
+            asset: string;
+            fiatUnit: string;
+            price: string;
+            surplusAmount: string;
+            minSingleTransAmount: string;
+            maxSingleTransAmount: string;
+            tradeMethods: any[];
+            priceType: number;
+            priceFloatingRatio: number;
+            advStatus: number;
+          };
+          advertiser: {
+            userNo: string;
+            nickName: string;
+            realName?: string;
+            userType: string;
+          };
+        }>;
+      };
+
+      // Transform public API response to AdData format
+      if (rawData.code === '000000' && rawData.data) {
+        return rawData.data.map(item => ({
+          advNo: item.adv.advNo,
+          tradeType: item.adv.tradeType as TradeType,
+          asset: item.adv.asset,
+          fiatUnit: item.adv.fiatUnit,
+          price: item.adv.price,
+          surplusAmount: item.adv.surplusAmount,
+          minSingleTransAmount: item.adv.minSingleTransAmount,
+          maxSingleTransAmount: item.adv.maxSingleTransAmount,
+          tradeMethods: item.adv.tradeMethods || [],
+          advertiser: item.advertiser,
+          priceType: item.adv.priceType,
+          priceFloatingRatio: item.adv.priceFloatingRatio,
+          advStatus: item.adv.advStatus,
+        }));
       }
-      logger.warn({ response: data }, 'Search ads returned no data');
+
+      logger.warn({ response: rawData }, 'Search ads returned no data');
       return [];
     } catch (error) {
       logger.warn({ error }, 'Failed to search competitor ads');
@@ -185,27 +226,63 @@ export class BinanceC2CClient {
     tradeType: TradeType
   ): Promise<ReferencePrice> {
     try {
-      // Primary: Try market index price which works
+      // Primary: Try market index price endpoint
       const response = await this.signedGet<{ indexPrice: string }>(
         '/sapi/v1/c2c/market/getIndexPrice',
         { asset, fiat }
       );
-      return {
-        price: (response as any)?.indexPrice || '0',
-        fiatUnit: fiat,
-        asset,
-        tradeType,
-      };
+      const indexPrice = (response as any)?.indexPrice;
+      if (indexPrice && parseFloat(indexPrice) > 0) {
+        return {
+          price: indexPrice,
+          fiatUnit: fiat,
+          asset,
+          tradeType,
+        };
+      }
     } catch (error) {
-      logger.warn({ asset, fiat, error }, 'Failed to get reference price');
-      // Return a fallback
-      return {
-        price: '0',
-        fiatUnit: fiat,
-        asset,
-        tradeType,
-      };
+      logger.debug({ asset, fiat, error }, 'Index price endpoint failed, trying competitor search');
     }
+
+    // Fallback: Calculate from competitor ads
+    try {
+      const competitorAds = await this.searchAds({
+        asset,
+        fiat,
+        tradeType,
+        rows: 10,
+        page: 1,
+      });
+
+      if (competitorAds.length > 0) {
+        // Calculate average of top 5 prices
+        const prices = competitorAds
+          .slice(0, 5)
+          .map(ad => parseFloat(ad.price))
+          .filter(p => p > 0);
+
+        if (prices.length > 0) {
+          const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+          logger.info({ asset, fiat, avgPrice, count: prices.length }, 'Reference price from competitors');
+          return {
+            price: avgPrice.toFixed(2),
+            fiatUnit: fiat,
+            asset,
+            tradeType,
+          };
+        }
+      }
+    } catch (error) {
+      logger.warn({ asset, fiat, error }, 'Failed to get reference price from competitors');
+    }
+
+    // Final fallback
+    return {
+      price: '0',
+      fiatUnit: fiat,
+      asset,
+      tradeType,
+    };
   }
 
   /**
