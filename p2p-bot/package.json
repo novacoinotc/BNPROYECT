@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test:api": "tsx src/test-api.ts",
+    "test:webhook": "tsx src/test-webhook-flow.ts",
+    "test:pricing": "tsx src/test-pricing.ts",
     "discover": "tsx src/discover-endpoints.ts",
     "discover:extended": "tsx src/discover-endpoints-extended.ts",
     "discover:prod": "node dist/discover-endpoints.js",
