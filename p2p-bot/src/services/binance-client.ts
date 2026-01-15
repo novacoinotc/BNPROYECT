@@ -210,42 +210,37 @@ export class BinanceC2CClient {
 
   /**
    * List my ads with pagination
-   * Tries GET first, then POST as fallback
-   * Some Binance API versions prefer different methods
+   * Uses GET /sapi/v1/c2c/ads/list which works reliably
    */
   async listMyAds(page: number = 1, rows: number = 10): Promise<MerchantAdsDetail> {
-    // Try GET method first (works on some API versions)
     try {
+      // Primary: GET /sapi/v1/c2c/ads/list (discovered as working)
       const response = await this.signedGet<MerchantAdsDetail>(
-        '/sapi/v1/c2c/ads/listWithPagination',
+        '/sapi/v1/c2c/ads/list',
         { page, rows }
       );
       if (response) {
-        logger.debug('listMyAds: GET method succeeded');
+        logger.info({ sellCount: response.sellList?.length || 0 }, 'listMyAds: Success');
         return response;
       }
-    } catch (getError: any) {
-      const errorCode = getError?.response?.data?.code;
-      logger.debug({ errorCode, error: getError?.message }, 'listMyAds: GET failed, trying POST');
+    } catch (error: any) {
+      logger.warn({ error: error?.message }, 'listMyAds: GET /ads/list failed, trying alternative');
     }
 
-    // Try POST method as fallback
+    // Fallback: POST /sapi/v1/c2c/ads/listWithPagination
     try {
       const response = await this.signedPost<MerchantAdsDetail>(
         '/sapi/v1/c2c/ads/listWithPagination',
         { page, rows }
       );
       if (response) {
-        logger.debug('listMyAds: POST method succeeded');
+        logger.info({ sellCount: response.sellList?.length || 0 }, 'listMyAds: Fallback success');
         return response;
       }
-    } catch (postError: any) {
-      const errorCode = postError?.response?.data?.code;
-      logger.warn({ errorCode, error: postError?.message }, 'listMyAds: POST also failed');
+    } catch (error: any) {
+      logger.error({ error: error?.message }, 'listMyAds: All methods failed');
     }
 
-    // Return empty structure if both fail
-    logger.warn('listMyAds: Both GET and POST failed, returning empty structure');
     return {
       sellList: [],
       buyList: [],
@@ -314,22 +309,45 @@ export class BinanceC2CClient {
 
   /**
    * List pending/active orders (orders in status 1, 2, or 3)
-   * POST /sapi/v1/c2c/orderMatch/listOrders with status filter
+   * Primary: GET /sapi/v1/c2c/orderMatch/pendingOrders (discovered as working)
+   * Fallback: POST /sapi/v1/c2c/orderMatch/listOrders with status filter
    */
   async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
-    const body = {
-      tradeType: 'SELL',
-      rows,
-      page: 1,
-      // Status 1=PENDING, 2=PAID, 3=APPEALING (active orders)
-      orderStatusList: [1, 2, 3],
-    };
+    // Try GET /pendingOrders first (simpler, discovered as working)
+    try {
+      const response = await this.signedGet<{ data: OrderData[] }>(
+        '/sapi/v1/c2c/orderMatch/pendingOrders',
+        { tradeType: 'SELL', rows, page: 1 }
+      );
+      const orders = (response as any)?.data || response || [];
+      if (Array.isArray(orders)) {
+        logger.info({ count: orders.length }, 'listPendingOrders: GET success');
+        return orders;
+      }
+    } catch (error: any) {
+      logger.debug({ error: error?.message }, 'listPendingOrders: GET failed, trying POST');
+    }
 
-    const response = await this.signedPost<{ data: OrderData[] }>(
-      '/sapi/v1/c2c/orderMatch/listOrders',
-      body
-    );
-    return (response as any)?.data || response || [];
+    // Fallback to POST with status filter
+    try {
+      const body = {
+        tradeType: 'SELL',
+        rows,
+        page: 1,
+        orderStatusList: [1, 2, 3],
+      };
+
+      const response = await this.signedPost<{ data: OrderData[] }>(
+        '/sapi/v1/c2c/orderMatch/listOrders',
+        body
+      );
+      const orders = (response as any)?.data || response || [];
+      logger.info({ count: Array.isArray(orders) ? orders.length : 0 }, 'listPendingOrders: POST fallback');
+      return orders;
+    } catch (error: any) {
+      logger.error({ error: error?.message }, 'listPendingOrders: All methods failed');
+      return [];
+    }
   }
 
   /**

@@ -59,13 +59,14 @@ async function getMyAds(): Promise<{ success: boolean; data?: any; error?: strin
   }
 }
 
-// Try GET method
+// Try GET method - using /sapi/v1/c2c/ads/list which works reliably
 async function tryGetAds(): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    // Use simpler /ads/list endpoint (discovered as working)
     const signedQuery = buildSignedQuery({ page: 1, rows: 20 });
 
     const response = await fetch(
-      `${BINANCE_BASE_URL}/sapi/v1/c2c/ads/listWithPagination?${signedQuery}`,
+      `${BINANCE_BASE_URL}/sapi/v1/c2c/ads/list?${signedQuery}`,
       {
         method: 'GET',
         headers: {
@@ -77,20 +78,21 @@ async function tryGetAds(): Promise<{ success: boolean; data?: any; error?: stri
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.log('GET ads failed:', response.status, errorText);
+      console.log('GET ads/list failed:', response.status, errorText);
       return { success: false, error: `GET HTTP ${response.status}` };
     }
 
     const data = await response.json();
 
     if (data.code && data.code !== '000000' && data.code !== 0) {
-      console.log('GET ads API error:', data.code, data.message || data.msg);
+      console.log('GET ads/list API error:', data.code, data.message || data.msg);
       return { success: false, error: `GET Binance error ${data.code}` };
     }
 
+    console.log('GET ads/list success:', data.data ? 'has data' : 'no data');
     return { success: true, data: data.data || data };
   } catch (error) {
-    console.log('GET ads exception:', error);
+    console.log('GET ads/list exception:', error);
     return { success: false, error: 'GET failed' };
   }
 }
