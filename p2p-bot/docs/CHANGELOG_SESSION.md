@@ -1,6 +1,6 @@
 # Binance P2P Bot - Session Changelog
 
-**Última actualización:** 2025-01-15
+**Última actualización:** 2025-01-15 03:45 UTC
 
 Este documento contiene todos los cambios realizados durante la sesión de desarrollo para poder continuar en caso de reiniciar el chat.
 
@@ -167,6 +167,64 @@ Position:           above_average
 - `src/test-real-client.ts` - Prueba el cliente real
 - `src/test-pricing.ts` - Prueba el pricing engine
 - `src/test-update-price.ts` - Prueba actualización de precios
+
+### 8. Corrección de Errores TypeScript para Deploy en Railway (2025-01-15 03:40 UTC)
+
+**Problema:** El deploy en Railway fallaba con errores de TypeScript durante `npm run build`.
+
+**Errores corregidos:**
+
+1. **`src/services/binance-client.ts:193`** - Error de tipo `Advertiser`
+   - El tipo `Advertiser` requería propiedades que la API pública no proporciona
+   - **Solución:** Agregamos valores por defecto para las propiedades faltantes:
+   ```typescript
+   advertiser: {
+     userNo: item.advertiser.userNo,
+     nickName: item.advertiser.nickName,
+     realName: item.advertiser.realName,
+     userType: item.advertiser.userType,
+     // Default values for properties not available from public API
+     userGrade: 0,
+     monthFinishRate: 0,
+     monthOrderCount: 0,
+     positiveRate: 0,
+     isOnline: false,
+   }
+   ```
+
+2. **`src/test-real-client.ts:47,71,83`** - Error de tipo `TradeType`
+   - El string `'SELL'` no era compatible con el enum `TradeType`
+   - **Solución:** Importamos el enum y usamos `TradeType.SELL`:
+   ```typescript
+   import { TradeType } from './types/binance.js';
+   // Cambiado de 'SELL' a TradeType.SELL
+   ```
+
+3. **`src/test-update-price.ts:315`** - Error de indexación implícita
+   - El spread operator copiaba propiedades `undefined`
+   - **Solución:** Usamos `Object.entries()` con filtro:
+   ```typescript
+   const safeParams: Record<string, any> = {};
+   Object.entries(params).forEach(([k, v]) => {
+     if (v !== undefined) {
+       safeParams[k] = 'FAKE_' + v;
+     }
+   });
+   ```
+
+**Commit:** `a617274 fix: Resolve TypeScript build errors for Railway deploy`
+
+**Resultado:** Deploy exitoso en Railway. Bot operacional.
+
+**Logs confirman funcionamiento:**
+```
+Bot fully operational!
+listPendingOrders: GET success
+Got pending orders from Binance
+Got recent orders from Binance
+💰 Bank payment received via webhook
+Payment saved to DB for matching
+```
 
 ---
 
