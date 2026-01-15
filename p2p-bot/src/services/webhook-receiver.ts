@@ -224,6 +224,7 @@ export class WebhookReceiver extends EventEmitter {
       // Save all orders to database
       let savedCount = 0;
       let errorCount = 0;
+      let verificationTriggered = 0;
       const savedOrders: any[] = [];
 
       for (const order of allOrders.values()) {
@@ -236,6 +237,95 @@ export class WebhookReceiver extends EventEmitter {
             amount: order.totalPrice,
             buyer: order.counterPartNickName || order.buyer?.nickName,
           });
+
+          // For BUYER_PAYED orders, check if they need verification started
+          if (order.orderStatus === 'BUYER_PAYED') {
+            const dbOrder = await db.getOrder(order.orderNumber);
+
+            // If no verification status, start verification process
+            if (!dbOrder?.verificationStatus) {
+              logger.info({ orderNumber: order.orderNumber }, '📝 Starting verification for BUYER_PAYED order during sync');
+
+              // Add initial verification step
+              await db.addVerificationStep(
+                order.orderNumber,
+                'BUYER_MARKED_PAID' as any,
+                'Comprador marcó como pagado - Esperando confirmación bancaria',
+                {
+                  expectedAmount: order.totalPrice,
+                  buyerName: order.counterPartNickName,
+                  timestamp: new Date().toISOString(),
+                  source: 'sync_endpoint',
+                }
+              );
+
+              // Try to find matching payment
+              const expectedAmount = parseFloat(order.totalPrice);
+              const existingPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120);
+
+              if (existingPayments.length > 0) {
+                // Found a potential matching payment - link it
+                const payment = existingPayments[0];
+                logger.info({
+                  orderNumber: order.orderNumber,
+                  transactionId: payment.transactionId,
+                  amount: payment.amount,
+                }, '🔗 Found existing payment during sync - linking to order');
+
+                await db.addVerificationStep(
+                  order.orderNumber,
+                  'PAYMENT_MATCHED' as any,
+                  `Pago bancario vinculado durante sincronización`,
+                  {
+                    transactionId: payment.transactionId,
+                    receivedAmount: payment.amount,
+                    senderName: payment.senderName,
+                    matchType: 'sync_match',
+                  }
+                );
+
+                await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+
+                // Verify amount
+                const amountDiff = Math.abs(payment.amount - expectedAmount);
+                const amountTolerance = expectedAmount * 0.01;
+                const amountMatches = amountDiff <= amountTolerance;
+
+                if (amountMatches) {
+                  await db.addVerificationStep(
+                    order.orderNumber,
+                    'AMOUNT_VERIFIED' as any,
+                    `Monto verificado: $${payment.amount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)}`,
+                    { receivedAmount: payment.amount, expectedAmount, withinTolerance: true }
+                  );
+
+                  // Set to READY_TO_RELEASE if amount matches
+                  await db.addVerificationStep(
+                    order.orderNumber,
+                    'READY_TO_RELEASE' as any,
+                    'Verificación completa - Listo para liberar',
+                    { autoRelease: false, reason: 'sync_verification' }
+                  );
+                } else {
+                  await db.addVerificationStep(
+                    order.orderNumber,
+                    'AMOUNT_MISMATCH' as any,
+                    `⚠️ Monto diferente: Recibido $${payment.amount.toFixed(2)} vs Esperado $${expectedAmount.toFixed(2)}`,
+                    { receivedAmount: payment.amount, expectedAmount, withinTolerance: false }
+                  );
+
+                  await db.addVerificationStep(
+                    order.orderNumber,
+                    'MANUAL_REVIEW' as any,
+                    'Requiere revisión manual por diferencia de monto',
+                    { reason: 'amount_mismatch' }
+                  );
+                }
+              }
+
+              verificationTriggered++;
+            }
+          }
         } catch (err: any) {
           // Likely duplicate, just log at debug level
           logger.debug({ orderNumber: order.orderNumber, error: err.message }, 'Order save skipped');
@@ -252,15 +342,17 @@ export class WebhookReceiver extends EventEmitter {
       logger.info({
         savedCount,
         errorCount,
+        verificationTriggered,
         statusCounts
       }, 'Orders sync complete');
 
       res.json({
         success: true,
-        message: `Synced ${savedCount} orders from Binance`,
+        message: `Synced ${savedCount} orders from Binance (${verificationTriggered} verification started)`,
         total: allOrders.size,
         saved: savedCount,
         skipped: errorCount,
+        verificationTriggered,
         statusBreakdown: statusCounts,
         orders: savedOrders,
         source: 'railway-proxy',

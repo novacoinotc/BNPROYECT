@@ -135,6 +135,18 @@ export class OrderManager extends EventEmitter {
               expectedAmount: parseFloat(order.totalPrice),
               verified: false,
             });
+
+            // If order is in BUYER_PAYED status, emit 'paid' event to trigger verification
+            if (order.orderStatus === 'BUYER_PAYED') {
+              logger.info({
+                orderNumber: order.orderNumber,
+              }, 'Synced order in BUYER_PAYED status - emitting paid event for verification');
+
+              // Emit after a short delay to let all services initialize
+              setTimeout(() => {
+                this.emit('order', { type: 'paid', order } as OrderEvent);
+              }, 1000);
+            }
           }
         } catch (err) {
           // Continue on error (might be duplicate)
@@ -299,6 +311,30 @@ export class OrderManager extends EventEmitter {
       type: 'new',
       order,
     } as OrderEvent);
+
+    // If order is already in BUYER_PAYED status, also emit 'paid' event
+    // This handles cases where the order was marked paid before we saw it
+    if (order.orderStatus === 'BUYER_PAYED') {
+      logger.info({
+        orderNumber: order.orderNumber,
+      }, 'New order already in BUYER_PAYED status - triggering verification');
+
+      // Try to fetch buyer's real name for better matching
+      try {
+        const orderDetail = await this.client.getOrderDetail(order.orderNumber);
+        if (orderDetail.buyer?.realName) {
+          (order as any).buyerRealName = orderDetail.buyer.realName;
+          logger.info({
+            orderNumber: order.orderNumber,
+            buyerRealName: orderDetail.buyer.realName,
+          }, 'Got real buyer name from order detail');
+        }
+      } catch (detailError) {
+        logger.warn({ orderNumber: order.orderNumber, error: detailError }, 'Could not fetch order detail for buyer name');
+      }
+
+      this.emit('order', { type: 'paid', order } as OrderEvent);
+    }
   }
 
   /**
