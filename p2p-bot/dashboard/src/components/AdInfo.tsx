@@ -37,9 +37,10 @@ interface AdsResponse {
   };
 }
 
-async function fetchAds(): Promise<AdsResponse> {
+async function fetchAds(): Promise<AdsResponse & { error?: string }> {
   const response = await fetch('/api/ads');
-  return response.json();
+  const data = await response.json();
+  return data;
 }
 
 export function AdInfo() {
@@ -60,9 +61,16 @@ export function AdInfo() {
   }
 
   if (error || !data?.success) {
+    const errorMessage = data?.error || (error as Error)?.message || 'Error desconocido';
     return (
-      <div className="text-red-400 text-sm">
-        Error al cargar anuncios
+      <div className="text-red-400 text-sm space-y-2">
+        <p>Error al cargar anuncios</p>
+        <p className="text-xs text-gray-500">{errorMessage}</p>
+        {errorMessage.includes('Missing') && (
+          <p className="text-xs text-yellow-500">
+            Verifica las variables de entorno en Vercel (BINANCE_API_KEY, BINANCE_API_SECRET)
+          </p>
+        )}
       </div>
     );
   }
