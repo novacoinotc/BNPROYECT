@@ -80,6 +80,19 @@ export async function saveOrder(order: OrderData): Promise<void> {
   const sellerUserNo = isSellOrder ? 'self' : 'counterpart';
   const sellerNickName = isSellOrder ? 'self' : counterPartNick;
 
+  // Calculate unitPrice if not provided (totalPrice / amount)
+  // API may return unitPrice or price field
+  let unitPrice = order.unitPrice || (order as any).price;
+  if (!unitPrice && order.totalPrice && order.amount) {
+    const total = parseFloat(order.totalPrice);
+    const amount = parseFloat(order.amount);
+    if (amount > 0) {
+      unitPrice = (total / amount).toFixed(2);
+    }
+  }
+  // Fallback to '0' to avoid null constraint violation
+  unitPrice = unitPrice || '0';
+
   try {
     // Try to update first - also update buyerRealName if we now have it
     const updateResult = await db.query(
@@ -112,10 +125,10 @@ export async function saveOrder(order: OrderData): Promise<void> {
           order.tradeType,
           order.asset,
           order.fiat || order.fiatUnit || 'MXN',  // API returns 'fiat', fallback to fiatUnit
-          order.amount,
-          order.totalPrice,
-          order.unitPrice,
-          order.commission,
+          order.amount || '0',
+          order.totalPrice || '0',
+          unitPrice,  // Use calculated unitPrice
+          order.commission || '0',
           status,
           buyerUserNo,
           buyerNickName,
