@@ -402,6 +402,41 @@ El status `TRADING` no existe en el enum `OrderStatus` de Prisma. Cuando Binance
 
 ---
 
+### 16. Sync de órdenes desde Railway a Dashboard (2025-01-14 UTC)
+
+**Problema:** El dashboard no mostraba órdenes porque:
+1. Las órdenes se sincronizan desde el backend (Railway)
+2. El dashboard solo lee de la base de datos
+3. Si el dashboard no tiene forma de sincronizar, solo muestra lo que ya existe
+
+**Solución:** Crear un endpoint de sync en Railway que el dashboard llama.
+
+1. **`src/services/webhook-receiver.ts`:**
+   - Nuevo endpoint `POST /api/orders/sync`
+   - Llama a `listPendingOrders()` y `listOrderHistory()` de Binance
+   - Guarda todas las órdenes en la base de datos
+   - Retorna resumen de órdenes sincronizadas
+
+2. **`dashboard/src/app/api/orders/route.ts`:**
+   - Antes de retornar órdenes, llama a Railway `/api/orders/sync`
+   - Esto asegura que las órdenes están actualizadas
+   - Parámetro `skipSync=true` para saltar el sync si es necesario
+
+**Flujo:**
+```
+Dashboard GET /api/orders
+  → Vercel llama a Railway POST /api/orders/sync
+    → Railway llama a Binance (sin geo-restricción)
+    → Railway guarda órdenes en PostgreSQL
+  → Vercel lee órdenes de PostgreSQL
+  → Dashboard muestra órdenes
+```
+
+**Variables de entorno requeridas en Vercel:**
+- `RAILWAY_API_URL` - URL del backend en Railway
+
+---
+
 ## Archivos Importantes
 
 ### Configuración
