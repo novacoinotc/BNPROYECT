@@ -696,6 +696,28 @@ export class OrderManager extends EventEmitter {
       verifiedMatches,
     };
   }
+
+  /**
+   * Register an order for release (for orders loaded from DB, not in memory)
+   * This sets up the activeOrders and pendingMatches Maps so releaseCrypto can work
+   */
+  registerOrderForRelease(order: OrderData, bankTransactionId?: string): void {
+    logger.info(
+      `🔗 [ORDER-MANAGER] Registering order ${order.orderNumber} for release ` +
+      `(amount: ${order.totalPrice}, bankTx: ${bankTransactionId || 'N/A'})`
+    );
+
+    // Add to active orders
+    this.activeOrders.set(order.orderNumber, order);
+
+    // Set up pending match with verified status if bank transaction provided
+    this.pendingMatches.set(order.orderNumber, {
+      orderNumber: order.orderNumber,
+      expectedAmount: parseFloat(order.totalPrice),
+      verified: !!bankTransactionId,
+      bankTransactionId,
+    });
+  }
 }
 
 // Factory function

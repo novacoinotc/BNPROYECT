@@ -917,7 +917,22 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     }
 
     // Check order is still in BUYER_PAYED status (waiting for release)
-    const currentOrder = this.orderManager.getOrder(orderNumber);
+    let currentOrder = this.orderManager.getOrder(orderNumber);
+
+    // If order not in orderManager memory, use the one from pending (DB order)
+    if (!currentOrder && pending.order) {
+      logger.info(
+        `🔗 [AUTO-RELEASE] Order ${orderNumber} not in orderManager memory - ` +
+        `using pending order (amount: ${pending.order.totalPrice})`
+      );
+      currentOrder = pending.order;
+
+      // Register this order with orderManager so releaseCrypto can find it
+      this.orderManager.registerOrderForRelease(
+        currentOrder,
+        pending.bankMatch?.transactionId
+      );
+    }
 
     if (!currentOrder || currentOrder.orderStatus !== 'BUYER_PAYED') {
       logger.warn({
