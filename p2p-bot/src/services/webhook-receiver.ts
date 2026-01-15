@@ -271,32 +271,53 @@ export class WebhookReceiver extends EventEmitter {
                 }
               );
 
-              // Try to find matching payment
+              // Try to find matching payment (first unmatched, then already matched)
               const expectedAmount = parseFloat(order.totalPrice);
-              const existingPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120);
+              const unmatchedPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120);
+              let paymentAlreadyMatched = false;
+              let paymentToProcess: { transactionId: string; amount: number; senderName: string } | null = null;
 
-              if (existingPayments.length > 0) {
-                // Found a potential matching payment - link it
-                const payment = existingPayments[0];
-                logger.info({
-                  orderNumber: order.orderNumber,
-                  transactionId: payment.transactionId,
-                  amount: payment.amount,
-                }, '🔗 Found existing payment during sync - linking to order');
+              if (unmatchedPayments.length > 0) {
+                paymentToProcess = unmatchedPayments[0];
+              } else {
+                // If no unmatched payment, check if there's already a matched payment for this order
+                const matchedPayments = await db.getPaymentsForOrder(order.orderNumber);
+                if (matchedPayments.length > 0) {
+                  logger.info({
+                    orderNumber: order.orderNumber,
+                    paymentCount: matchedPayments.length,
+                  }, '💳 Found already-matched payment for order during sync');
+                  paymentToProcess = matchedPayments[0];
+                  paymentAlreadyMatched = true;
+                }
+              }
 
-                await db.addVerificationStep(
-                  order.orderNumber,
-                  'PAYMENT_MATCHED' as any,
-                  `Pago bancario vinculado durante sincronización`,
-                  {
+              if (paymentToProcess) {
+                // Found a payment to process
+                const payment = paymentToProcess;
+
+                // Only link if not already matched
+                if (!paymentAlreadyMatched) {
+                  logger.info({
+                    orderNumber: order.orderNumber,
                     transactionId: payment.transactionId,
-                    receivedAmount: payment.amount,
-                    senderName: payment.senderName,
-                    matchType: 'sync_match',
-                  }
-                );
+                    amount: payment.amount,
+                  }, '🔗 Found existing payment during sync - linking to order');
 
-                await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+                  await db.addVerificationStep(
+                    order.orderNumber,
+                    'PAYMENT_MATCHED' as any,
+                    `Pago bancario vinculado durante sincronización`,
+                    {
+                      transactionId: payment.transactionId,
+                      receivedAmount: payment.amount,
+                      senderName: payment.senderName,
+                      matchType: 'sync_match',
+                    }
+                  );
+
+                  await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+                }
 
                 // Verify amount
                 const amountDiff = Math.abs(payment.amount - expectedAmount);

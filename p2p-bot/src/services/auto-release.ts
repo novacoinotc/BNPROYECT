@@ -18,6 +18,7 @@ import {
   BankWebhookPayload,
   OrderMatch,
   VerificationStatus,
+  TradeType,
 } from '../types/binance.js';
 
 export interface AutoReleaseConfig {
@@ -308,28 +309,56 @@ export class AutoReleaseOrchestrator extends EventEmitter {
             // Update DB
             await db.matchPaymentToOrder(payment.transactionId, dbOrder.orderNumber, 'BANK_WEBHOOK');
 
-            // Get full order from order manager or create match
+            // Create order match data
+            const orderMatch: OrderMatch = {
+              orderNumber: dbOrder.orderNumber,
+              bankTransactionId: payment.transactionId,
+              receivedAmount: payment.amount,
+              expectedAmount: parseFloat(dbOrder.totalPrice),
+              senderName: payment.senderName,
+              verified: true,
+              matchedAt: new Date(),
+            };
+
+            // Get full order from order manager
             const order = this.orderManager.getOrder(dbOrder.orderNumber);
 
             if (order) {
-              const orderMatch: OrderMatch = {
-                orderNumber: dbOrder.orderNumber,
-                bankTransactionId: payment.transactionId,
-                receivedAmount: payment.amount,
-                expectedAmount: parseFloat(dbOrder.totalPrice),
-                senderName: payment.senderName,
-                verified: true,
-                matchedAt: new Date(),
-              };
-
               await this.handlePaymentMatch(order, orderMatch);
             } else {
-              // Order not in memory - just log and alert
+              // Order not in memory - create minimal order for auto-release check
+              logger.info({
+                orderNumber: dbOrder.orderNumber,
+                amount: dbOrder.totalPrice,
+              }, '📦 Order not in memory - processing from DB for auto-release');
+
+              // Create a minimal order object from DB data for auto-release
+              const minimalOrder: OrderData = {
+                orderNumber: dbOrder.orderNumber,
+                orderStatus: 'BUYER_PAYED',
+                totalPrice: dbOrder.totalPrice,
+                unitPrice: '0',
+                amount: '0',
+                asset: 'USDT',
+                fiat: 'MXN',
+                fiatSymbol: 'Mex$',
+                counterPartNickName: dbOrder.buyerNickName,
+                tradeType: TradeType.SELL,
+                createTime: dbOrder.createdAt?.getTime() || Date.now(),
+                payMethodName: 'BANK',
+                commission: '0',
+                advNo: '',
+              };
+
+              // Process for auto-release even if order isn't in memory
+              await this.handlePaymentMatch(minimalOrder, orderMatch);
+
+              // Also create alert for visibility
               await db.createAlert({
                 type: 'payment_matched',
                 severity: 'info',
-                title: 'Bank payment matched',
-                message: `Payment ${payment.transactionId} matched to order ${dbOrder.orderNumber}`,
+                title: 'Bank payment matched (auto-release triggered)',
+                message: `Payment ${payment.transactionId} matched to order ${dbOrder.orderNumber} - checking auto-release`,
                 orderNumber: dbOrder.orderNumber,
                 metadata: { transactionId: payment.transactionId, amount: payment.amount },
               });

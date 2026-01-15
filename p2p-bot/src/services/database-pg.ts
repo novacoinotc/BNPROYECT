@@ -327,6 +327,27 @@ export async function getPaymentByTransactionId(transactionId: string) {
   return result.rows[0] || null;
 }
 
+/**
+ * Get payments matched to a specific order
+ */
+export async function getPaymentsForOrder(orderNumber: string): Promise<Array<{
+  transactionId: string;
+  amount: number;
+  senderName: string;
+  status: string;
+}>> {
+  const db = getPool();
+  const result = await db.query(
+    `SELECT p."transactionId", p.amount, p."senderName", p.status
+     FROM "Payment" p
+     JOIN "Order" o ON p."matchedOrderId" = o.id
+     WHERE o."orderNumber" = $1
+     AND p.status IN ('MATCHED', 'VERIFIED')`,
+    [orderNumber]
+  );
+  return result.rows;
+}
+
 export async function markPaymentReleased(orderNumber: string): Promise<void> {
   const db = getPool();
 
