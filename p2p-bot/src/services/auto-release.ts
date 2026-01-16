@@ -540,21 +540,43 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       orderNumber: order.orderNumber,
     } as ReleaseEvent);
 
-    // Initialize pending release record
-    const pending: PendingRelease = {
-      orderNumber: order.orderNumber,
-      order,
-      ocrVerified: false,
-      ocrConfidence: 0,
-      nameVerified: false, // Must verify name match before release
-      queuedAt: new Date(),
-      attempts: 0,
-    };
+    // CRITICAL: Check if pending record already exists (e.g., from sync_matched flow)
+    // Preserve bankMatch and nameVerified if they were already set
+    const existingPending = this.pendingReleases.get(order.orderNumber);
 
-    this.pendingReleases.set(order.orderNumber, pending);
+    if (existingPending) {
+      // Update existing record but preserve critical fields
+      logger.info({
+        orderNumber: order.orderNumber,
+        hasBankMatch: !!existingPending.bankMatch,
+        nameVerified: existingPending.nameVerified,
+      }, '📋 [VERIFICATION] Preserving existing pending record data');
+
+      existingPending.order = order; // Update order data
+      // Don't overwrite bankMatch, nameVerified, ocrVerified if already set
+    } else {
+      // Initialize new pending release record
+      const pending: PendingRelease = {
+        orderNumber: order.orderNumber,
+        order,
+        ocrVerified: false,
+        ocrConfidence: 0,
+        nameVerified: false, // Must verify name match before release
+        queuedAt: new Date(),
+        attempts: 0,
+      };
+      this.pendingReleases.set(order.orderNumber, pending);
+    }
 
     // BIDIRECTIONAL MATCH: Check if bank payment already arrived before order was marked paid
-    try {
+    // Skip if payment was already matched via sync_matched flow
+    const currentPending = this.pendingReleases.get(order.orderNumber);
+    if (currentPending?.bankMatch?.transactionId) {
+      logger.info({
+        orderNumber: order.orderNumber,
+        transactionId: currentPending.bankMatch.transactionId,
+      }, '📋 [VERIFICATION] Payment already matched via sync - skipping bidirectional search');
+    } else try {
       const expectedAmount = parseFloat(order.totalPrice);
       const existingPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120); // 1% tolerance, last 2 hours
 
