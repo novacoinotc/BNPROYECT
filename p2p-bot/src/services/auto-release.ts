@@ -28,7 +28,6 @@ export interface AutoReleaseConfig {
   requireOcrVerification: boolean;
   enableBuyerRiskCheck: boolean;  // Check buyer history before auto-release
   skipRiskCheckThreshold: number; // Skip risk check for amounts ≤ this value
-  riskCheckFallbackThreshold: number; // When buyerNo unavailable, proceed with bank match only for amounts ≤ this value
   authType: AuthType;
   minConfidence: number;
   releaseDelayMs: number;
@@ -106,8 +105,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       logger.info(`✅ [AUTO-RELEASE] Auto-release ENABLED for orders up to $${config.maxAutoReleaseAmount} MXN`);
       if (config.enableBuyerRiskCheck) {
         logger.info(
-          `🛡️ [AUTO-RELEASE] Buyer risk check: skip ≤$${config.skipRiskCheckThreshold}, ` +
-          `fallback (bank-match only) ≤$${config.riskCheckFallbackThreshold}`
+          `🛡️ [AUTO-RELEASE] Buyer risk check ENABLED (skip for ≤$${config.skipRiskCheckThreshold} MXN)`
         );
       }
     }
@@ -872,91 +870,74 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         const buyerNo = orderDetail?.buyer?.userNo;
 
         if (!buyerNo) {
-          // Buyer userNo not available - use fallback strategy based on amount
-          if (orderAmount <= this.config.riskCheckFallbackThreshold) {
-            // Amount is within fallback threshold - proceed with bank match only
-            logger.warn(
-              `⚠️ [BUYER-RISK FALLBACK] Order ${orderNumber}: BuyerNo unavailable, but amount $${orderAmount} ≤ $${this.config.riskCheckFallbackThreshold} - ` +
-              `proceeding with bank match verification only`
-            );
-            await db.addVerificationStep(
-              orderNumber,
-              VerificationStatus.READY_TO_RELEASE,
-              `⚠️ ID comprador no disponible - Procediendo con verificación bancaria (monto dentro del límite de respaldo)`,
-              { reason: 'buyer_id_not_available_fallback', amount: orderAmount, fallbackThreshold: this.config.riskCheckFallbackThreshold }
-            );
-            // Continue to release check (don't return)
-          } else {
-            // Amount exceeds fallback threshold - require manual verification
-            logger.warn(
-              `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: BuyerNo unavailable and amount $${orderAmount} > $${this.config.riskCheckFallbackThreshold} - ` +
-              `requiring manual verification`
-            );
-            await db.addVerificationStep(
-              orderNumber,
-              VerificationStatus.MANUAL_REVIEW,
-              `👤 REQUIERE REVISIÓN MANUAL - ID comprador no disponible y monto alto ($${orderAmount} > $${this.config.riskCheckFallbackThreshold})`,
-              { reason: 'buyer_id_not_available_high_amount', amount: orderAmount, fallbackThreshold: this.config.riskCheckFallbackThreshold }
-            );
-            this.emit('release', {
-              type: 'manual_required',
-              orderNumber,
-              reason: `Buyer ID unavailable and amount ${orderAmount} exceeds fallback threshold ${this.config.riskCheckFallbackThreshold}`,
-            } as ReleaseEvent);
-            return;
-          }
-        } else {
-          // Buyer userNo available - perform full risk assessment
-          const riskAssessment = await this.buyerRiskAssessor.assessBuyer(buyerNo, orderAmount);
-          pending.buyerRiskAssessment = riskAssessment;
+          // Buyer userNo not available - REQUIRE manual verification for amounts > skipRiskCheckThreshold
+          logger.warn(
+            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: BuyerNo unavailable - requiring manual verification`
+          );
+          await db.addVerificationStep(
+            orderNumber,
+            VerificationStatus.MANUAL_REVIEW,
+            `👤 REQUIERE REVISIÓN MANUAL - No se pudo obtener ID del comprador para verificar historial`,
+            { reason: 'buyer_id_not_available', amount: orderAmount }
+          );
+          this.emit('release', {
+            type: 'manual_required',
+            orderNumber,
+            reason: 'Buyer ID unavailable - cannot verify buyer history',
+          } as ReleaseEvent);
+          return;
+        }
 
-          if (!riskAssessment.isTrusted) {
-            logger.warn(
-              `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: Buyer ${buyerNo} failed risk assessment - ` +
-              `${riskAssessment.failedCriteria.join(', ')}`
-            );
+        // Buyer userNo available - perform full risk assessment
+        const riskAssessment = await this.buyerRiskAssessor.assessBuyer(buyerNo, orderAmount);
+        pending.buyerRiskAssessment = riskAssessment;
 
-            await db.addVerificationStep(
-              orderNumber,
-              VerificationStatus.MANUAL_REVIEW,
-              `👤 REQUIERE VERIFICACIÓN MANUAL - Comprador no cumple criterios de confianza`,
-              {
-                buyerNo,
-                stats: riskAssessment.stats,
-                failedCriteria: riskAssessment.failedCriteria,
-                recommendation: riskAssessment.recommendation,
-              }
-            );
-
-            this.emit('release', {
-              type: 'manual_required',
-              orderNumber,
-              reason: `Buyer risk assessment failed: ${riskAssessment.failedCriteria.join(', ')}`,
-              data: { riskAssessment },
-            } as ReleaseEvent);
-            return;
-          }
-
-          // Buyer is trusted - log and continue
-          logger.info(
-            `✅ [BUYER-RISK OK] Order ${orderNumber}: Buyer ${buyerNo} passed risk assessment - ` +
-            `orders=${riskAssessment.stats?.totalOrders}, days=${riskAssessment.stats?.registerDays}, ` +
-            `positive=${((riskAssessment.stats?.positiveRate || 0) * 100).toFixed(0)}%`
+        if (!riskAssessment.isTrusted) {
+          logger.warn(
+            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: Buyer ${buyerNo} failed risk assessment - ` +
+            `${riskAssessment.failedCriteria.join(', ')}`
           );
 
           await db.addVerificationStep(
             orderNumber,
-            VerificationStatus.READY_TO_RELEASE,
-            `✅ Comprador verificado - Historial confiable`,
+            VerificationStatus.MANUAL_REVIEW,
+            `👤 REQUIERE VERIFICACIÓN MANUAL - Comprador no cumple criterios de confianza`,
             {
               buyerNo,
-              totalOrders: riskAssessment.stats?.totalOrders,
-              orders30Day: riskAssessment.stats?.orders30Day,
-              registerDays: riskAssessment.stats?.registerDays,
-              positiveRate: riskAssessment.stats?.positiveRate,
+              stats: riskAssessment.stats,
+              failedCriteria: riskAssessment.failedCriteria,
+              recommendation: riskAssessment.recommendation,
             }
           );
+
+          this.emit('release', {
+            type: 'manual_required',
+            orderNumber,
+            reason: `Buyer risk assessment failed: ${riskAssessment.failedCriteria.join(', ')}`,
+            data: { riskAssessment },
+          } as ReleaseEvent);
+          return;
         }
+
+        // Buyer is trusted - log and continue
+        logger.info(
+          `✅ [BUYER-RISK OK] Order ${orderNumber}: Buyer ${buyerNo} passed risk assessment - ` +
+          `orders=${riskAssessment.stats?.totalOrders}, days=${riskAssessment.stats?.registerDays}, ` +
+          `positive=${((riskAssessment.stats?.positiveRate || 0) * 100).toFixed(0)}%`
+        );
+
+        await db.addVerificationStep(
+          orderNumber,
+          VerificationStatus.READY_TO_RELEASE,
+          `✅ Comprador verificado - Historial confiable`,
+          {
+            buyerNo,
+            totalOrders: riskAssessment.stats?.totalOrders,
+            orders30Day: riskAssessment.stats?.orders30Day,
+            registerDays: riskAssessment.stats?.registerDays,
+            positiveRate: riskAssessment.stats?.positiveRate,
+          }
+        );
       } catch (error) {
         logger.error({ error, orderNumber }, '❌ [BUYER-RISK] Error during buyer risk assessment');
         // On error, require manual verification for safety
@@ -1273,9 +1254,6 @@ export function createAutoReleaseOrchestrator(
     enableBuyerRiskCheck: process.env.ENABLE_BUYER_RISK_CHECK === 'true',
     // Skip risk check for small amounts - default $800 MXN
     skipRiskCheckThreshold: parseFloat(process.env.SKIP_RISK_CHECK_THRESHOLD || '800'),
-    // Fallback threshold - when buyerNo unavailable, proceed with bank match only for amounts ≤ this value
-    // Amounts above this require manual verification when buyerNo unavailable
-    riskCheckFallbackThreshold: parseFloat(process.env.RISK_CHECK_FALLBACK_THRESHOLD || '2500'),
     authType: (process.env.RELEASE_AUTH_TYPE as AuthType) || AuthType.GOOGLE,
     minConfidence: parseFloat(process.env.OCR_MIN_CONFIDENCE || '0.7'),
     releaseDelayMs: parseInt(process.env.RELEASE_DELAY_MS || '5000'),

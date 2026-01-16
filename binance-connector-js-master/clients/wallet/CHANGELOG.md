@@ -1,0 +1,194 @@
+# Changelog
+
+## 14.0.0 - 2026-01-13
+
+### Added (1)
+
+- `submitDepositQuestionnaireV2()` (`PUT /sapi/v2/localentity/deposit/provide-info`)
+
+### Changed (2)
+
+- Update `@binance/common` library to version `2.2.0`.
+
+- Modified parameter `depositId`:
+  - type `string` → `integer`
+  - affected methods:
+    - `submitDepositQuestionnaire()` (`PUT /sapi/v1/localentity/broker/deposit/provide-info`)
+
+## 13.0.0 - 2025-12-19
+
+### Added (2)
+
+- `dustConvert()` (`POST /sapi/v1/asset/dust-convert/convert`)
+- `dustConvertibleAssets()` (`POST /sapi/v1/asset/dust-convert/query-convertible-assets`)
+
+### Changed (1)
+
+- Update `@binance/common` library to version `2.1.1`.
+
+## 12.1.0 - 2025-12-16
+
+### Changed (2)
+
+- Update `@binance/common` library to version `2.1.0`.
+- Support request body params on `sendRequest` and `sendSignedRequest` functions.
+
+## 12.0.3 - 2025-11-27
+
+### Changed (1)
+
+- Fixed bug with Configuration exported type.
+
+## 12.0.2 - 2025-11-18
+
+### Changed (2)
+
+- Update `@binance/common` library to version `2.0.1`.
+- Replaced deprecated `tsup` with `tsdown` for bundling.
+
+## 12.0.1 - 2025-11-06
+
+### Changed (1)
+
+- Accept `BigInt` as input for all parameters that expect long numbers.
+
+## 12.0.0 - 2025-11-06
+
+### Changed (2)
+
+- Convert long numbers to `BigInt` in all API responses when precision is high.
+- Update `@binance/common` library to version `2.0.0`.
+
+## 11.0.0 - 2025-09-15
+
+### Changed (1)
+
+- Modified response for `depositHistory()` (`GET /sapi/v1/capital/deposit/hisrec`):
+  - item property `travelRuleStatus` added
+
+## 10.0.1 - 2025-09-12
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.2.5`.
+
+## 10.0.0 - 2025-09-09
+
+### Changed (1)
+
+- Modified response for `allCoinsInformation()` (`GET /sapi/v1/capital/config/getall`):
+  - `networkList`: item property `withdrawTag` added
+
+## 9.0.0 - 2025-08-29
+
+### Added (1)
+
+- `depositHistoryV2()` (`GET /sapi/v2/localentity/deposit/history`)
+
+## 8.0.1 - 2025-08-18
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.2.4`.
+
+## 8.0.0 - 2025-07-22
+
+### Added (1)
+
+- `checkQuestionnaireRequirements()` (`GET /sapi/v1/localentity/questionnaire-requirements`)
+
+### Changed (3)
+
+- Added parameter `recvWindow`
+  - affected methods:
+    - `fetchAddressVerificationList()` (`GET /sapi/v1/addressVerify/list`)
+    - `vaspList()` (`GET /sapi/v1/localentity/vasp`)
+
+- Update `@binance/common` library to version `1.2.2`.
+
+- Bump `form-data` from `4.0.2` to `4.0.4` to fix a security issue.
+
+## 7.0.0 - 2025-07-14
+
+### Changed (1)
+
+- Modified response for `allCoinsInformation()` method (`GET /sapi/v1/capital/config/getall`):
+
+## 6.0.3 - 2025-07-08
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.2.0`.
+
+## 6.0.2 - 2025-06-19
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.1.2`.
+
+## 6.0.1 - 2025-06-16
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.1.1`.
+
+## 6.0.0 - 2025-06-11
+
+### Added (1)
+
+- `fetchAddressVerificationList()` (`GET /sapi/v1/addressVerify/list`)
+
+## 5.0.2 - 2025-06-05
+
+### Changed (1)
+
+- Update `@binance/common` library to version `1.1.0`.
+
+## 5.0.1 - 2025-06-03
+
+### Changed
+
+- Update `@binance/common` library to version `1.0.6`.
+
+## 5.0.0 - 2025-05-14
+
+### Changed
+
+- Updated response types.
+
+## 4.0.0 - 2025-04-23
+
+### Added
+
+- `GET /sapi/v1/capital/withdraw/quota`.
+
+### Removed
+
+- Removed `subAccountIdRequired` parameter from `POST /sapi/v1/localentity/broker/withdraw/apply`.
+
+## 3.0.0 - 2025-04-10
+
+### Changed
+
+- Update `@binance/common` library to version `1.0.2`.
+- Update examples.
+
+### Removed
+
+- Remove unused error reponses.
+
+## 2.0.1 - 2025-04-07
+
+- Update `@binance/common` library to version `1.0.1`.
+- Remove unsupported Testnet URL.
+
+## 2.0.0 - 2025-03-28
+
+### Added
+
+- `GET /sapi/v1/localentity/broker/deposit/provide-info`
+- `POST /sapi/v1/localentity/broker/withdraw/apply`
+
+## 1.0.0 - 2025-03-24
+
+- Initial release
