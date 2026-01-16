@@ -795,15 +795,46 @@ export interface TrustedBuyerData {
 }
 
 /**
- * Check if a buyer is trusted (by nickname)
+ * Check if a buyer is trusted (by nickname OR realName)
+ * This allows matching even if nicknames are censored (e.g., "lui***")
  */
-export async function isTrustedBuyer(counterPartNickName: string): Promise<boolean> {
+export async function isTrustedBuyer(counterPartNickName: string, buyerRealName?: string | null): Promise<boolean> {
   const db = getPool();
-  const result = await db.query(
-    `SELECT id FROM "TrustedBuyer"
-     WHERE "counterPartNickName" = $1 AND "isActive" = true`,
-    [counterPartNickName]
-  );
+
+  // Normalize names for comparison (uppercase, trim whitespace)
+  const normalizedNickName = counterPartNickName?.trim() || '';
+  const normalizedRealName = buyerRealName?.trim().toUpperCase() || '';
+
+  // Search by nickname OR realName (if provided)
+  let query: string;
+  let params: string[];
+
+  if (normalizedRealName) {
+    // Search by either nickname or realName (case-insensitive for realName)
+    query = `SELECT id, "counterPartNickName", "realName" FROM "TrustedBuyer"
+             WHERE "isActive" = true
+             AND ("counterPartNickName" = $1 OR UPPER(TRIM("realName")) = $2)`;
+    params = [normalizedNickName, normalizedRealName];
+  } else {
+    // Only search by nickname
+    query = `SELECT id, "counterPartNickName", "realName" FROM "TrustedBuyer"
+             WHERE "counterPartNickName" = $1 AND "isActive" = true`;
+    params = [normalizedNickName];
+  }
+
+  const result = await db.query(query, params);
+
+  if (result.rows.length > 0) {
+    const matched = result.rows[0];
+    logger.info({
+      searchedNickName: normalizedNickName,
+      searchedRealName: normalizedRealName || '(not provided)',
+      matchedBy: matched.counterPartNickName === normalizedNickName ? 'nickname' : 'realName',
+      trustedBuyerNickName: matched.counterPartNickName,
+      trustedBuyerRealName: matched.realName,
+    }, '⭐ [TRUSTED BUYER] Match found in trusted buyers list');
+  }
+
   return result.rows.length > 0;
 }
 

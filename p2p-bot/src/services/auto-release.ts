@@ -649,20 +649,36 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Compare two names and return similarity score (0-1)
+   * Handles Mexican bank formats like "SAIB,BRIBIESCA/LOPEZ" vs "BRIBIESCA LOPEZ SAIB"
    */
   private compareNames(name1: string, name2: string): number {
     if (!name1 || !name2) return 0;
 
-    const normalize = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9\s]/g, '');
+    // Normalize: convert separators to spaces, remove special chars, lowercase
+    const normalize = (s: string) => {
+      return s
+        .toLowerCase()
+        .trim()
+        // Replace common bank separators with spaces (Mexican SPEI format uses comma and slash)
+        .replace(/[,\/\.\-\_\|]/g, ' ')
+        // Remove remaining special characters (keep letters, numbers, spaces, and Spanish chars)
+        .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+        // Normalize multiple spaces to single space
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
     const n1 = normalize(name1);
     const n2 = normalize(name2);
+
+    logger.debug({ original1: name1, normalized1: n1, original2: name2, normalized2: n2 }, 'Name comparison normalization');
 
     if (n1 === n2) return 1;
 
     // Check if one contains the other
     if (n1.includes(n2) || n2.includes(n1)) return 0.8;
 
-    // Check word overlap
+    // Check word overlap (names can be in different order)
     const words1 = new Set(n1.split(/\s+/).filter(w => w.length > 2));
     const words2 = new Set(n2.split(/\s+/).filter(w => w.length > 2));
 
@@ -671,8 +687,19 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       if (words2.has(word)) matches++;
     }
 
+    // Calculate similarity based on word overlap
     const totalWords = Math.max(words1.size, words2.size);
-    return totalWords > 0 ? matches / totalWords : 0;
+    const wordScore = totalWords > 0 ? matches / totalWords : 0;
+
+    logger.debug({
+      words1: Array.from(words1),
+      words2: Array.from(words2),
+      matches,
+      totalWords,
+      wordScore
+    }, 'Name comparison word analysis');
+
+    return wordScore;
   }
 
   /**
@@ -1009,16 +1036,18 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // 2. TRUSTED BUYERS - manually verified by admin (STILL requires name match!)
     const skipRiskCheck = orderAmount <= this.config.skipRiskCheckThreshold;
 
-    // Check if buyer is in our trusted buyers list (by nickname)
+    // Check if buyer is in our trusted buyers list (by nickname OR realName)
+    // This handles censored nicknames like "lui***" by also matching on verified real name
     const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
+    const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
     let isTrustedBuyer = false;
 
-    if (buyerNickName) {
+    if (buyerNickName || buyerRealName) {
       try {
-        isTrustedBuyer = await db.isTrustedBuyer(buyerNickName);
+        isTrustedBuyer = await db.isTrustedBuyer(buyerNickName, buyerRealName);
         if (isTrustedBuyer) {
           logger.info(
-            `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" is in trusted list - skipping risk check`
+            `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" (${buyerRealName || 'no real name'}) is in trusted list - skipping risk check`
           );
           await db.addVerificationStep(
             orderNumber,
@@ -1026,13 +1055,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
             `⭐ Comprador de confianza verificado manualmente`,
             {
               buyerNickName,
+              buyerRealName,
               trustedBuyer: true,
               noteToCheck: 'Still requires name match verification',
             }
           );
         }
       } catch (error) {
-        logger.warn({ error, buyerNickName }, 'Error checking trusted buyer status');
+        logger.warn({ error, buyerNickName, buyerRealName }, 'Error checking trusted buyer status');
       }
     }
 
@@ -1294,18 +1324,19 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
         // Update trusted buyer stats if applicable
         const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
-        if (buyerNickName) {
+        const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
+        if (buyerNickName || buyerRealName) {
           try {
-            const isTrusted = await db.isTrustedBuyer(buyerNickName);
+            const isTrusted = await db.isTrustedBuyer(buyerNickName, buyerRealName);
             if (isTrusted) {
               const orderAmount = parseFloat(pending.order.totalPrice);
               await db.incrementTrustedBuyerStats(buyerNickName, orderAmount);
               logger.info(
-                `⭐ [TRUSTED BUYER] Updated stats for "${buyerNickName}" - auto-released $${orderAmount}`
+                `⭐ [TRUSTED BUYER] Updated stats for "${buyerNickName}" (${buyerRealName || 'no name'}) - auto-released $${orderAmount}`
               );
             }
           } catch (err) {
-            logger.warn({ err, buyerNickName }, 'Error updating trusted buyer stats');
+            logger.warn({ err, buyerNickName, buyerRealName }, 'Error updating trusted buyer stats');
           }
         }
 

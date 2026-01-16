@@ -21,6 +21,7 @@ export default function TrustedBuyersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [editingBuyer, setEditingBuyer] = useState<TrustedBuyer | null>(null);
 
   const fetchTrustedBuyers = useCallback(async () => {
     try {
@@ -175,12 +176,20 @@ export default function TrustedBuyersPage() {
                   </td>
                   <td className="px-4 py-3 text-center">
                     {buyer.isActive && (
-                      <button
-                        onClick={() => handleRemove(buyer.counterPartNickName)}
-                        className="text-red-400 hover:text-red-300 text-sm"
-                      >
-                        Remover
-                      </button>
+                      <div className="flex items-center justify-center gap-3">
+                        <button
+                          onClick={() => setEditingBuyer(buyer)}
+                          className="text-blue-400 hover:text-blue-300 text-sm"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleRemove(buyer.counterPartNickName)}
+                          className="text-red-400 hover:text-red-300 text-sm"
+                        >
+                          Remover
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -196,6 +205,18 @@ export default function TrustedBuyersPage() {
           onClose={() => setShowAddModal(false)}
           onSuccess={() => {
             setShowAddModal(false);
+            fetchTrustedBuyers();
+          }}
+        />
+      )}
+
+      {/* Edit Modal */}
+      {editingBuyer && (
+        <EditTrustedBuyerModal
+          buyer={editingBuyer}
+          onClose={() => setEditingBuyer(null)}
+          onSuccess={() => {
+            setEditingBuyer(null);
             fetchTrustedBuyers();
           }}
         />
@@ -309,6 +330,113 @@ function AddTrustedBuyerModal({
               className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
             >
               {loading ? 'Agregando...' : 'Agregar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Edit Modal Component
+function EditTrustedBuyerModal({
+  buyer,
+  onClose,
+  onSuccess,
+}: {
+  buyer: TrustedBuyer;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [realName, setRealName] = useState(buyer.realName || '');
+  const [notes, setNotes] = useState(buyer.notes || '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/trusted-buyers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          counterPartNickName: buyer.counterPartNickName,
+          realName: realName.trim() || null,
+          notes: notes.trim() || null,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        onSuccess();
+      } else {
+        setError(data.error || 'Error al actualizar');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error de conexion');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-dark-card rounded-xl p-6 w-full max-w-md border border-dark-border" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-white mb-4">Editar Comprador Confiable</h3>
+
+        <div className="mb-4 p-3 bg-dark-bg rounded-lg">
+          <span className="text-gray-400 text-sm">Nickname:</span>
+          <span className="text-white ml-2 font-medium">{buyer.counterPartNickName}</span>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">
+              Nombre Real <span className="text-primary-400">(importante para identificacion)</span>
+            </label>
+            <input
+              type="text"
+              value={realName}
+              onChange={(e) => setRealName(e.target.value)}
+              placeholder="ej: HERNANDEZ PEROZO ESTELA CAROLINA"
+              className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-dark-border focus:border-primary-500 focus:outline-none"
+              autoFocus
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Usa el nombre exacto que aparece en el KYC de Binance o en los pagos bancarios
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Notas</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="ej: Cliente recurrente, verificado"
+              rows={2}
+              className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-dark-border focus:border-primary-500 focus:outline-none resize-none"
+            />
+          </div>
+
+          {error && <p className="text-sm text-red-400">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 bg-dark-hover text-gray-300 rounded-lg hover:bg-dark-border transition"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            >
+              {loading ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </form>

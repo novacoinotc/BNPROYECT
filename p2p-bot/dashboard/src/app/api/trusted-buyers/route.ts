@@ -75,6 +75,48 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// PATCH - Update a trusted buyer (e.g., add realName)
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { counterPartNickName, realName, notes } = body;
+
+    if (!counterPartNickName) {
+      return NextResponse.json(
+        { success: false, error: 'counterPartNickName is required' },
+        { status: 400 }
+      );
+    }
+
+    const trustedBuyer = await prisma.trustedBuyer.update({
+      where: { counterPartNickName },
+      data: {
+        realName: realName !== undefined ? realName : undefined,
+        notes: notes !== undefined ? notes : undefined,
+        updatedAt: new Date(),
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      trustedBuyer,
+      message: `Trusted buyer "${counterPartNickName}" updated`,
+    });
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return NextResponse.json(
+        { success: false, error: 'Trusted buyer not found' },
+        { status: 404 }
+      );
+    }
+    console.error('Error updating trusted buyer:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update trusted buyer' },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE - Remove (deactivate) a trusted buyer
 export async function DELETE(request: NextRequest) {
   try {
