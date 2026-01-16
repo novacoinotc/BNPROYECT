@@ -103,6 +103,135 @@ const stepEmojis: Record<string, string> = {
   MANUAL_REVIEW: '👤',
 };
 
+/**
+ * Calcula el estado descriptivo de la orden basándose en múltiples factores
+ * Esto ayuda a entender claramente qué está pasando con cada orden
+ */
+function getDescriptiveStatus(order: Order): { emoji: string; label: string; color: string; description: string } {
+  const hasPayment = order.payments.length > 0;
+  const paymentMatched = order.payments.some(p => p.status === 'MATCHED');
+  const binanceStatus = order.status;
+  const verificationStatus = order.verificationStatus;
+
+  // COMPLETED orders
+  if (binanceStatus === 'COMPLETED') {
+    return {
+      emoji: '✨',
+      label: 'Completada',
+      color: 'bg-green-500/20 text-green-400',
+      description: 'Orden finalizada exitosamente',
+    };
+  }
+
+  // CANCELLED orders
+  if (['CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT'].includes(binanceStatus)) {
+    return {
+      emoji: '❌',
+      label: 'Cancelada',
+      color: 'bg-red-500/20 text-red-400',
+      description: binanceStatus === 'CANCELLED_TIMEOUT' ? 'Cancelada por timeout' : 'Orden cancelada',
+    };
+  }
+
+  // APPEALING
+  if (binanceStatus === 'APPEALING') {
+    return {
+      emoji: '⚖️',
+      label: 'En disputa',
+      color: 'bg-orange-500/20 text-orange-400',
+      description: 'Orden en proceso de apelación',
+    };
+  }
+
+  // Ready to release
+  if (verificationStatus === 'READY_TO_RELEASE') {
+    return {
+      emoji: '🚀',
+      label: 'Listo para liberar',
+      color: 'bg-emerald-500/20 text-emerald-400',
+      description: 'Todas las verificaciones pasaron - liberar crypto',
+    };
+  }
+
+  // Manual review needed
+  if (verificationStatus === 'MANUAL_REVIEW' || verificationStatus === 'NAME_MISMATCH') {
+    return {
+      emoji: '👤',
+      label: 'Revisión manual',
+      color: 'bg-orange-500/20 text-orange-400',
+      description: verificationStatus === 'NAME_MISMATCH'
+        ? 'Nombre del pagador no coincide - verificar manualmente'
+        : 'Requiere verificación manual',
+    };
+  }
+
+  // PAID status (buyer marked as paid)
+  if (binanceStatus === 'PAID') {
+    if (hasPayment && paymentMatched) {
+      // Both: buyer marked paid AND bank payment received
+      if (verificationStatus === 'AMOUNT_VERIFIED' || verificationStatus === 'NAME_VERIFIED') {
+        return {
+          emoji: '✅',
+          label: 'Verificando',
+          color: 'bg-blue-500/20 text-blue-400',
+          description: 'Pago recibido y verificado - procesando liberación',
+        };
+      }
+      return {
+        emoji: '🔍',
+        label: 'Verificando pago',
+        color: 'bg-purple-500/20 text-purple-400',
+        description: 'Pago recibido - verificando monto y nombre',
+      };
+    } else if (hasPayment) {
+      // Has unmatched payment
+      return {
+        emoji: '🔗',
+        label: 'Vinculando pago',
+        color: 'bg-purple-500/20 text-purple-400',
+        description: 'Pago bancario recibido - vinculando a orden',
+      };
+    } else {
+      // Buyer marked paid but no bank payment yet
+      return {
+        emoji: '⏳',
+        label: 'Esperando pago',
+        color: 'bg-yellow-500/20 text-yellow-400',
+        description: 'Comprador marcó pagado - esperando confirmación bancaria',
+      };
+    }
+  }
+
+  // PENDING status (order created, waiting for buyer to pay)
+  if (binanceStatus === 'PENDING') {
+    if (hasPayment) {
+      // Payment arrived BEFORE buyer marked as paid
+      return {
+        emoji: '💰',
+        label: 'Pago recibido',
+        color: 'bg-blue-500/20 text-blue-400',
+        description: 'Pago bancario recibido - esperando que comprador marque pagado',
+      };
+    } else {
+      // Normal: waiting for buyer to pay
+      return {
+        emoji: '⏳',
+        label: 'Esperando',
+        color: 'bg-gray-500/20 text-gray-400',
+        description: 'Esperando que comprador realice el pago',
+      };
+    }
+  }
+
+  // Default fallback
+  return {
+    emoji: '📋',
+    label: verificationStatus || binanceStatus,
+    color: 'bg-gray-500/20 text-gray-400',
+    description: 'Estado desconocido',
+  };
+}
+
 // Release Modal Component
 function ReleaseModal({
   orderNumber,
@@ -432,18 +561,23 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    {order.verificationStatus ? (
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-medium ${
-                          verificationStatusColors[order.verificationStatus] || 'bg-gray-500/20 text-gray-400'
-                        }`}
-                      >
-                        {stepEmojis[order.verificationStatus] || '📋'}{' '}
-                        {verificationStatusLabels[order.verificationStatus] || order.verificationStatus}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-500">-</span>
-                    )}
+                    {(() => {
+                      const descriptiveStatus = getDescriptiveStatus(order);
+                      return (
+                        <div className="group relative">
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium cursor-help ${descriptiveStatus.color}`}
+                          >
+                            {descriptiveStatus.emoji} {descriptiveStatus.label}
+                          </span>
+                          {/* Tooltip with description */}
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-[#1a1625] border border-[#3d3655] rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap">
+                            <p className="text-xs text-gray-300">{descriptiveStatus.description}</p>
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-[#3d3655]"></div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-gray-400">
                     {new Date(order.binanceCreateTime).toLocaleTimeString()}
