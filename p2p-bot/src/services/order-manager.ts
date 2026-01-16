@@ -105,9 +105,10 @@ export class OrderManager extends EventEmitter {
       });
       logger.info({ count: recentOrders.length }, 'Found recent orders to sync');
 
-      // Combine and deduplicate
+      // Combine and deduplicate - pendingOrders has MOST CURRENT status for active orders
+      // so it should be processed LAST to take priority
       const allOrders = new Map<string, OrderData>();
-      for (const order of [...pendingOrders, ...activeOrders, ...recentOrders]) {
+      for (const order of [...recentOrders, ...activeOrders, ...pendingOrders]) {
         allOrders.set(order.orderNumber, order);
       }
 
