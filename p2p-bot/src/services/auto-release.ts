@@ -244,6 +244,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     this.pendingReleases.set(order.orderNumber, pending);
 
+    // CRITICAL: Clear throttle before checking - this is a significant state change
+    // (name verification completed) that must be evaluated immediately
+    this.lastCheckTime.delete(order.orderNumber);
+
     // Check if ready for release
     await this.checkReadyForRelease(order.orderNumber);
   }
@@ -961,6 +965,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
       // Release the processing lock
       this.processingOrders.delete(order.orderNumber);
+
+      // CRITICAL: Clear throttle before checking - name verification is a significant state change
+      this.lastCheckTime.delete(order.orderNumber);
 
       // ALWAYS call checkReadyForRelease
       await this.checkReadyForRelease(order.orderNumber);
