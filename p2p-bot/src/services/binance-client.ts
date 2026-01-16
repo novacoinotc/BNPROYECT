@@ -422,38 +422,45 @@ export class BinanceC2CClient {
 
   /**
    * List pending/active orders (orders in status 1, 2, or 3)
-   * Primary: GET /sapi/v1/c2c/orderMatch/pendingOrders (discovered as working)
-   * Fallback: POST /sapi/v1/c2c/orderMatch/listOrders with status filter
+   * Uses POST /sapi/v1/c2c/orderMatch/listOrders with explicit status filter
+   * to ensure we get TRADING (1), BUYER_PAYED (2), and APPEALING (3) orders
    */
   async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
-    // Try GET /pendingOrders first (simpler, discovered as working)
-    try {
-      const response = await this.signedGet<{ data: OrderData[] }>(
-        '/sapi/v1/c2c/orderMatch/pendingOrders',
-        { tradeType: 'SELL', rows, page: 1 }
-      );
-      const orders = (response as any)?.data || response || [];
-      if (Array.isArray(orders) && orders.length > 0) {
-        // Debug: Log first order structure to understand fields
-        logger.info(`🔍 [API DEBUG] pendingOrders FIRST ORDER: ${JSON.stringify(orders[0])}`);
-        return orders;
-      }
-    } catch (error: any) {
-      logger.debug({ error: error?.message }, 'listPendingOrders: GET failed, trying POST');
-    }
-
-    // Fallback to POST with status filter
+    // Use POST with explicit status filter to get all pending statuses
+    // GET /pendingOrders might only return TRADING orders
     try {
       const body = {
         tradeType: 'SELL',
         rows,
         page: 1,
-        orderStatusList: [1, 2, 3],
+        orderStatusList: [1, 2, 3], // TRADING, BUYER_PAYED, APPEALING
       };
 
       const response = await this.signedPost<{ data: OrderData[] }>(
         '/sapi/v1/c2c/orderMatch/listOrders',
         body
+      );
+      const orders = (response as any)?.data || response || [];
+
+      if (Array.isArray(orders) && orders.length > 0) {
+        // Log status distribution for debugging
+        const statusCounts: Record<string, number> = {};
+        for (const order of orders) {
+          statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
+        }
+        logger.info(`📋 [PENDING ORDERS] Fetched ${orders.length}: ${JSON.stringify(statusCounts)}`);
+      }
+
+      return orders;
+    } catch (error: any) {
+      logger.error({ error: error?.message }, 'listPendingOrders: POST failed');
+    }
+
+    // Fallback to GET /pendingOrders
+    try {
+      const response = await this.signedGet<{ data: OrderData[] }>(
+        '/sapi/v1/c2c/orderMatch/pendingOrders',
+        { tradeType: 'SELL', rows, page: 1 }
       );
       const orders = (response as any)?.data || response || [];
       return orders;
