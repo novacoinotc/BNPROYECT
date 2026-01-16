@@ -502,6 +502,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   /**
    * Start verification process for paid order
    * Implements bidirectional matching: checks for existing bank payments
+   * NOTE: This method is designed to be resilient to DB errors
    */
   private async startVerification(order: OrderData): Promise<void> {
     logger.info({
@@ -509,17 +510,22 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       amount: order.totalPrice,
     }, 'Starting payment verification');
 
-    // Track: buyer marked as paid
-    await db.addVerificationStep(
-      order.orderNumber,
-      VerificationStatus.BUYER_MARKED_PAID,
-      `Comprador marcó como pagado - Esperando confirmación bancaria`,
-      {
-        expectedAmount: order.totalPrice,
-        buyerName: order.counterPartNickName,
-        timestamp: new Date().toISOString(),
-      }
-    );
+    // Track: buyer marked as paid (non-blocking on DB errors)
+    try {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.BUYER_MARKED_PAID,
+        `Comprador marcó como pagado - Esperando confirmación bancaria`,
+        {
+          expectedAmount: order.totalPrice,
+          buyerName: order.counterPartNickName,
+          timestamp: new Date().toISOString(),
+        }
+      );
+    } catch (dbError) {
+      logger.warn({ orderNumber: order.orderNumber, error: dbError },
+        '⚠️ [DB] Failed to add BUYER_MARKED_PAID step - continuing');
+    }
 
     this.emit('release', {
       type: 'verification_started',
@@ -584,39 +590,57 @@ export class AutoReleaseOrchestrator extends EventEmitter {
               amount: payment.amount,
             }, '✅ Bank payment matched to order (payment arrived first)');
 
-            // Track: payment matched
-            await db.addVerificationStep(
-              order.orderNumber,
-              VerificationStatus.PAYMENT_MATCHED,
-              `Pago bancario vinculado (pago llegó primero)`,
-              {
-                transactionId: payment.transactionId,
-                receivedAmount: payment.amount,
-                senderName: payment.senderName,
-                matchType: 'payment_arrived_first',
-              }
-            );
+            // Track: payment matched (non-blocking on DB errors)
+            try {
+              await db.addVerificationStep(
+                order.orderNumber,
+                VerificationStatus.PAYMENT_MATCHED,
+                `Pago bancario vinculado (pago llegó primero)`,
+                {
+                  transactionId: payment.transactionId,
+                  receivedAmount: payment.amount,
+                  senderName: payment.senderName,
+                  matchType: 'payment_arrived_first',
+                }
+              );
+            } catch (dbError) {
+              logger.warn({ orderNumber: order.orderNumber, error: dbError },
+                '⚠️ [DB] Failed to add PAYMENT_MATCHED step - continuing');
+            }
 
-            // Update DB
-            await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+            // Update DB (non-blocking on errors)
+            try {
+              await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+            } catch (dbError) {
+              logger.warn({ orderNumber: order.orderNumber, error: dbError },
+                '⚠️ [DB] Failed to update payment match - continuing');
+            }
 
-            // Handle the match
+            // Handle the match - this MUST be called even if DB steps failed
             await this.handlePaymentMatch(order, match);
             break;
           }
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Error checking for existing payments');
+      logger.error({ error, orderNumber: order.orderNumber }, 'Error checking for existing payments - continuing with verification');
     }
 
     // Look for existing receipt images in chat
-    const existingImages = await this.chatHandler.findReceiptImages(order.orderNumber);
+    try {
+      const existingImages = await this.chatHandler.findReceiptImages(order.orderNumber);
 
-    if (existingImages.length > 0) {
-      // Process the most recent image
-      await this.handleReceiptImage(existingImages[existingImages.length - 1]);
+      if (existingImages.length > 0) {
+        // Process the most recent image
+        await this.handleReceiptImage(existingImages[existingImages.length - 1]);
+      }
+    } catch (error) {
+      logger.warn({ error, orderNumber: order.orderNumber }, 'Error finding receipt images - continuing');
     }
+
+    // ALWAYS check if ready for release at the end
+    // This ensures the order gets processed even if DB errors occurred above
+    await this.checkReadyForRelease(order.orderNumber);
   }
 
   /**
@@ -713,6 +737,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Handle bank payment match
+   * NOTE: This method is designed to be resilient to DB errors - it will catch
+   * DB errors and continue processing so that checkReadyForRelease is always called
    */
   private async handlePaymentMatch(order: OrderData, match: OrderMatch): Promise<void> {
     let pending = this.pendingReleases.get(order.orderNumber);
@@ -758,9 +784,22 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const amountTolerance = expectedAmount * 0.01; // 1% tolerance
     const amountMatches = amountDiff <= amountTolerance;
 
+    // Helper to safely add verification steps (non-blocking on DB errors)
+    const safeAddVerificationStep = async (
+      status: VerificationStatus,
+      message: string,
+      details?: Record<string, any>
+    ) => {
+      try {
+        await db.addVerificationStep(order.orderNumber, status, message, details);
+      } catch (dbError) {
+        logger.warn({ orderNumber: order.orderNumber, error: dbError },
+          '⚠️ [DB] Failed to add verification step - continuing processing');
+      }
+    };
+
     if (amountMatches) {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.AMOUNT_VERIFIED,
         `Monto verificado: $${receivedAmount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)} (diferencia: $${amountDiff.toFixed(2)})`,
         {
@@ -772,8 +811,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         }
       );
     } else {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.AMOUNT_MISMATCH,
         `⚠️ ALERTA: Monto no coincide - Recibido: $${receivedAmount.toFixed(2)} vs Esperado: $${expectedAmount.toFixed(2)}`,
         {
@@ -819,8 +857,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const nameMatches = hasRealName && nameMatchScore > 0.3;
 
     if (!hasRealName) {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.NAME_MISMATCH,
         `⚠️ No se pudo obtener nombre real del comprador desde Binance API - Requiere verificación manual`,
         {
@@ -830,8 +867,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         }
       );
     } else if (nameMatches) {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.NAME_VERIFIED,
         `✅ Nombre verificado: "${senderName}" ≈ "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
         {
@@ -842,8 +878,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         }
       );
     } else {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.NAME_MISMATCH,
         `⚠️ ALERTA: Nombre NO coincide - SPEI: "${senderName}" vs Binance KYC: "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
         {
@@ -875,8 +910,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     // FINAL DETERMINATION
     if (amountMatches && nameMatches) {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.READY_TO_RELEASE,
         `✅ VERIFICACIÓN COMPLETA - Todas las validaciones pasaron`,
         {
@@ -895,8 +929,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         }, '🔒 [MODO AUDITORÍA] Verificación completa - Auto-release DESHABILITADO');
       }
     } else {
-      await db.addVerificationStep(
-        order.orderNumber,
+      await safeAddVerificationStep(
         VerificationStatus.MANUAL_REVIEW,
         `👤 REQUIERE REVISIÓN MANUAL - ${!amountMatches ? 'Monto no coincide' : ''} ${!nameMatches ? 'Nombre no coincide' : ''}`,
         {
@@ -907,7 +940,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       );
     }
 
-    // Check if ready for release
+    // Check if ready for release - ALWAYS called even if DB steps failed above
     await this.checkReadyForRelease(order.orderNumber);
   }
 
