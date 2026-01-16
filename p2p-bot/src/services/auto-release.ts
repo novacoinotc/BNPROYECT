@@ -27,6 +27,7 @@ export interface AutoReleaseConfig {
   requireBankMatch: boolean;
   requireOcrVerification: boolean;
   enableBuyerRiskCheck: boolean;  // Check buyer history before auto-release
+  skipRiskCheckThreshold: number; // Skip risk check for amounts ≤ this value
   authType: AuthType;
   minConfidence: number;
   releaseDelayMs: number;
@@ -103,7 +104,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     } else {
       logger.info(`✅ [AUTO-RELEASE] Auto-release ENABLED for orders up to $${config.maxAutoReleaseAmount} MXN`);
       if (config.enableBuyerRiskCheck) {
-        logger.info(`🛡️ [AUTO-RELEASE] Buyer risk assessment ENABLED`);
+        logger.info(
+          `🛡️ [AUTO-RELEASE] Buyer risk assessment ENABLED (skip for ≤$${config.skipRiskCheckThreshold} MXN)`
+        );
       }
     }
   }
@@ -840,7 +843,16 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     }
 
     // BUYER RISK CHECK - Evaluate buyer trustworthiness before auto-release
-    if (this.config.enableBuyerRiskCheck && hasBankMatch) {
+    // Skip risk check for small amounts (≤ threshold) - bank match is sufficient
+    const skipRiskCheck = orderAmount <= this.config.skipRiskCheckThreshold;
+
+    if (skipRiskCheck && this.config.enableBuyerRiskCheck) {
+      logger.info(
+        `💚 [BUYER-RISK SKIP] Order ${orderNumber}: Amount $${orderAmount} ≤ $${this.config.skipRiskCheckThreshold} - skipping buyer risk check`
+      );
+    }
+
+    if (this.config.enableBuyerRiskCheck && hasBankMatch && !skipRiskCheck) {
       try {
         // Get buyer's userNo from order detail
         const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
@@ -1226,6 +1238,8 @@ export function createAutoReleaseOrchestrator(
     // Buyer risk check - evaluates buyer history before auto-release
     // ENABLE_BUYER_RISK_CHECK=true para habilitar
     enableBuyerRiskCheck: process.env.ENABLE_BUYER_RISK_CHECK === 'true',
+    // Skip risk check for small amounts - default $800 MXN
+    skipRiskCheckThreshold: parseFloat(process.env.SKIP_RISK_CHECK_THRESHOLD || '800'),
     authType: (process.env.RELEASE_AUTH_TYPE as AuthType) || AuthType.GOOGLE,
     minConfidence: parseFloat(process.env.OCR_MIN_CONFIDENCE || '0.7'),
     releaseDelayMs: parseInt(process.env.RELEASE_DELAY_MS || '5000'),
