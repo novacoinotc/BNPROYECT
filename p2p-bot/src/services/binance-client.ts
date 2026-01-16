@@ -432,7 +432,9 @@ export class BinanceC2CClient {
         { tradeType: 'SELL', rows, page: 1 }
       );
       const orders = (response as any)?.data || response || [];
-      if (Array.isArray(orders)) {
+      if (Array.isArray(orders) && orders.length > 0) {
+        // Debug: Log first order structure to understand fields
+        logger.info(`🔍 [API DEBUG] pendingOrders FIRST ORDER: ${JSON.stringify(orders[0])}`);
         return orders;
       }
     } catch (error: any) {
@@ -489,14 +491,8 @@ export class BinanceC2CClient {
       { adOrderNo: orderNumber }
     );
 
-    // Debug: Log raw response to understand structure
-    const keys = response ? Object.keys(response) : [];
-    const hasBuyer = !!(response as any)?.buyer;
-    const hasSeller = !!(response as any)?.seller;
-    logger.info(
-      `🔍 [API DEBUG] getOrderDetail ${orderNumber}: keys=[${keys.join(',')}], hasBuyer=${hasBuyer}, hasSeller=${hasSeller}, ` +
-      `counterPartNickName=${(response as any)?.counterPartNickName || 'N/A'}`
-    );
+    // Debug: Log full raw response to understand structure
+    logger.info(`🔍 [API DEBUG] getOrderDetail ${orderNumber} FULL RESPONSE: ${JSON.stringify(response)}`);
 
     return response;
   }
