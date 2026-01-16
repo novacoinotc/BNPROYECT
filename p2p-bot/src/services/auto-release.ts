@@ -962,7 +962,11 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       }
     }
 
-    if (hasBankMatch && hasOcrVerification && meetsConfidence) {
+    // SAFETY: Always require actual bank transaction ID before queueing for release
+    // This prevents the race condition where release is attempted before bank payment arrives
+    const hasActualBankMatch = !!pending.bankMatch?.transactionId;
+
+    if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence) {
       // Ready for release!
       logger.info(`✅ [AUTO-RELEASE READY] Order ${orderNumber}: All conditions met, queueing for release`);
 
@@ -979,11 +983,12 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       await this.queueForRelease(orderNumber);
     } else {
       const missing: string[] = [];
-      if (!hasBankMatch) missing.push('bank confirmation');
+      if (!hasActualBankMatch) missing.push('bank transaction');
+      if (!hasBankMatch) missing.push('bank verification');
       if (!hasOcrVerification) missing.push('OCR verification');
       if (!meetsConfidence) missing.push(`confidence too low (${(pending.ocrConfidence * 100).toFixed(0)}% < ${(this.config.minConfidence * 100).toFixed(0)}%)`);
 
-      logger.info(`⏳ [AUTO-RELEASE WAITING] Order ${orderNumber}: Missing ${missing.join(', ')}`);
+      logger.debug(`⏳ [AUTO-RELEASE WAITING] Order ${orderNumber}: Missing ${missing.join(', ')}`);
     }
   }
 
