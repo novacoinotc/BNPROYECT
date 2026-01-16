@@ -60,7 +60,7 @@ export function PriceChart() {
   return (
     <ResponsiveContainer width="100%" height={300}>
       <LineChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2b2f36" />
+        <CartesianGrid strokeDasharray="3 3" stroke="#2d2640" />
         <XAxis
           dataKey="time"
           stroke="#6b7280"
@@ -74,8 +74,8 @@ export function PriceChart() {
         />
         <Tooltip
           contentStyle={{
-            backgroundColor: '#1e2026',
-            border: '1px solid #2b2f36',
+            backgroundColor: '#13111c',
+            border: '1px solid #2d2640',
             borderRadius: '8px',
           }}
           labelStyle={{ color: '#9ca3af' }}
@@ -84,21 +84,21 @@ export function PriceChart() {
         <Line
           type="monotone"
           dataKey="Our Price"
-          stroke="#f0b90b"
+          stroke="#8b5cf6"
           strokeWidth={2}
           dot={false}
         />
         <Line
           type="monotone"
           dataKey="Best Competitor"
-          stroke="#3b82f6"
+          stroke="#f472b6"
           strokeWidth={2}
           dot={false}
         />
         <Line
           type="monotone"
           dataKey="Reference"
-          stroke="#6b7280"
+          stroke="#4b5563"
           strokeWidth={1}
           strokeDasharray="5 5"
           dot={false}

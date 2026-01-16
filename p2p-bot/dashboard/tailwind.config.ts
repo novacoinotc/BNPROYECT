@@ -10,17 +10,27 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          50: '#fef7e7',
-          100: '#fdebc3',
-          200: '#fbd98f',
-          300: '#f9c756',
-          400: '#f7b72a',
-          500: '#f0b90b', // Binance yellow
-          600: '#d9a509',
-          700: '#b48508',
-          800: '#93690a',
-          900: '#79560b',
+          50: '#f5f3ff',
+          100: '#ede9fe',
+          200: '#ddd6fe',
+          300: '#c4b5fd',
+          400: '#a78bfa',
+          500: '#8b5cf6', // Violet - new primary
+          600: '#7c3aed',
+          700: '#6d28d9',
+          800: '#5b21b6',
+          900: '#4c1d95',
         },
+        // Dark theme colors
+        dark: {
+          bg: '#0a0a0f',
+          card: '#13111c',
+          border: '#2d2640',
+          hover: '#1f1b2e',
+        },
+      },
+      backgroundImage: {
+        'gradient-dark': 'linear-gradient(135deg, #0a0a0f 0%, #1a1025 50%, #0f0a15 100%)',
       },
     },
   },

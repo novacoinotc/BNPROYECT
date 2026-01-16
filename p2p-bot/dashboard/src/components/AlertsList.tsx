@@ -11,8 +11,8 @@ interface Alert {
 }
 
 const severityColors: Record<string, string> = {
-  info: 'border-l-blue-400 bg-blue-500/10',
-  warning: 'border-l-yellow-400 bg-yellow-500/10',
+  info: 'border-l-violet-400 bg-violet-500/10',
+  warning: 'border-l-amber-400 bg-amber-500/10',
   error: 'border-l-red-400 bg-red-500/10',
   critical: 'border-l-red-600 bg-red-600/20',
 };
@@ -36,7 +36,7 @@ export function AlertsList({ alerts }: { alerts: Alert[] }) {
   }
 
   return (
-    <div className="divide-y divide-[#2b2f36]">
+    <div className="divide-y divide-dark-border">
       {unacknowledged.slice(0, 5).map((alert) => (
         <div
           key={alert.id}

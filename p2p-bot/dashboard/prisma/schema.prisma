@@ -228,6 +228,31 @@ model BuyerCache {
   @@index([isBlocked])
 }
 
+/// Manually verified trusted buyers for auto-release
+/// Uses counterPartNickName as identifier (more reliable than userNo)
+model TrustedBuyer {
+  id                    String   @id @default(cuid())
+  counterPartNickName   String   @unique  // Binance nickname (identifier)
+  realName              String?            // Verified real name
+  verifiedAt            DateTime @default(now())
+  verifiedBy            String?            // Admin who verified
+  notes                 String?            // Verification notes
+
+  // Stats
+  ordersAutoReleased    Int      @default(0)
+  totalAmountReleased   Decimal  @db.Decimal(18, 2) @default(0)
+  lastAutoReleaseAt     DateTime?
+
+  // Status
+  isActive              Boolean  @default(true)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([counterPartNickName])
+  @@index([isActive])
+}
+
 /// System alerts and notifications
 model Alert {
   id          String   @id @default(cuid())

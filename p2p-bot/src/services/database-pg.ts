@@ -761,6 +761,149 @@ export async function savePriceHistory(data: {
   }
 }
 
+// ==================== TRUSTED BUYERS ====================
+
+export interface TrustedBuyerData {
+  id: string;
+  counterPartNickName: string;
+  realName: string | null;
+  verifiedAt: Date;
+  verifiedBy: string | null;
+  notes: string | null;
+  ordersAutoReleased: number;
+  totalAmountReleased: number;
+  lastAutoReleaseAt: Date | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Check if a buyer is trusted (by nickname)
+ */
+export async function isTrustedBuyer(counterPartNickName: string): Promise<boolean> {
+  const db = getPool();
+  const result = await db.query(
+    `SELECT id FROM "TrustedBuyer"
+     WHERE "counterPartNickName" = $1 AND "isActive" = true`,
+    [counterPartNickName]
+  );
+  return result.rows.length > 0;
+}
+
+/**
+ * Get trusted buyer info by nickname
+ */
+export async function getTrustedBuyer(counterPartNickName: string): Promise<TrustedBuyerData | null> {
+  const db = getPool();
+  const result = await db.query(
+    `SELECT * FROM "TrustedBuyer" WHERE "counterPartNickName" = $1`,
+    [counterPartNickName]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Add a buyer to trusted list
+ */
+export async function addTrustedBuyer(
+  counterPartNickName: string,
+  realName?: string,
+  verifiedBy?: string,
+  notes?: string
+): Promise<TrustedBuyerData> {
+  const db = getPool();
+
+  // Try to update if exists (reactivate)
+  const updateResult = await db.query(
+    `UPDATE "TrustedBuyer" SET
+      "isActive" = true,
+      "realName" = COALESCE($2, "realName"),
+      "verifiedBy" = COALESCE($3, "verifiedBy"),
+      "notes" = COALESCE($4, "notes"),
+      "verifiedAt" = NOW(),
+      "updatedAt" = NOW()
+    WHERE "counterPartNickName" = $1
+    RETURNING *`,
+    [counterPartNickName, realName || null, verifiedBy || null, notes || null]
+  );
+
+  if (updateResult.rows.length > 0) {
+    logger.info({ counterPartNickName }, '⭐ Trusted buyer reactivated');
+    return updateResult.rows[0];
+  }
+
+  // Insert new trusted buyer
+  const insertResult = await db.query(
+    `INSERT INTO "TrustedBuyer" (
+      id, "counterPartNickName", "realName", "verifiedBy", "notes",
+      "verifiedAt", "isActive", "createdAt", "updatedAt"
+    ) VALUES ($1, $2, $3, $4, $5, NOW(), true, NOW(), NOW())
+    RETURNING *`,
+    [generateId(), counterPartNickName, realName || null, verifiedBy || null, notes || null]
+  );
+
+  logger.info({ counterPartNickName, realName }, '⭐ New trusted buyer added');
+  return insertResult.rows[0];
+}
+
+/**
+ * Remove buyer from trusted list (deactivate)
+ */
+export async function removeTrustedBuyer(counterPartNickName: string): Promise<boolean> {
+  const db = getPool();
+
+  const result = await db.query(
+    `UPDATE "TrustedBuyer" SET
+      "isActive" = false,
+      "updatedAt" = NOW()
+    WHERE "counterPartNickName" = $1`,
+    [counterPartNickName]
+  );
+
+  if (result.rowCount && result.rowCount > 0) {
+    logger.info({ counterPartNickName }, '❌ Trusted buyer removed');
+    return true;
+  }
+  return false;
+}
+
+/**
+ * List all trusted buyers
+ */
+export async function listTrustedBuyers(includeInactive: boolean = false): Promise<TrustedBuyerData[]> {
+  const db = getPool();
+
+  const query = includeInactive
+    ? `SELECT * FROM "TrustedBuyer" ORDER BY "verifiedAt" DESC`
+    : `SELECT * FROM "TrustedBuyer" WHERE "isActive" = true ORDER BY "verifiedAt" DESC`;
+
+  const result = await db.query(query);
+  return result.rows;
+}
+
+/**
+ * Update trusted buyer stats after auto-release
+ */
+export async function incrementTrustedBuyerStats(
+  counterPartNickName: string,
+  amountReleased: number
+): Promise<void> {
+  const db = getPool();
+
+  await db.query(
+    `UPDATE "TrustedBuyer" SET
+      "ordersAutoReleased" = "ordersAutoReleased" + 1,
+      "totalAmountReleased" = "totalAmountReleased" + $1,
+      "lastAutoReleaseAt" = NOW(),
+      "updatedAt" = NOW()
+    WHERE "counterPartNickName" = $2`,
+    [amountReleased, counterPartNickName]
+  );
+
+  logger.debug({ counterPartNickName, amountReleased }, 'Trusted buyer stats updated');
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {

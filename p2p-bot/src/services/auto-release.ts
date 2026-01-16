@@ -843,16 +843,49 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     }
 
     // BUYER RISK CHECK - Evaluate buyer trustworthiness before auto-release
-    // Skip risk check for small amounts (≤ threshold) - bank match is sufficient
+    // Skip risk check for:
+    // 1. Small amounts (≤ threshold) - bank match is sufficient
+    // 2. TRUSTED BUYERS - manually verified by admin (STILL requires name match!)
     const skipRiskCheck = orderAmount <= this.config.skipRiskCheckThreshold;
 
-    if (skipRiskCheck && this.config.enableBuyerRiskCheck) {
+    // Check if buyer is in our trusted buyers list (by nickname)
+    const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
+    let isTrustedBuyer = false;
+
+    if (buyerNickName) {
+      try {
+        isTrustedBuyer = await db.isTrustedBuyer(buyerNickName);
+        if (isTrustedBuyer) {
+          logger.info(
+            `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" is in trusted list - skipping risk check`
+          );
+          await db.addVerificationStep(
+            orderNumber,
+            VerificationStatus.READY_TO_RELEASE,
+            `⭐ Comprador de confianza verificado manualmente`,
+            {
+              buyerNickName,
+              trustedBuyer: true,
+              noteToCheck: 'Still requires name match verification',
+            }
+          );
+        }
+      } catch (error) {
+        logger.warn({ error, buyerNickName }, 'Error checking trusted buyer status');
+      }
+    }
+
+    if (skipRiskCheck && this.config.enableBuyerRiskCheck && !isTrustedBuyer) {
       logger.info(
         `💚 [BUYER-RISK SKIP] Order ${orderNumber}: Amount $${orderAmount} ≤ $${this.config.skipRiskCheckThreshold} - skipping buyer risk check`
       );
     }
 
-    if (this.config.enableBuyerRiskCheck && hasBankMatch && !skipRiskCheck) {
+    // Skip risk assessment if:
+    // - Amount is below threshold, OR
+    // - Buyer is in trusted list
+    // NOTE: Name match is ALWAYS required for auto-release (checked earlier in handlePaymentMatch)
+    if (this.config.enableBuyerRiskCheck && hasBankMatch && !skipRiskCheck && !isTrustedBuyer) {
       try {
         // Use the new endpoint that gets counterparty stats directly by order number
         // No need to get userNo - queryCounterPartyOrderStatistic returns stats for the buyer
@@ -1064,6 +1097,23 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           amount: pending.order.totalPrice,
           asset: pending.order.asset,
         }, 'Crypto released successfully');
+
+        // Update trusted buyer stats if applicable
+        const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
+        if (buyerNickName) {
+          try {
+            const isTrusted = await db.isTrustedBuyer(buyerNickName);
+            if (isTrusted) {
+              const orderAmount = parseFloat(pending.order.totalPrice);
+              await db.incrementTrustedBuyerStats(buyerNickName, orderAmount);
+              logger.info(
+                `⭐ [TRUSTED BUYER] Updated stats for "${buyerNickName}" - auto-released $${orderAmount}`
+              );
+            }
+          } catch (err) {
+            logger.warn({ err, buyerNickName }, 'Error updating trusted buyer stats');
+          }
+        }
 
         this.emit('release', {
           type: 'release_success',

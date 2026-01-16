@@ -4,18 +4,17 @@
 
 :root {
   --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 24, 26, 32;
-  --background-end-rgb: 24, 26, 32;
+  --background-dark: #0a0a0f;
+  --background-card: #13111c;
+  --border-color: #2d2640;
+  --hover-color: #1f1b2e;
+  --primary-color: #8b5cf6;
+  --primary-hover: #7c3aed;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  background: linear-gradient(135deg, #0a0a0f 0%, #1a1025 50%, #0f0a15 100%);
   min-height: 100vh;
 }
 
@@ -32,44 +31,57 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e2026;
+  background: var(--background-card);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #474d57;
+  background: #3d3655;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5e6673;
+  background: var(--primary-color);
 }
 
 /* Status colors */
 .status-pending {
-  @apply bg-yellow-500/20 text-yellow-400;
+  @apply bg-amber-500/20 text-amber-400;
 }
 
 .status-paid {
-  @apply bg-blue-500/20 text-blue-400;
+  @apply bg-violet-500/20 text-violet-400;
 }
 
 .status-completed {
-  @apply bg-green-500/20 text-green-400;
+  @apply bg-emerald-500/20 text-emerald-400;
 }
 
 .status-cancelled {
   @apply bg-red-500/20 text-red-400;
 }
 
+.status-appealing {
+  @apply bg-orange-500/20 text-orange-400;
+}
+
 /* Card styles */
 .card {
-  @apply bg-[#1e2026] rounded-lg border border-[#2b2f36];
+  @apply bg-dark-card rounded-xl border border-dark-border shadow-lg;
 }
 
 .card-header {
-  @apply px-4 py-3 border-b border-[#2b2f36];
+  @apply px-4 py-3 border-b border-dark-border;
 }
 
 .card-body {
   @apply p-4;
+}
+
+/* Glow effects */
+.glow-primary {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+}
+
+.glow-success {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
 }

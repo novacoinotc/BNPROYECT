@@ -74,8 +74,8 @@ export function AdInfo() {
   if (isLoading) {
     return (
       <div className="animate-pulse space-y-3">
-        <div className="h-4 bg-[#2b2f36] rounded w-1/2"></div>
-        <div className="h-4 bg-[#2b2f36] rounded w-3/4"></div>
+        <div className="h-4 bg-[#2d2640] rounded w-1/2"></div>
+        <div className="h-4 bg-[#2d2640] rounded w-3/4"></div>
       </div>
     );
   }
@@ -136,8 +136,8 @@ export function AdInfo() {
         return (
           <div
             key={ad.advNo}
-            className={`p-3 bg-[#1e2126] rounded-lg border ${
-              status.isOnline ? 'border-green-500/30' : 'border-[#2b2f36]'
+            className={`p-3 bg-[#13111c] rounded-lg border ${
+              status.isOnline ? 'border-green-500/30' : 'border-[#2d2640]'
             }`}
           >
             {/* Compact Header - Always visible */}
@@ -185,7 +185,7 @@ export function AdInfo() {
 
             {/* Expanded content */}
             {isExpanded && (
-              <div className="mt-3 pt-3 border-t border-[#2b2f36] space-y-3">
+              <div className="mt-3 pt-3 border-t border-[#2d2640] space-y-3">
                 {/* Price type */}
                 <div className="text-xs">
                   <span className="text-gray-500">Tipo: </span>
@@ -203,7 +203,7 @@ export function AdInfo() {
                     {ad.tradeMethods.map((method, idx) => (
                       <span
                         key={idx}
-                        className="px-2 py-0.5 bg-[#2b2f36] rounded text-xs text-gray-300"
+                        className="px-2 py-0.5 bg-[#2d2640] rounded text-xs text-gray-300"
                       >
                         {method.identifier || method.payType}
                       </span>
@@ -227,13 +227,13 @@ export function AdInfo() {
                     href={`https://p2p.binance.com/es-LA/myAds`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 text-center px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded text-xs hover:bg-yellow-500/30 transition"
+                    className="flex-1 text-center px-3 py-1.5 bg-primary-500/20 text-primary-400 rounded text-xs hover:bg-yellow-500/30 transition"
                   >
                     Editar en Binance
                   </a>
                   <button
                     onClick={() => navigator.clipboard.writeText(ad.advNo)}
-                    className="px-3 py-1.5 bg-[#2b2f36] text-gray-400 rounded text-xs hover:bg-[#363b44] transition"
+                    className="px-3 py-1.5 bg-[#2d2640] text-gray-400 rounded text-xs hover:bg-[#1f1b2e] transition"
                     title="Copiar ID"
                   >
                     ID: ...{ad.advNo.slice(-6)}
@@ -247,7 +247,7 @@ export function AdInfo() {
 
       {/* Summary */}
       {onlineAds.length === 0 && (
-        <p className="text-xs text-yellow-500 text-center">
+        <p className="text-xs text-amber-500 text-center">
           No tienes anuncios activos. Activa uno en Binance P2P.
         </p>
       )}

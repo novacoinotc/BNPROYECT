@@ -63,7 +63,7 @@ const statusLabels: Record<string, string> = {
 
 const verificationStatusColors: Record<string, string> = {
   AWAITING_PAYMENT: 'bg-gray-500/20 text-gray-400',
-  BUYER_MARKED_PAID: 'bg-yellow-500/20 text-yellow-400',
+  BUYER_MARKED_PAID: 'bg-yellow-500/20 text-primary-400',
   BANK_PAYMENT_RECEIVED: 'bg-blue-500/20 text-blue-400',
   PAYMENT_MATCHED: 'bg-purple-500/20 text-purple-400',
   AMOUNT_VERIFIED: 'bg-green-500/20 text-green-400',
@@ -151,7 +151,7 @@ function ReleaseModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-[#1e2126] rounded-lg p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[#13111c] rounded-lg p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-semibold text-white mb-4">Liberar Orden</h3>
         <p className="text-sm text-gray-400 mb-4">
           Orden: <span className="font-mono text-white">{orderNumber.slice(-8)}</span>
@@ -163,7 +163,7 @@ function ReleaseModal({
             <select
               value={authType}
               onChange={(e) => setAuthType(e.target.value)}
-              className="w-full bg-[#2b2f36] text-white rounded px-3 py-2 border border-[#363b44] focus:border-yellow-500 focus:outline-none"
+              className="w-full bg-[#2d2640] text-white rounded px-3 py-2 border border-[#3d3655] focus:border-primary-500 focus:outline-none"
             >
               <option value="GOOGLE">Google Authenticator</option>
               <option value="SMS">SMS</option>
@@ -178,7 +178,7 @@ function ReleaseModal({
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Ingresa el codigo"
-              className="w-full bg-[#2b2f36] text-white rounded px-3 py-2 border border-[#363b44] focus:border-yellow-500 focus:outline-none"
+              className="w-full bg-[#2d2640] text-white rounded px-3 py-2 border border-[#3d3655] focus:border-primary-500 focus:outline-none"
               autoFocus
             />
           </div>
@@ -190,7 +190,7 @@ function ReleaseModal({
           <div className="flex gap-3 pt-2">
             <button
               onClick={onClose}
-              className="flex-1 px-4 py-2 bg-[#2b2f36] text-gray-300 rounded hover:bg-[#363b44] transition"
+              className="flex-1 px-4 py-2 bg-[#2d2640] text-gray-300 rounded hover:bg-[#3d3655] transition"
             >
               Cancelar
             </button>
@@ -239,7 +239,7 @@ function ChatSection({ orderNumber }: { orderNumber: string }) {
 
   if (loading) {
     return (
-      <div className="p-3 bg-[#2b2f36] rounded-lg">
+      <div className="p-3 bg-[#2d2640] rounded-lg">
         <div className="flex items-center gap-2 text-gray-400">
           <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full"></div>
           <span className="text-sm">Cargando chat...</span>
@@ -250,7 +250,7 @@ function ChatSection({ orderNumber }: { orderNumber: string }) {
 
   if (error) {
     return (
-      <div className="p-3 bg-[#2b2f36] rounded-lg">
+      <div className="p-3 bg-[#2d2640] rounded-lg">
         <p className="text-sm text-red-400">{error}</p>
       </div>
     );
@@ -258,14 +258,14 @@ function ChatSection({ orderNumber }: { orderNumber: string }) {
 
   if (messages.length === 0) {
     return (
-      <div className="p-3 bg-[#2b2f36] rounded-lg">
+      <div className="p-3 bg-[#2d2640] rounded-lg">
         <p className="text-sm text-gray-500">No hay mensajes en el chat</p>
       </div>
     );
   }
 
   return (
-    <div className="p-3 bg-[#2b2f36] rounded-lg max-h-80 overflow-y-auto">
+    <div className="p-3 bg-[#2d2640] rounded-lg max-h-80 overflow-y-auto">
       <div className="space-y-2">
         {messages.map((msg) => (
           <div
@@ -276,7 +276,7 @@ function ChatSection({ orderNumber }: { orderNumber: string }) {
               className={`max-w-[80%] rounded-lg p-2 ${
                 msg.isSelf
                   ? 'bg-blue-600/30 text-blue-100'
-                  : 'bg-[#1e2126] text-gray-200'
+                  : 'bg-[#13111c] text-gray-200'
               }`}
             >
               {!msg.isSelf && (
@@ -369,7 +369,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
   return (
     <>
       {/* SSE Connection Status */}
-      <div className="px-4 py-2 border-b border-[#2b2f36] flex items-center justify-between">
+      <div className="px-4 py-2 border-b border-[#2d2640] flex items-center justify-between">
         <span className="text-xs text-gray-500">
           {orders.length} orden{orders.length !== 1 ? 'es' : ''}
         </span>
@@ -383,7 +383,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
 
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-[#2b2f36] text-gray-400 text-xs uppercase">
+          <thead className="bg-[#2d2640] text-gray-400 text-xs uppercase">
             <tr>
               <th className="px-4 py-3 text-left">Order</th>
               <th className="px-4 py-3 text-left">Buyer</th>
@@ -393,12 +393,12 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
               <th className="px-4 py-3 text-right">Time</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#2b2f36]">
+          <tbody className="divide-y divide-[#2d2640]">
             {orders.map((order) => (
               <>
                 <tr
                   key={order.orderNumber}
-                  className="hover:bg-[#2b2f36]/50 transition cursor-pointer"
+                  className="hover:bg-[#2d2640]/50 transition cursor-pointer"
                   onClick={() => {
                     setExpandedOrder(
                       expandedOrder === order.orderNumber ? null : order.orderNumber
@@ -453,7 +453,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                 {/* Expanded section with tabs */}
                 {expandedOrder === order.orderNumber && (
                   <tr key={`${order.orderNumber}-expanded`}>
-                    <td colSpan={6} className="px-4 py-4 bg-[#1a1d24]">
+                    <td colSpan={6} className="px-4 py-4 bg-[#0f0d16]">
                       <div className="space-y-4">
                         {/* Order details */}
                         <div className="flex items-center justify-between text-sm">
@@ -472,7 +472,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                         </div>
 
                         {/* Tabs */}
-                        <div className="flex gap-2 border-b border-[#2b2f36]">
+                        <div className="flex gap-2 border-b border-[#2d2640]">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -480,7 +480,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                             }}
                             className={`px-4 py-2 text-sm font-medium transition ${
                               activeTab === 'verification'
-                                ? 'text-yellow-400 border-b-2 border-yellow-400'
+                                ? 'text-primary-400 border-b-2 border-yellow-400'
                                 : 'text-gray-400 hover:text-gray-300'
                             }`}
                           >
@@ -493,7 +493,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                             }}
                             className={`px-4 py-2 text-sm font-medium transition ${
                               activeTab === 'chat'
-                                ? 'text-yellow-400 border-b-2 border-yellow-400'
+                                ? 'text-primary-400 border-b-2 border-yellow-400'
                                 : 'text-gray-400 hover:text-gray-300'
                             }`}
                           >
@@ -506,7 +506,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                           <>
                             {/* Payment info */}
                             {order.payments.length > 0 && (
-                              <div className="p-3 bg-[#2b2f36] rounded-lg">
+                              <div className="p-3 bg-[#2d2640] rounded-lg">
                                 <h4 className="text-sm font-medium text-gray-300 mb-2">Pago Bancario</h4>
                                 {order.payments.map((payment) => (
                                   <div key={payment.transactionId} className="text-sm">
@@ -524,7 +524,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-gray-400">Estado:</span>
-                                      <span className={`${payment.status === 'MATCHED' ? 'text-green-400' : 'text-yellow-400'}`}>
+                                      <span className={`${payment.status === 'MATCHED' ? 'text-green-400' : 'text-primary-400'}`}>
                                         {payment.status}
                                       </span>
                                     </div>
@@ -541,7 +541,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                   {order.verificationTimeline.map((step, index) => (
                                     <div
                                       key={index}
-                                      className="flex items-start gap-3 p-2 bg-[#2b2f36] rounded-lg"
+                                      className="flex items-start gap-3 p-2 bg-[#2d2640] rounded-lg"
                                     >
                                       <span className="text-lg">
                                         {stepEmojis[step.status] || '📋'}
@@ -585,7 +585,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                   ))}
                                 </div>
                               ) : (
-                                <div className="text-sm text-gray-500 p-3 bg-[#2b2f36] rounded-lg">
+                                <div className="text-sm text-gray-500 p-3 bg-[#2d2640] rounded-lg">
                                   No hay timeline de verificacion para esta orden
                                 </div>
                               )}
@@ -633,6 +633,42 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                 <p className="text-sm text-gray-400 mt-1">
                                   Revisa los detalles arriba antes de liberar.
                                 </p>
+                              </div>
+                            )}
+
+                            {/* Mark as Trusted Button - Show for COMPLETED orders */}
+                            {order.status === 'COMPLETED' && (
+                              <div className="pt-2">
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!confirm(`Agregar "${order.buyerNickName}" a compradores confiables?`)) return;
+                                    try {
+                                      const response = await fetch('/api/trusted-buyers', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          counterPartNickName: order.buyerNickName,
+                                          realName: order.buyerRealName,
+                                          verifiedBy: 'Dashboard',
+                                          notes: `Verificado en orden ${order.orderNumber}`,
+                                        }),
+                                      });
+                                      const data = await response.json();
+                                      if (data.success) {
+                                        alert(`"${order.buyerNickName}" agregado a compradores confiables`);
+                                      } else {
+                                        alert(data.error || 'Error al agregar');
+                                      }
+                                    } catch (err: any) {
+                                      alert(err.message || 'Error de conexion');
+                                    }
+                                  }}
+                                  className="w-full px-4 py-2 bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/30 transition font-medium flex items-center justify-center gap-2"
+                                >
+                                  <span>⭐</span>
+                                  Marcar Confiable
+                                </button>
                               </div>
                             )}
                           </>
