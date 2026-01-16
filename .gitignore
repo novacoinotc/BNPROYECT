@@ -1,0 +1,16 @@
+# Downloaded SDKs/connectors
+binance-connector-java-master/
+binance-connector-js-master/
+
+# OS files
+.DS_Store
+*.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude
+.claude/
