@@ -926,11 +926,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         `using pending order (amount: ${pending.order.totalPrice})`
       );
       currentOrder = pending.order;
+    }
 
-      // Register this order with orderManager so releaseCrypto can find it
+    // ALWAYS register/update the order with bank transaction info for release verification
+    // This ensures pendingMatches has the bankTransactionId even if order was already in memory
+    if (currentOrder && pending.bankMatch?.transactionId) {
+      logger.info(
+        `🔗 [AUTO-RELEASE] Registering order ${orderNumber} with bank transaction ${pending.bankMatch.transactionId}`
+      );
       this.orderManager.registerOrderForRelease(
         currentOrder,
-        pending.bankMatch?.transactionId
+        pending.bankMatch.transactionId
       );
     }
 
