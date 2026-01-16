@@ -492,13 +492,14 @@ export class BinanceC2CClient {
     );
 
     // Debug: Log raw response to understand structure
-    logger.debug({
+    logger.info({
       orderNumber,
       responseKeys: response ? Object.keys(response) : [],
       hasBuyer: !!(response as any)?.buyer,
       hasSeller: !!(response as any)?.seller,
       buyerKeys: (response as any)?.buyer ? Object.keys((response as any).buyer) : [],
-    }, 'getOrderDetail raw response structure');
+      sellerKeys: (response as any)?.seller ? Object.keys((response as any).seller) : [],
+    }, '🔍 [API DEBUG] getOrderDetail response structure');
 
     return response;
   }
