@@ -834,7 +834,7 @@ private async pollOrders(): Promise<void> {
 | `2aeda78` | Add throttling + sync debug logging | auto-release.ts, sync/route.ts |
 | `809a0cd` | Add debug for status comparison | order-manager.ts |
 | `2d5c487` | Fix: Correct sync order priority | order-manager.ts |
-| `PENDING` | **Fix: Normalize numeric orderStatus to string** | binance-client.ts, order-manager.ts |
+| `51ce695` | **Fix: Normalize numeric orderStatus to string** | binance-client.ts, order-manager.ts |
 
 ---
 
@@ -844,7 +844,7 @@ Si reinicias la conversación:
 
 1. **Lee este archivo primero** - Tiene todo el contexto
 2. **Commits recientes importantes:**
-   - `PENDING` - **Fix de normalización de orderStatus** (número vs string)
+   - `51ce695` - **Fix de normalización de orderStatus** (número vs string) ⭐⭐
    - `2d5c487` - Fix del orden de sync
    - `aff96d1` - Fix de race condition en auto-release
 3. **Revisar logs de Railway** después del deploy - ya no debería mostrar "Order status changed" repetidamente
