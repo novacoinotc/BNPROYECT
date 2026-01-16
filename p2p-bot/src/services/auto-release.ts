@@ -47,6 +47,7 @@ interface PendingRelease {
   bankMatch?: BankWebhookPayload;
   ocrVerified: boolean;
   ocrConfidence: number;
+  nameVerified: boolean;  // CRITICAL: Must verify bank sender matches Binance buyer
   receiptUrl?: string;
   queuedAt: Date;
   attempts: number;
@@ -178,6 +179,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       },
       ocrVerified: true, // Skip OCR for sync matches
       ocrConfidence: 1.0,
+      nameVerified: false, // Must verify name match before release
       queuedAt: new Date(),
       attempts: 0,
     };
@@ -476,6 +478,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       order,
       ocrVerified: false,
       ocrConfidence: 0,
+      nameVerified: false, // Must verify name match before release
       queuedAt: new Date(),
       attempts: 0,
     };
@@ -667,6 +670,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         order,
         ocrVerified: false,
         ocrConfidence: 0,
+        nameVerified: false, // Must verify name match before release
         queuedAt: new Date(),
         attempts: 0,
       };
@@ -769,6 +773,23 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           matchScore: nameMatchScore,
         }
       );
+    }
+
+    // UPDATE PENDING RELEASE WITH NAME VERIFICATION RESULT
+    // CRITICAL: This determines if auto-release is allowed
+    const pendingRelease = this.pendingReleases.get(order.orderNumber);
+    if (pendingRelease) {
+      pendingRelease.nameVerified = nameMatches;
+      logger.info({
+        orderNumber: order.orderNumber,
+        nameVerified: nameMatches,
+        hasRealName,
+        senderName,
+        buyerName,
+        matchScore: nameMatchScore,
+      }, nameMatches
+        ? '✅ [NAME VERIFIED] Bank sender matches Binance buyer'
+        : '❌ [NAME NOT VERIFIED] Bank sender does NOT match Binance buyer - manual release required');
     }
 
     // FINAL DETERMINATION
@@ -982,9 +1003,35 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // This prevents the race condition where release is attempted before bank payment arrives
     const hasActualBankMatch = !!pending.bankMatch?.transactionId;
 
-    if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence) {
+    // CRITICAL SAFETY CHECK: Name must be verified to prevent third-party payments
+    // Third-party payments are PROHIBITED in Binance P2P (fraud/money laundering risk)
+    const nameVerified = pending.nameVerified;
+
+    if (!nameVerified && hasActualBankMatch) {
+      // Bank payment received but name doesn't match - BLOCK auto-release
+      const logBlockedOnce = (reason: string, message: string) => {
+        const prevReason = this.loggedBlockedOrders.get(orderNumber);
+        if (prevReason !== reason) {
+          logger.warn(message);
+          this.loggedBlockedOrders.set(orderNumber, reason);
+        }
+      };
+
+      logBlockedOnce('name_not_verified',
+        `🚫 [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Name verification FAILED - ` +
+        `Bank sender does not match Binance buyer (possible third-party payment)`);
+
+      this.emit('release', {
+        type: 'manual_required',
+        orderNumber,
+        reason: 'Name verification failed - bank sender does not match Binance buyer',
+      } as ReleaseEvent);
+      return;
+    }
+
+    if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence && nameVerified) {
       // Ready for release!
-      logger.info(`✅ [AUTO-RELEASE READY] Order ${orderNumber}: All conditions met, queueing for release`);
+      logger.info(`✅ [AUTO-RELEASE READY] Order ${orderNumber}: All conditions met (including name verification), queueing for release`);
 
       this.emit('release', {
         type: 'verification_complete',
@@ -993,6 +1040,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           bankMatch: !!pending.bankMatch,
           ocrVerified: pending.ocrVerified,
           confidence: pending.ocrConfidence,
+          nameVerified: true,
         },
       } as ReleaseEvent);
 
@@ -1003,6 +1051,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       if (!hasBankMatch) missing.push('bank verification');
       if (!hasOcrVerification) missing.push('OCR verification');
       if (!meetsConfidence) missing.push(`confidence too low (${(pending.ocrConfidence * 100).toFixed(0)}% < ${(this.config.minConfidence * 100).toFixed(0)}%)`);
+      if (!nameVerified) missing.push('NAME VERIFICATION (bank sender must match Binance buyer)');
 
       logger.debug(`⏳ [AUTO-RELEASE WAITING] Order ${orderNumber}: Missing ${missing.join(', ')}`);
     }
@@ -1228,6 +1277,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           order,
           ocrVerified: true,
           ocrConfidence: 1.0,
+          nameVerified: true, // Manual approval overrides name check
           queuedAt: new Date(),
           attempts: 0,
         });
@@ -1235,6 +1285,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     } else {
       pending.ocrVerified = true;
       pending.ocrConfidence = 1.0;
+      pending.nameVerified = true; // Manual approval overrides name check
     }
 
     await this.queueForRelease(orderNumber);

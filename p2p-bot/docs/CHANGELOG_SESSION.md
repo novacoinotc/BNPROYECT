@@ -844,8 +844,77 @@ Si reinicias la conversación:
 
 1. **Lee este archivo primero** - Tiene todo el contexto
 2. **Commits recientes importantes:**
-   - `51ce695` - **Fix de normalización de orderStatus** (número vs string) ⭐⭐
+   - `PENDING` - **CRITICAL: Require name verification for auto-release** (previene pagos de terceros)
+   - `51ce695` - Fix de normalización de orderStatus (número vs string)
    - `2d5c487` - Fix del orden de sync
    - `aff96d1` - Fix de race condition en auto-release
 3. **Revisar logs de Railway** después del deploy - ya no debería mostrar "Order status changed" repetidamente
 4. **El bug era:** La API de Binance devuelve status numérico (2) desde algunos endpoints y string ("BUYER_PAYED") desde otros
+
+---
+
+### 24. CRITICAL: Require Name Verification for Auto-Release (2026-01-16) ⭐⭐⭐
+
+**Problema:** El sistema estaba liberando crypto automáticamente incluso cuando NO podía verificar que el nombre del pagador bancario coincidiera con el comprador de Binance. Esto es un **riesgo de seguridad grave**:
+
+- Los pagos de terceros están **PROHIBIDOS** en Binance P2P
+- Pueden indicar fraude o lavado de dinero
+- Binance puede congelar tu cuenta por aceptar pagos de terceros
+
+**Cambios en `src/services/auto-release.ts`:**
+
+1. **Nuevo campo `nameVerified` en `PendingRelease`:**
+```typescript
+interface PendingRelease {
+  // ...existing fields...
+  nameVerified: boolean;  // CRITICAL: Must verify bank sender matches Binance buyer
+}
+```
+
+2. **Inicialización con `nameVerified: false`:**
+   - Todas las órdenes comienzan con `nameVerified: false`
+   - Solo se establece `true` cuando el nombre del banco coincide con el comprador
+
+3. **Verificación en `verifyPaymentMatch`:**
+```typescript
+const pendingRelease = this.pendingReleases.get(order.orderNumber);
+if (pendingRelease) {
+  pendingRelease.nameVerified = nameMatches;
+  logger.info(/* ... */, nameMatches
+    ? '✅ [NAME VERIFIED] Bank sender matches Binance buyer'
+    : '❌ [NAME NOT VERIFIED] Bank sender does NOT match - manual release required');
+}
+```
+
+4. **BLOQUEO en `checkReadyForRelease`:**
+```typescript
+const nameVerified = pending.nameVerified;
+
+if (!nameVerified && hasActualBankMatch) {
+  // Bank payment received but name doesn't match - BLOCK auto-release
+  logBlockedOnce('name_not_verified',
+    `🚫 [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Name verification FAILED`);
+
+  this.emit('release', {
+    type: 'manual_required',
+    orderNumber,
+    reason: 'Name verification failed - bank sender does not match Binance buyer',
+  });
+  return; // DO NOT AUTO-RELEASE!
+}
+```
+
+5. **Condición actualizada para auto-release:**
+```typescript
+// ANTES (inseguro):
+if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence)
+
+// DESPUÉS (seguro):
+if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence && nameVerified)
+```
+
+**Resultado:**
+- ✅ Auto-release SOLO cuando el nombre del banco coincide con el comprador de Binance
+- ❌ Si el nombre NO coincide → requiere liberación manual
+- ❌ Si no se puede obtener el nombre real del comprador → requiere liberación manual
+- ✅ Aprobación manual (`manualApprove`) sigue funcionando y omite la verificación de nombre
