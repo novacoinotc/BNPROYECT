@@ -262,7 +262,15 @@ export class OrderManager extends EventEmitter {
         this.activeOrders.set(order.orderNumber, order);
       }
     } else if (existingOrder.orderStatus !== order.orderStatus) {
-      // Status changed
+      // DEBUG: Log the actual comparison values
+      logger.info({
+        orderNumber: order.orderNumber,
+        existingStatus: existingOrder.orderStatus,
+        newStatus: order.orderStatus,
+        existingType: typeof existingOrder.orderStatus,
+        newType: typeof order.orderStatus,
+      }, '[DEBUG] Status comparison - values differ');
+      // Status actually changed - process it
       await this.handleStatusChange(existingOrder, order);
 
       // Only keep in activeOrders if still active
@@ -271,6 +279,10 @@ export class OrderManager extends EventEmitter {
       } else {
         this.activeOrders.set(order.orderNumber, order);
       }
+    } else if (existingOrder) {
+      // Status matches - no change needed (debug only on first occurrence)
+      // Silently update the order data
+      this.activeOrders.set(order.orderNumber, order);
     }
   }
 
