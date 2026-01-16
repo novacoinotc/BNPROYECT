@@ -544,9 +544,27 @@ export class BinanceC2CClient {
       orderStatus: normalizeOrderStatus(response.orderStatus as unknown as number | string),
     };
 
-    // Debug: Log only essential info (full response available at debug level)
-    logger.debug({ orderNumber, response }, '[API DEBUG] getOrderDetail full response');
-    logger.info({ orderNumber, status: normalizedOrder.orderStatus, amount: normalizedOrder.totalPrice }, 'Got order detail');
+    // Log buyer info for debugging name verification issues
+    const rawResponse = response as any;
+    logger.info({
+      orderNumber,
+      status: normalizedOrder.orderStatus,
+      amount: normalizedOrder.totalPrice,
+      // Possible locations for buyer name
+      counterPartNickName: rawResponse.counterPartNickName,
+      buyerNickName: rawResponse.buyer?.nickName,
+      buyerRealName: rawResponse.buyer?.realName,
+      makerRealName: rawResponse.maker?.realName,
+      takerRealName: rawResponse.taker?.realName,
+      // Check if buyer/seller objects exist
+      hasBuyer: !!rawResponse.buyer,
+      hasSeller: !!rawResponse.seller,
+      hasMaker: !!rawResponse.maker,
+      hasTaker: !!rawResponse.taker,
+    }, '[ORDER DETAIL] Buyer name fields');
+
+    // Debug: Log full response structure to see all available fields
+    logger.debug({ orderNumber, responseKeys: Object.keys(rawResponse), response }, '[API DEBUG] getOrderDetail full response');
 
     return normalizedOrder;
   }
