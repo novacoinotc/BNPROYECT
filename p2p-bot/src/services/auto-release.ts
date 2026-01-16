@@ -8,7 +8,8 @@ import { OrderManager, OrderEvent } from './order-manager.js';
 import { ChatHandler, ChatEvent, ImageMessage } from './chat-handler.js';
 import { WebhookReceiver, WebhookEvent } from './webhook-receiver.js';
 import { OCRService } from './ocr-service.js';
-import { getBinanceClient } from './binance-client.js';
+import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
+import { BuyerRiskAssessor, BuyerRiskAssessment } from './buyer-risk-assessor.js';
 import { logger } from '../utils/logger.js';
 import * as db from './database-pg.js';
 import {
@@ -25,6 +26,7 @@ export interface AutoReleaseConfig {
   enableAutoRelease: boolean;
   requireBankMatch: boolean;
   requireOcrVerification: boolean;
+  enableBuyerRiskCheck: boolean;  // Check buyer history before auto-release
   authType: AuthType;
   minConfidence: number;
   releaseDelayMs: number;
@@ -47,6 +49,7 @@ interface PendingRelease {
   receiptUrl?: string;
   queuedAt: Date;
   attempts: number;
+  buyerRiskAssessment?: BuyerRiskAssessment;  // Buyer risk evaluation
 }
 
 export class AutoReleaseOrchestrator extends EventEmitter {
@@ -55,6 +58,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   private chatHandler: ChatHandler;
   private webhookReceiver: WebhookReceiver;
   private ocrService: OCRService;
+  private binanceClient: BinanceC2CClient;
+  private buyerRiskAssessor: BuyerRiskAssessor;
 
   // Queues
   private pendingReleases: Map<string, PendingRelease> = new Map();
@@ -77,6 +82,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     this.chatHandler = chatHandler;
     this.webhookReceiver = webhookReceiver;
     this.ocrService = ocrService;
+    this.binanceClient = getBinanceClient();
+    this.buyerRiskAssessor = new BuyerRiskAssessor();
 
     this.setupEventListeners();
 
@@ -87,6 +94,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       `maxAmount=$${config.maxAutoReleaseAmount} MXN, ` +
       `requireOcr=${config.requireOcrVerification}, ` +
       `requireBankMatch=${config.requireBankMatch}, ` +
+      `buyerRiskCheck=${config.enableBuyerRiskCheck}, ` +
       `authType=${config.authType}`
     );
 
@@ -94,6 +102,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       logger.warn('⚠️ [AUTO-RELEASE] Auto-release is DISABLED. Set ENABLE_AUTO_RELEASE=true to enable.');
     } else {
       logger.info(`✅ [AUTO-RELEASE] Auto-release ENABLED for orders up to $${config.maxAutoReleaseAmount} MXN`);
+      if (config.enableBuyerRiskCheck) {
+        logger.info(`🛡️ [AUTO-RELEASE] Buyer risk assessment ENABLED`);
+      }
     }
   }
 
@@ -828,6 +839,91 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       return;
     }
 
+    // BUYER RISK CHECK - Evaluate buyer trustworthiness before auto-release
+    if (this.config.enableBuyerRiskCheck && hasBankMatch) {
+      try {
+        // Get buyer's userNo from order detail
+        const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+        const buyerNo = orderDetail?.buyer?.userNo;
+
+        if (!buyerNo) {
+          logger.warn(`⚠️ [BUYER-RISK] Order ${orderNumber}: Could not get buyer userNo - requiring manual verification`);
+          await db.addVerificationStep(
+            orderNumber,
+            VerificationStatus.MANUAL_REVIEW,
+            `👤 REQUIERE REVISIÓN MANUAL - No se pudo obtener ID del comprador`,
+            { reason: 'buyer_id_not_available' }
+          );
+          this.emit('release', {
+            type: 'manual_required',
+            orderNumber,
+            reason: 'Could not get buyer ID for risk assessment',
+          } as ReleaseEvent);
+          return;
+        }
+
+        // Assess buyer risk
+        const riskAssessment = await this.buyerRiskAssessor.assessBuyer(buyerNo, orderAmount);
+        pending.buyerRiskAssessment = riskAssessment;
+
+        if (!riskAssessment.isTrusted) {
+          logger.warn(
+            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: Buyer ${buyerNo} failed risk assessment - ` +
+            `${riskAssessment.failedCriteria.join(', ')}`
+          );
+
+          await db.addVerificationStep(
+            orderNumber,
+            VerificationStatus.MANUAL_REVIEW,
+            `👤 REQUIERE VERIFICACIÓN MANUAL - Comprador no cumple criterios de confianza`,
+            {
+              buyerNo,
+              stats: riskAssessment.stats,
+              failedCriteria: riskAssessment.failedCriteria,
+              recommendation: riskAssessment.recommendation,
+            }
+          );
+
+          this.emit('release', {
+            type: 'manual_required',
+            orderNumber,
+            reason: `Buyer risk assessment failed: ${riskAssessment.failedCriteria.join(', ')}`,
+            data: { riskAssessment },
+          } as ReleaseEvent);
+          return;
+        }
+
+        // Buyer is trusted - log and continue
+        logger.info(
+          `✅ [BUYER-RISK OK] Order ${orderNumber}: Buyer ${buyerNo} passed risk assessment - ` +
+          `orders=${riskAssessment.stats?.totalOrders}, days=${riskAssessment.stats?.registerDays}, ` +
+          `positive=${((riskAssessment.stats?.positiveRate || 0) * 100).toFixed(0)}%`
+        );
+
+        await db.addVerificationStep(
+          orderNumber,
+          VerificationStatus.READY_TO_RELEASE,
+          `✅ Comprador verificado - Historial confiable`,
+          {
+            buyerNo,
+            totalOrders: riskAssessment.stats?.totalOrders,
+            orders30Day: riskAssessment.stats?.orders30Day,
+            registerDays: riskAssessment.stats?.registerDays,
+            positiveRate: riskAssessment.stats?.positiveRate,
+          }
+        );
+      } catch (error) {
+        logger.error({ error, orderNumber }, '❌ [BUYER-RISK] Error during buyer risk assessment');
+        // On error, require manual verification for safety
+        this.emit('release', {
+          type: 'manual_required',
+          orderNumber,
+          reason: 'Error during buyer risk assessment',
+        } as ReleaseEvent);
+        return;
+      }
+    }
+
     if (hasBankMatch && hasOcrVerification && meetsConfidence) {
       // Ready for release!
       logger.info(`✅ [AUTO-RELEASE READY] Order ${orderNumber}: All conditions met, queueing for release`);
@@ -1127,6 +1223,9 @@ export function createAutoReleaseOrchestrator(
     enableAutoRelease: process.env.ENABLE_AUTO_RELEASE === 'true',
     requireBankMatch: process.env.REQUIRE_BANK_MATCH === 'true',
     requireOcrVerification: process.env.REQUIRE_OCR_VERIFICATION !== 'false',
+    // Buyer risk check - evaluates buyer history before auto-release
+    // ENABLE_BUYER_RISK_CHECK=true para habilitar
+    enableBuyerRiskCheck: process.env.ENABLE_BUYER_RISK_CHECK === 'true',
     authType: (process.env.RELEASE_AUTH_TYPE as AuthType) || AuthType.GOOGLE,
     minConfidence: parseFloat(process.env.OCR_MIN_CONFIDENCE || '0.7'),
     releaseDelayMs: parseInt(process.env.RELEASE_DELAY_MS || '5000'),
