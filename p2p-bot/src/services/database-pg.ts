@@ -275,7 +275,11 @@ export async function findUnmatchedPaymentsByAmount(
     [minAmount, maxAmount, minTime]
   );
 
-  return result.rows;
+  // PostgreSQL returns Decimal as string - convert to number
+  return result.rows.map(row => ({
+    ...row,
+    amount: typeof row.amount === 'string' ? parseFloat(row.amount) : Number(row.amount),
+  }));
 }
 
 /**
@@ -353,7 +357,11 @@ export async function getPaymentsForOrder(orderNumber: string): Promise<Array<{
      AND p.status IN ('MATCHED', 'VERIFIED')`,
     [orderNumber]
   );
-  return result.rows;
+  // PostgreSQL returns Decimal as string - convert to number
+  return result.rows.map(row => ({
+    ...row,
+    amount: typeof row.amount === 'string' ? parseFloat(row.amount) : Number(row.amount),
+  }));
 }
 
 export async function markPaymentReleased(orderNumber: string): Promise<void> {

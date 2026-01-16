@@ -75,6 +75,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   private lastCheckTime: Map<string, number> = new Map(); // orderNumber -> timestamp
   private readonly CHECK_THROTTLE_MS = 5000; // Only check once per 5 seconds per order
 
+  // Processing lock to prevent race conditions
+  private processingOrders: Set<string> = new Set();
+
   // 2FA code callback (for manual entry or TOTP generation)
   private getVerificationCode: ((orderNumber: string, authType: AuthType) => Promise<string>) | null = null;
 
@@ -215,13 +218,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       );
     }
 
-    // Create pending release record
+    // Create pending release record - ensure amount is a number
+    const paymentAmount = this.toNumber(payment.amount);
     const pending: PendingRelease = {
       orderNumber: order.orderNumber,
       order: orderWithDetails,
       bankMatch: {
         transactionId: payment.transactionId,
-        amount: payment.amount,
+        amount: paymentAmount,
         currency: order.fiat || 'MXN',
         senderName: payment.senderName,
         senderAccount: '',
@@ -742,6 +746,13 @@ export class AutoReleaseOrchestrator extends EventEmitter {
    * with the correct nameVerified status
    */
   private async handlePaymentMatch(order: OrderData, match: OrderMatch): Promise<void> {
+    // Prevent duplicate processing (race condition protection)
+    if (this.processingOrders.has(order.orderNumber)) {
+      logger.debug({ orderNumber: order.orderNumber }, 'Order already being processed, skipping duplicate call');
+      return;
+    }
+    this.processingOrders.add(order.orderNumber);
+
     let pending = this.pendingReleases.get(order.orderNumber);
 
     if (!pending) {
@@ -763,8 +774,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     let nameMatches = false;
     let buyerRealName: string | null = (order as any).buyerRealName || null;
     const senderName = match.senderName || '';
-    const expectedAmount = match.expectedAmount || parseFloat(order.totalPrice) || 0;
-    const receivedAmount = match.receivedAmount || 0;
+    // CRITICAL: Use toNumber() to safely convert - PostgreSQL returns Decimal as string
+    const expectedAmount = this.toNumber(match.expectedAmount) || this.toNumber(order.totalPrice) || 0;
+    const receivedAmount = this.toNumber(match.receivedAmount) || 0;
     const buyerNickName = order.counterPartNickName || (order as any).buyerNickname || order.buyer?.nickName || '';
 
     // Helper to safely add verification steps (non-blocking on DB errors)
@@ -896,9 +908,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       }
 
     } catch (error) {
-      // Log error but CONTINUE - we must still set nameVerified and call checkReadyForRelease
-      logger.error({ orderNumber: order.orderNumber, error },
-        '❌ [PAYMENT MATCH] Error during verification - will still check release status');
+      // Log error with full details for debugging
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({
+        orderNumber: order.orderNumber,
+        errorMessage: err.message,
+        errorStack: err.stack,
+        receivedAmountType: typeof match.receivedAmount,
+        receivedAmountValue: match.receivedAmount,
+        expectedAmountType: typeof order.totalPrice,
+        expectedAmountValue: order.totalPrice,
+      }, '❌ [PAYMENT MATCH] Error during verification - will still check release status');
     } finally {
       // CRITICAL: Always update pending.nameVerified regardless of errors
       // This ensures checkReadyForRelease has the correct state
@@ -911,6 +931,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           amountMatches,
         }, '📋 [PAYMENT MATCH] Final verification status set');
       }
+
+      // Release the processing lock
+      this.processingOrders.delete(order.orderNumber);
 
       // ALWAYS call checkReadyForRelease
       await this.checkReadyForRelease(order.orderNumber);
@@ -1426,6 +1449,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Safely convert any amount value to a number
+   * PostgreSQL Decimal comes as string, this handles all cases
+   */
+  private toNumber(value: any): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value) || 0;
+    if (value && typeof value.toNumber === 'function') return value.toNumber();
+    return Number(value) || 0;
   }
 }
 
