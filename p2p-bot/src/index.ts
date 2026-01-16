@@ -161,11 +161,19 @@ async function initializeServices(): Promise<void> {
 function setupEventHandlers(): void {
   // Order events - broadcast to SSE clients for real-time updates
   orderManager.on('order', (event) => {
-    logger.info({
-      type: event.type,
-      orderNumber: event.order.orderNumber,
-      amount: event.order.totalPrice,
-    }, 'Order event');
+    // Only log significant events, not routine updates
+    if (event.type === 'new' || event.type === 'paid') {
+      logger.info({
+        type: event.type,
+        orderNumber: event.order.orderNumber,
+        amount: event.order.totalPrice,
+        buyer: event.order.counterPartNickName,
+      }, `📦 Order ${event.type === 'new' ? 'NEW' : 'PAID'}`);
+    } else if (event.type === 'released') {
+      logger.info({ orderNumber: event.order.orderNumber }, '✅ Order completed');
+    } else if (event.type === 'cancelled') {
+      logger.info({ orderNumber: event.order.orderNumber }, '❌ Order cancelled');
+    }
 
     // Broadcast to SSE clients for real-time dashboard updates
     webhookReceiver.broadcastSSE({
@@ -179,29 +187,11 @@ function setupEventHandlers(): void {
     });
   });
 
-  // Price update events
-  pricingEngine.onPriceUpdate((price, analysis) => {
-    logger.info({
-      price: price.toFixed(2),
-      margin: analysis.margin.toFixed(2) + '%',
-      position: analysis.pricePosition,
-    }, 'Price updated');
-  });
+  // Price update events - pricing-engine already logs changes
 
-  // Release events
+  // Release events - only log important ones
   autoRelease.on('release', (event) => {
     switch (event.type) {
-      case 'verification_started':
-        logger.info({ orderNumber: event.orderNumber }, 'Verification started');
-        break;
-
-      case 'verification_complete':
-        logger.info({
-          orderNumber: event.orderNumber,
-          data: event.data,
-        }, 'Verification complete');
-        break;
-
       case 'release_success':
         logger.info({
           orderNumber: event.orderNumber,

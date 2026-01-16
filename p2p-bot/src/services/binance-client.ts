@@ -433,7 +433,6 @@ export class BinanceC2CClient {
       );
       const orders = (response as any)?.data || response || [];
       if (Array.isArray(orders)) {
-        logger.info({ count: orders.length }, 'listPendingOrders: GET success');
         return orders;
       }
     } catch (error: any) {
@@ -454,7 +453,6 @@ export class BinanceC2CClient {
         body
       );
       const orders = (response as any)?.data || response || [];
-      logger.info({ count: Array.isArray(orders) ? orders.length : 0 }, 'listPendingOrders: POST fallback');
       return orders;
     } catch (error: any) {
       logger.error({ error: error?.message }, 'listPendingOrders: All methods failed');

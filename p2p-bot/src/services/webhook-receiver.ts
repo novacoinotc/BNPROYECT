@@ -202,13 +202,10 @@ export class WebhookReceiver extends EventEmitter {
     try {
       const client = getBinanceClient();
 
-      logger.info('Starting orders sync from Binance...');
-
       // Fetch pending orders (TRADING, BUYER_PAYED)
       let pendingOrders: any[] = [];
       try {
         pendingOrders = await client.listPendingOrders(50);
-        logger.info({ count: pendingOrders.length }, 'Fetched pending orders');
       } catch (err: any) {
         logger.warn({ error: err.message }, 'Failed to fetch pending orders');
       }
@@ -220,7 +217,6 @@ export class WebhookReceiver extends EventEmitter {
           tradeType: 'SELL' as any,
           rows: 50,
         });
-        logger.info({ count: recentOrders.length }, 'Fetched recent orders');
       } catch (err: any) {
         logger.warn({ error: err.message }, 'Failed to fetch recent orders');
       }
@@ -230,8 +226,6 @@ export class WebhookReceiver extends EventEmitter {
       for (const order of [...pendingOrders, ...recentOrders]) {
         allOrders.set(order.orderNumber, order);
       }
-
-      logger.info({ total: allOrders.size }, 'Total unique orders to sync');
 
       // Save all orders to database
       let savedCount = 0;
@@ -399,13 +393,6 @@ export class WebhookReceiver extends EventEmitter {
         statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
       }
 
-      logger.info({
-        savedCount,
-        errorCount,
-        verificationTriggered,
-        statusCounts
-      }, 'Orders sync complete');
-
       res.json({
         success: true,
         message: `Synced ${savedCount} orders from Binance (${verificationTriggered} verification started)`,
@@ -546,7 +533,6 @@ export class WebhookReceiver extends EventEmitter {
 
     // Add client to set
     this.sseClients.add(res);
-    logger.info({ clients: this.sseClients.size }, 'SSE client connected');
 
     // Send initial connection message
     res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
@@ -560,7 +546,6 @@ export class WebhookReceiver extends EventEmitter {
     req.on('close', () => {
       clearInterval(keepAlive);
       this.sseClients.delete(res);
-      logger.info({ clients: this.sseClients.size }, 'SSE client disconnected');
     });
   }
 

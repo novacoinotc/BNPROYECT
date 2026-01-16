@@ -177,13 +177,10 @@ export class OrderManager extends EventEmitter {
    */
   private async pollOrders(): Promise<void> {
     try {
-      logger.info('Polling orders from Binance...');
-
       // Get pending orders using the working endpoint
       let pendingOrders: OrderData[] = [];
       try {
         pendingOrders = await this.client.listPendingOrders(20);
-        logger.info({ count: pendingOrders.length }, 'Got pending orders from Binance');
       } catch (pendingError) {
         logger.error({ error: pendingError }, 'Failed to get pending orders from Binance');
       }
@@ -195,7 +192,6 @@ export class OrderManager extends EventEmitter {
           tradeType: TradeType.SELL,
           rows: 20,
         });
-        logger.info({ count: recentOrders.length }, 'Got recent orders from Binance');
       } catch (recentError) {
         logger.error({ error: recentError }, 'Failed to get recent orders from Binance');
       }
@@ -222,15 +218,6 @@ export class OrderManager extends EventEmitter {
 
       // Check for expired/cancelled orders
       await this.checkExpiredOrders();
-
-      // Log poll results (info level so it shows up)
-      if (pendingOrders.length > 0 || this.activeOrders.size > 0) {
-        logger.info({
-          pending: pendingOrders.length,
-          recent: recentOrders.length,
-          tracking: this.activeOrders.size,
-        }, 'Order poll complete');
-      }
     } catch (error) {
       logger.error({ error }, 'Error polling orders');
     }
