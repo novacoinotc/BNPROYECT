@@ -443,12 +443,12 @@ export class BinanceC2CClient {
       const orders = (response as any)?.data || response || [];
 
       if (Array.isArray(orders) && orders.length > 0) {
-        // Log status distribution for debugging
+        // Log status distribution at debug level (reduce noise)
         const statusCounts: Record<string, number> = {};
         for (const order of orders) {
           statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
         }
-        logger.info(`📋 [PENDING ORDERS] Fetched ${orders.length}: ${JSON.stringify(statusCounts)}`);
+        logger.debug({ count: orders.length, statusCounts }, '[PENDING ORDERS] Fetched');
       }
 
       return orders;
@@ -499,8 +499,9 @@ export class BinanceC2CClient {
       { adOrderNo: orderNumber }
     );
 
-    // Debug: Log full raw response to understand structure
-    logger.info(`🔍 [API DEBUG] getOrderDetail ${orderNumber} FULL RESPONSE: ${JSON.stringify(response)}`);
+    // Debug: Log only essential info (full response available at debug level)
+    logger.debug({ orderNumber, response }, '[API DEBUG] getOrderDetail full response');
+    logger.info({ orderNumber, status: response.orderStatus, amount: response.totalPrice }, 'Got order detail');
 
     return response;
   }

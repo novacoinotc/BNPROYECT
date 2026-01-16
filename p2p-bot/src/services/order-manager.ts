@@ -232,8 +232,8 @@ export class OrderManager extends EventEmitter {
       for (const order of recentOrders) {
         const trackedOrder = this.activeOrders.get(order.orderNumber);
         if (trackedOrder && trackedOrder.orderStatus !== order.orderStatus) {
-          // Status changed! Process it
-          logger.info({
+          // Status changed! Process it (detailed log at debug level)
+          logger.debug({
             orderNumber: order.orderNumber,
             oldStatus: trackedOrder.orderStatus,
             newStatus: order.orderStatus,

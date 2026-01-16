@@ -67,6 +67,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   private releaseQueue: string[] = [];
   private processing: boolean = false;
 
+  // Track already-logged blocked orders to avoid log spam
+  private loggedBlockedOrders: Map<string, string> = new Map(); // orderNumber -> reason
+
   // 2FA code callback (for manual entry or TOTP generation)
   private getVerificationCode: ((orderNumber: string, authType: AuthType) => Promise<string>) | null = null;
 
@@ -813,17 +816,28 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const orderAmount = parseFloat(pending.order.totalPrice);
     const underLimit = orderAmount <= this.config.maxAutoReleaseAmount;
 
-    // EXPLICIT LOGGING - Show exactly why auto-release may fail
-    logger.info(
-      `🔍 [AUTO-RELEASE CHECK] Order ${orderNumber}: ` +
-      `amount=$${orderAmount} MXN, limit=$${this.config.maxAutoReleaseAmount} MXN, ` +
-      `underLimit=${underLimit}, autoReleaseEnabled=${this.config.enableAutoRelease}, ` +
-      `hasBankMatch=${hasBankMatch}, hasOcrVerification=${hasOcrVerification}, ` +
-      `requireOcr=${this.config.requireOcrVerification}`
-    );
+    // Detailed logging only at debug level (reduce noise)
+    logger.debug({
+      orderNumber,
+      amount: orderAmount,
+      limit: this.config.maxAutoReleaseAmount,
+      underLimit,
+      autoReleaseEnabled: this.config.enableAutoRelease,
+      hasBankMatch,
+      hasOcrVerification,
+    }, '[AUTO-RELEASE CHECK]');
+
+    // Helper to log blocked order only once per reason
+    const logBlockedOnce = (reason: string, message: string) => {
+      const prevReason = this.loggedBlockedOrders.get(orderNumber);
+      if (prevReason !== reason) {
+        logger.warn(message);
+        this.loggedBlockedOrders.set(orderNumber, reason);
+      }
+    };
 
     if (!this.config.enableAutoRelease) {
-      logger.warn(`❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Auto-release is DISABLED (ENABLE_AUTO_RELEASE env var not set to 'true')`);
+      logBlockedOnce('disabled', `❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Auto-release is DISABLED`);
       this.emit('release', {
         type: 'manual_required',
         orderNumber,
@@ -833,7 +847,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     }
 
     if (!underLimit) {
-      logger.warn(`❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Amount $${orderAmount} exceeds limit $${this.config.maxAutoReleaseAmount}`);
+      logBlockedOnce('exceeds_limit', `❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Amount $${orderAmount} exceeds limit $${this.config.maxAutoReleaseAmount}`);
       this.emit('release', {
         type: 'manual_required',
         orderNumber,
