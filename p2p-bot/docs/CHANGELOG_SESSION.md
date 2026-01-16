@@ -918,3 +918,81 @@ if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence 
 - ❌ Si el nombre NO coincide → requiere liberación manual
 - ❌ Si no se puede obtener el nombre real del comprador → requiere liberación manual
 - ✅ Aprobación manual (`manualApprove`) sigue funcionando y omite la verificación de nombre
+
+---
+
+### 25. PROBLEMA CRÍTICO: Nombre Real del Comprador No Disponible (2026-01-16) 🔴
+
+**Problema detectado:**
+Las órdenes muestran "Listo para liberar" en el dashboard pero NO se liberan automáticamente. Revisando los logs:
+- `✅ [BUYER-RISK OK]` - El comprador pasa la evaluación de riesgo
+- `✅ Comprador verificado - Historial confiable`
+- PERO NO aparece `✅ [NAME VERIFIED]` ni `✅ [AUTO-RELEASE READY]`
+
+**Causa raíz:**
+El campo `buyer.realName` NO está disponible desde la API de Binance:
+- `getOrderDetail()` devuelve `counterPartNickName` (el nickname)
+- Pero `buyer.realName`, `maker.realName`, `taker.realName` están todos `undefined`
+- Sin el nombre real, `nameVerified` es siempre `false`
+- Y el auto-release queda bloqueado para TODAS las órdenes
+
+**Estado actual de la investigación:**
+- Se necesita encontrar el endpoint correcto para obtener el nombre real
+- La documentación de SAPI 7.4 menciona campos como `buyer.realName`
+- Pero en la práctica, `getUserOrderDetail` no los devuelve
+
+**Próximos pasos:**
+1. Investigar exhaustivamente todos los endpoints de Binance P2P ✅
+2. Buscar documentación actualizada de la API ✅
+3. Probar diferentes endpoints y parámetros ✅
+4. El nombre SIEMPRE aparece en la interfaz web de Binance, debe haber forma de obtenerlo ✅
+
+**NOTA IMPORTANTE:** El usuario confirmó que ayer el nombre SÍ funcionaba. Algo cambió o hay un endpoint que no estamos usando correctamente.
+
+---
+
+### 26. SOLUCIÓN: Campo buyerName encontrado en getUserOrderDetail (2026-01-16) ✅
+
+**Descubrimiento:**
+Después de una investigación exhaustiva probando 24+ endpoints, se encontró que el nombre real del comprador SÍ está disponible, pero en un campo diferente al esperado:
+
+**El campo correcto es `buyerName` (no `buyer.realName`):**
+```json
+{
+  "buyerNickname": "User-42c9d",        // ← Nickname (no sirve para verificación)
+  "buyerName": "MENDOZA TORRES JOSE ALEJANDRO",  // ← ¡NOMBRE REAL KYC!
+  "sellerNickname": "QuantumCash",
+  "sellerName": "Publicidad con Tecnologia en imagen corporativa, S.A. de C.V."
+}
+```
+
+**El problema era:**
+- Buscábamos `order.buyer?.realName` (objeto anidado)
+- Pero el campo está en `order.buyerName` (nivel raíz)
+- Además, `listPendingOrders` NO devuelve este campo
+- Solo `getUserOrderDetail` devuelve el `buyerName`
+
+**Cambios realizados:**
+
+1. **`src/services/binance-client.ts`:**
+   - `getOrderDetail()` ahora extrae `buyerName` y lo expone como `buyerRealName`
+   - También extrae `sellerName` como `sellerRealName`
+   - Logging mejorado para mostrar los campos correctos
+
+2. **`src/services/auto-release.ts`:**
+   - `handlePaymentMatch()` ahora llama a `getOrderDetail()` si no tiene `buyerRealName`
+   - Esto asegura que SIEMPRE tenemos el nombre real del comprador para verificación
+   - Logging mejorado para mostrar el proceso de verificación de nombre
+
+**Flujo corregido:**
+1. Llega pago bancario con nombre del pagador: "MENDOZA TORRES JOSE"
+2. Se busca la orden correspondiente
+3. Se llama a `getOrderDetail()` para obtener `buyerName`: "MENDOZA TORRES JOSE ALEJANDRO"
+4. Se compara: similitud 80%+ → ✅ NAME VERIFIED
+5. Auto-release procede
+
+**Resultado:**
+- ✅ Ahora se obtiene el nombre real del comprador (KYC verificado por Binance)
+- ✅ Se puede comparar con el nombre del pagador bancario
+- ✅ Se previenen pagos de terceros
+- ✅ Auto-release funciona correctamente para compradores legítimos

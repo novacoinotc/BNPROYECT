@@ -732,11 +732,35 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       );
     }
 
-    // VERIFY NAME - Use real name if available
-    const buyerRealName = (order as any).buyerRealName || order.buyer?.realName;
-    const buyerName = buyerRealName || order.counterPartNickName || order.buyer?.nickName || '';
+    // VERIFY NAME - CRITICAL: Fetch order detail to get buyer's KYC verified real name
+    // The 'buyerName' field is ONLY available from getOrderDetail endpoint
+    // listPendingOrders does NOT include this field
+    let buyerRealName = (order as any).buyerRealName;
+
+    if (!buyerRealName) {
+      // Fetch full order details to get the buyer's real name
+      try {
+        logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] Fetching order detail to get buyer real name...');
+        const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+        buyerRealName = (orderDetail as any).buyerRealName;
+
+        // Also update the order in pending releases with the full details
+        if (pending) {
+          pending.order = { ...pending.order, ...orderDetail };
+        }
+
+        logger.info({
+          orderNumber: order.orderNumber,
+          buyerRealName: buyerRealName || '(not available)',
+        }, '📋 [NAME CHECK] Got buyer real name from order detail');
+      } catch (error) {
+        logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [NAME CHECK] Failed to fetch order detail');
+      }
+    }
+
+    const buyerNickName = order.counterPartNickName || (order as any).buyerNickname || order.buyer?.nickName || '';
     const senderName = match.senderName || '';
-    const nameMatchScore = this.compareNames(senderName, buyerName);
+    const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
     const hasRealName = !!buyerRealName;
     const nameMatches = hasRealName && nameMatchScore > 0.3;
 
@@ -744,21 +768,22 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       await db.addVerificationStep(
         order.orderNumber,
         VerificationStatus.NAME_MISMATCH,
-        `⚠️ No se pudo obtener nombre real del comprador - Requiere verificación manual`,
+        `⚠️ No se pudo obtener nombre real del comprador desde Binance API - Requiere verificación manual`,
         {
           senderName,
-          buyerNickName: order.counterPartNickName,
-          reason: 'real_name_not_available',
+          buyerNickName,
+          reason: 'real_name_not_available_from_api',
         }
       );
     } else if (nameMatches) {
       await db.addVerificationStep(
         order.orderNumber,
         VerificationStatus.NAME_VERIFIED,
-        `Nombre verificado: "${senderName}" ≈ "${buyerName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+        `✅ Nombre verificado: "${senderName}" ≈ "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
         {
           senderName,
-          buyerName,
+          buyerRealName,
+          buyerNickName,
           matchScore: nameMatchScore,
         }
       );
@@ -766,10 +791,11 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       await db.addVerificationStep(
         order.orderNumber,
         VerificationStatus.NAME_MISMATCH,
-        `⚠️ ALERTA: Nombre no coincide - SPEI: "${senderName}" vs Binance: "${buyerName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+        `⚠️ ALERTA: Nombre NO coincide - SPEI: "${senderName}" vs Binance KYC: "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
         {
           senderName,
-          buyerName,
+          buyerRealName,
+          buyerNickName,
           matchScore: nameMatchScore,
         }
       );
@@ -785,11 +811,12 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         nameVerified: nameMatches,
         hasRealName,
         senderName,
-        buyerName,
-        matchScore: nameMatchScore,
+        buyerRealName: buyerRealName || '(not available)',
+        buyerNickName,
+        matchScore: nameMatchScore.toFixed(2),
       }, nameMatches
-        ? '✅ [NAME VERIFIED] Bank sender matches Binance buyer'
-        : '❌ [NAME NOT VERIFIED] Bank sender does NOT match Binance buyer - manual release required');
+        ? '✅ [NAME VERIFIED] Bank sender matches Binance buyer KYC name'
+        : '❌ [NAME NOT VERIFIED] Bank sender does NOT match - manual release required');
     }
 
     // FINAL DETERMINATION

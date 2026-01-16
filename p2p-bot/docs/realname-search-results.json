@@ -1,0 +1,569 @@
+{
+  "timestamp": "2026-01-16T20:05:11.509Z",
+  "testOrderNumber": "22845571053339844608",
+  "totalTested": 24,
+  "withData": 3,
+  "withRealName": 1,
+  "results": [
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getUserOrderDetail",
+      "method": "POST",
+      "hasData": {
+        "orderNumber": "22845571053339844608",
+        "advOrderNumber": "13844792446345093120",
+        "buyerMobilePhone": "",
+        "sellerMobilePhone": "",
+        "buyerNickname": "User-42c9d",
+        "buyerName": "MENDOZA TORRES JOSE ALEJANDRO",
+        "sellerNickname": "QuantumCash",
+        "sellerName": "Publicidad con Tecnologia en imagen corporativa, S.A. de C.V.",
+        "tradeType": "SELL",
+        "payType": "BANK",
+        "payMethods": [
+          {
+            "id": 69273884,
+            "identifier": "SantanderMexico",
+            "tradeMethodName": "Santander Mexico",
+            "fields": [
+              {
+                "fieldId": "30383401130159439872",
+                "fieldName": "Name and Lastname",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Name and Lastname",
+                "fieldValue": "PUBLICIDAD TECNOLOGÍA "
+              },
+              {
+                "fieldId": "30383401324036947968",
+                "fieldName": "Account number/card",
+                "fieldContentType": "pay_account",
+                "restrictionType": 0,
+                "lengthLimit": 50,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Account number/card",
+                "fieldValue": "684180327002000030"
+              },
+              {
+                "fieldId": "30383401415722745856",
+                "fieldName": "CLABE number",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 50,
+                "isRequired": false,
+                "isCopyable": true,
+                "hintWord": "CLABE number",
+                "fieldValue": "BANK TRANSFER"
+              },
+              {
+                "fieldId": "30452178354307031040",
+                "fieldName": "Name",
+                "fieldContentType": "payee",
+                "restrictionType": 0,
+                "lengthLimit": 200,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Please fill in your full name",
+                "fieldValue": "Publicidad con Tecnologia en imagen corporativa, S.A. de C.V."
+              }
+            ],
+            "iconUrlColor": "https://bin.bnbstatic.com/image/admin_mgs_image_upload/20220721/64f8bb07-1c45-4356-a94f-b1e21a75fddf.png"
+          },
+          {
+            "id": 69273617,
+            "identifier": "BBVABank",
+            "tradeMethodName": "BBVA",
+            "fields": [
+              {
+                "fieldId": "30108719542767042560",
+                "fieldName": "Name",
+                "fieldContentType": "payee",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Name",
+                "fieldValue": "Publicidad con Tecnologia en imagen corporativa, S.A. de C.V."
+              },
+              {
+                "fieldId": "30108720277981618176",
+                "fieldName": "Account number",
+                "fieldContentType": "pay_account",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Enter your bank account number",
+                "fieldValue": "BANK TRANSFER"
+              },
+              {
+                "fieldId": "30319147711442198528",
+                "fieldName": "ID Number",
+                "fieldContentType": "single_text",
+                "restrictionType": 2,
+                "lengthLimit": 20,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Number of your national ID",
+                "fieldValue": "684180327002000030"
+              }
+            ],
+            "iconUrlColor": "https://bin.bnbstatic.com/image/admin_mgs_image_upload/20200623/287de930-9aa0-412c-90be-d4edc5118b82.png"
+          },
+          {
+            "id": 63834566,
+            "identifier": "BANK",
+            "tradeMethodName": "Bank Transfer",
+            "fields": [
+              {
+                "fieldId": "0000000000000000001",
+                "fieldName": "Name",
+                "fieldContentType": "payee",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "fieldValue": "Publicidad con Tecnologia en imagen corporativa, S.A. de C.V."
+              },
+              {
+                "fieldId": "0000000000000000002",
+                "fieldName": "Bank Card/Account Number",
+                "fieldContentType": "pay_account",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Please enter your bank account/card number",
+                "fieldValue": "684180327002000030"
+              },
+              {
+                "fieldId": "0000000000000000006",
+                "fieldName": "Bank name",
+                "fieldContentType": "bank",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Enter the name of your bank",
+                "fieldValue": "TRANSFER (OPM)"
+              },
+              {
+                "fieldId": "0000000000000000007",
+                "fieldName": "Account opening branch",
+                "fieldContentType": "sub_bank",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": false,
+                "isCopyable": true,
+                "hintWord": "Enter bank branch information",
+                "fieldValue": ""
+              },
+              {
+                "fieldId": "30646448873886441472",
+                "fieldName": "IBAN",
+                "fieldContentType": "single_text",
+                "restrictionType": 2,
+                "lengthLimit": 34,
+                "isRequired": false,
+                "isCopyable": true,
+                "hintWord": "IBAN",
+                "fieldValue": ""
+              },
+              {
+                "fieldId": "30733409984054398976",
+                "fieldName": "QR Code",
+                "fieldContentType": "qr_code",
+                "restrictionType": 0,
+                "lengthLimit": 1000,
+                "isRequired": false,
+                "isCopyable": false,
+                "hintWord": "Please upload your QR Code",
+                "fieldValue": ""
+              }
+            ],
+            "iconUrlColor": "https://bin.bnbstatic.com/image/admin_mgs_image_upload/20200612/8b6fcda1-1285-486b-ad79-07156420459d.png"
+          },
+          {
+            "id": 62377651,
+            "identifier": "STP",
+            "tradeMethodName": "STP",
+            "fields": [
+              {
+                "fieldId": "30131518310811529216",
+                "fieldName": "Name",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Please fill in your full name"
+              },
+              {
+                "fieldId": "30131523831928668160",
+                "fieldName": "Bank name",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "fieldValue": "BANK TRANSFER"
+              },
+              {
+                "fieldId": "30136440904647958528",
+                "fieldName": "Card Number or password",
+                "fieldContentType": "single_text",
+                "restrictionType": 1,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Please fill in card Number or password",
+                "fieldValue": "684180327002000030"
+              },
+              {
+                "fieldId": "30134390832292605952",
+                "fieldName": "Purpose of payment",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": false,
+                "isCopyable": true,
+                "hintWord": "Enter a payment purpose for buyers",
+                "fieldValue": "PUBLITEK"
+              },
+              {
+                "fieldId": "30452178354307031040",
+                "fieldName": "Name",
+                "fieldContentType": "payee",
+                "restrictionType": 0,
+                "lengthLimit": 200,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Please fill in your full name",
+                "fieldValue": "Publicidad con Tecnologia"
+              }
+            ],
+            "iconUrlColor": "https://bin.bnbstatic.com/image/admin_mgs_image_upload/20200908/bb7c7d20-0dcf-42f8-a022-55839359f662.png"
+          },
+          {
+            "id": 62377612,
+            "identifier": "Banorte",
+            "tradeMethodName": "Banorte",
+            "fields": [
+              {
+                "fieldId": "30383400605238374400",
+                "fieldName": "CLABE number",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 50,
+                "isRequired": false,
+                "isCopyable": true,
+                "hintWord": "CLABE number",
+                "fieldValue": ""
+              },
+              {
+                "fieldId": "30383400772652056576",
+                "fieldName": "Name",
+                "fieldContentType": "single_text",
+                "restrictionType": 0,
+                "lengthLimit": 100,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Name",
+                "fieldValue": "PUBLICIDAD CON TECNOLOGÍA"
+              },
+              {
+                "fieldId": "30383400874640224256",
+                "fieldName": "Account number/card",
+                "fieldContentType": "pay_account",
+                "restrictionType": 1,
+                "lengthLimit": 50,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Account number/card",
+                "fieldValue": "684180327002000030"
+              },
+              {
+                "fieldId": "30383400974779232256",
+                "fieldName": "Bank name",
+                "fieldContentType": "bank",
+                "restrictionType": 0,
+                "lengthLimit": 50,
+                "isRequired": true,
+                "isCopyable": true,
+                "hintWord": "Bank name",
+                "fieldValue": "TRANSFER"
+              }
+            ],
+            "iconUrlColor": "https://bin.bnbstatic.com/image/admin_mgs_image_upload/20220721/557b13b3-8bb6-4f57-8091-5dcdea3201fa.png"
+          }
+        ],
+        "selectedPayId": 0,
+        "orderStatus": 1,
+        "asset": "USDT",
+        "amount": "192.00000000",
+        "price": "17.75000000",
+        "totalPrice": "3408.00000000",
+        "fiatUnit": "MXN",
+        "isComplaintAllowed": false,
+        "confirmPayTimeout": 0,
+        "remark": "¡Hola! Gracias por elegir QuantumCash, con gusto te ayudo.☺️\nMi idea es que tu operación sea rápida, tranquila y sin complicaciones.\n\n👀 No acepto Banco Azteca, BX+, DolarApp ni Baz.\n🪪 Podrá solicitarse una verificación adicional para seguridad de ambas partes en caso de ser necesario.(física/moral)\n\n⏳ Libero los fondos al confirmar pago.\n\n•Puedo proporcionarte cualquier cantidad de USDT.\n\n•Los reembolsos se realizan dentro de 12 hrs.\n\n🤍 Estoy aquí para apoyarte, resolver tus dudas y acompañarte para que tu compra sea fácil, segura y agradable.\nQuantumCash, tu contacto de confianza✨",
+        "createTime": 1768593853390,
+        "notifyPayEndTime": 1768594753390,
+        "fiatSymbol": "Mex$",
+        "currencyTicketSize": "0.01",
+        "assetTicketSize": "0.01",
+        "priceTicketSize": "0.01",
+        "notifyPayedExpireMinute": 15,
+        "confirmPayedExpireMinute": 15,
+        "clientType": "ios",
+        "nickColor": "215|#FFE600|#C9481F",
+        "onlineStatus": "1",
+        "merchantNo": "s0952a4df8f6237a39f3c0f34a36d28e5",
+        "origin": "MAKE_TAKE",
+        "unreadCount": 1,
+        "iconUrl": "https://bin.bnbstatic.com/images/20191212/ec1e0b6e-06f7-4963-b454-6f631a49b4d1.png",
+        "avgReleasePeriod": 1340,
+        "avgPayPeriod": 332,
+        "expectedPayTime": 1768594185390,
+        "commissionRate": "0.001",
+        "commission": "0.19",
+        "takerCommissionRate": "0",
+        "takerCommission": "0",
+        "takerAmount": "0",
+        "tradeMethodCommissionRateVoList": [
+          {},
+          {},
+          {},
+          {},
+          {}
+        ],
+        "additionalKycVerify": 0,
+        "takerUserNo": "se1b8108b97dd3a739c6d7520a81c313e"
+      },
+      "hasRealName": true,
+      "realNameField": "data.buyerNickname",
+      "realNameValue": "User-42c9d",
+      "allFields": "{\"code\":\"000000\",\"message\":\"success\",\"data\":{\"orderNumber\":\"22845571053339844608\",\"advOrderNumber\":\"13844792446345093120\",\"buyerMobilePhone\":\"\",\"sellerMobilePhone\":\"\",\"buyerNickname\":\"User-42c9d\",\"buyerName\":\"MENDOZA TORRES JOSE ALEJANDRO\",\"sellerNickname\":\"QuantumCash\",\"sellerName\":\"Publicidad con Tecnologia en imagen corporativa, S.A. de C.V.\",\"tradeType\":\"SELL\",\"payType\":\"BANK\",\"payMethods\":[{\"id\":69273884,\"identifier\":\"SantanderMexico\",\"tradeMethodName\":\"Santander Mexico\",\"fields\":[{\"fieldId",
+      "rawData": "{\"code\":\"000000\",\"message\":\"success\",\"data\":{\"orderNumber\":\"22845571053339844608\",\"advOrderNumber\":\"13844792446345093120\",\"buyerMobilePhone\":\"\",\"sellerMobilePhone\":\"\",\"buyerNickname\":\"User-42c9d\",\"buyerName\":\"MENDOZA TORRES JOSE ALEJANDRO\",\"sellerNickname\":\"QuantumCash\",\"sellerName\":\"Publicidad con Tecnologia en imagen corporativa, S.A. de C.V.\",\"tradeType\":\"SELL\",\"payType\":\"BANK\",\"payMethods\":[{\"id\":69273884,\"identifier\":\"SantanderMexico\",\"tradeMethodName\":\"Santander Mexico\",\"fields\":[{\"fieldId\":\"30383401130159439872\",\"fieldName\":\"Name and Lastname\",\"fieldContentType\":\"single_text\",\"restrictionType\":0,\"lengthLimit\":100,\"isRequired\":true,\"isCopyable\":true,\"hintWord\":\"Name and Lastname\",\"fieldValue\":\"PUBLICIDAD TECNOLOGÍA \"},{\"fieldId\":\"30383401324036947968\",\"fieldName\":\"Account number/card\",\"fieldContentType\":\"pay_account\",\"restrictionType\":0,\"lengthLimit\":50,\"isRequired\":true,\"isCopyable\":true,\"hintWord\":\"Account number/card\",\"fieldValue\":\"684180327002000030\"},{\"fieldId\":\"30383401415722745856\",\"fieldName\":\"CLABE number\",\"fieldContentType\":\"single_text\",\"restrictionType\":0,\"lengthLimit\":50,\"isRequired\":false,\"isCopyable\":true,\"hintWord\":\"CLABE number\",\"fieldValue\":\"BANK TRANSFER\"},{\"fieldId\":\"30452178354307031040\",\"fieldName\":\"Name\",\"fieldContentType\":\"payee\",\"restrictionType\":0,\"lengthLimit\":200,\"isRequired\":true,\"isCopyable\":true,\"hintWord\":\"Please fill in your full name\",\"fieldValue\":\"Publicidad con Tecnologia en imagen corporativa, S.A. de C.V.\"}],\"iconUrlColor\":\"https://bin.bnbstatic.com/image/admin_mgs_image_upload/20220721/64f8bb07-1c45-4356-a94f-b1e21a75fddf.png\"},{\"id\":69273617,\"identifier\":\"BBVABank\",\"tradeMethodName\":\"BBVA\",\"fields\":[{\"fieldId\":\"30108719542767042560\",\"fieldName\":\"Name\",\"fieldContentType\":\"payee\",\"restrictionType\":0,\"lengthLimit\":100,\"isRequired\":true,\"isCopyable\":true,\"hintWord\":\"Name\",\"fieldValue\":\"Publicidad con Tecnologia en imagen corporativa, S.A. de C.V.\"},{\"fieldId\":\"30108720277981618176\",\"fieldName\":\"Account number\",\"fieldContentT"
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getUserOrderDetail",
+      "method": "POST",
+      "hasData": false,
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getOrderDetail",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/detail",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/detail",
+      "method": "GET",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/queryCounterPartyOrderStatistic",
+      "method": "POST",
+      "hasData": {
+        "completedOrderNumOfLatest30day": 51,
+        "finishRateLatest30Day": 1,
+        "registerDays": 113,
+        "completedOrderNum": 190,
+        "finishRate": 0.9895833333333334,
+        "numberOfTradesWithCounterpartyCompleted30day": 6,
+        "avgReleaseTimeOfLatest30day": 834.64,
+        "avgReleaseTime": 753.05,
+        "avgPayTimeOfLatest30day": 251.17,
+        "avgPayTime": 332.14
+      },
+      "hasRealName": false,
+      "allFields": "{\"code\":\"000000\",\"message\":\"success\",\"data\":{\"completedOrderNumOfLatest30day\":51,\"finishRateLatest30Day\":1,\"registerDays\":113,\"completedOrderNum\":190,\"finishRate\":0.9895833333333334,\"numberOfTradesWithCounterpartyCompleted30day\":6,\"avgReleaseTimeOfLatest30day\":834.64,\"avgReleaseTime\":753.05,\"avgPayTimeOfLatest30day\":251.17,\"avgPayTime\":332.14},\"success\":true}",
+      "rawData": "{\"code\":\"000000\",\"message\":\"success\",\"data\":{\"completedOrderNumOfLatest30day\":51,\"finishRateLatest30Day\":1,\"registerDays\":113,\"completedOrderNum\":190,\"finishRate\":0.9895833333333334,\"numberOfTradesWithCounterpartyCompleted30day\":6,\"avgReleaseTimeOfLatest30day\":834.64,\"avgReleaseTime\":753.05,\"avgPayTimeOfLatest30day\":251.17,\"avgPayTime\":332.14},\"success\":true}"
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getCounterPartyInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getUserInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/user/getUserInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/user/info",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v2/c2c/orderMatch/getUserOrderDetail",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v2/c2c/orderMatch/getOrderDetail",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/bapi/c2c/v1/private/c2c/order-match/order-detail",
+      "method": "POST",
+      "hasData": false,
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/bapi/c2c/v2/private/c2c/order-match/order-detail",
+      "method": "POST",
+      "hasData": false,
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/bapi/c2c/v1/friendly/c2c/order-match/order-detail",
+      "method": "POST",
+      "hasData": false,
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/bapi/c2c/v2/friendly/c2c/order-match/order-detail",
+      "method": "POST",
+      "hasData": false,
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getPaymentInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getBuyerInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getSellerInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/chat/retrieveChatMessagesWithPagination",
+      "method": "GET",
+      "hasData": [
+        {
+          "id": "2055226645140359937",
+          "uuid": "228455710533398446081768593854086",
+          "type": "auto_reply",
+          "orderNo": "22845571053339844608",
+          "content": "✨ ¡Hola! Gracias por elegir QuantumCash, con mucho gusto te atiendo 😊\n\nClientes frecuentes cambié de clabe 📌\n👀 No acepto pagos desde Banco Azteca, BX+, DolarApp ni Baz.\n🪪 Podrá solicitarse una verificación adicional para seguridad de ambas partes en caso de ser necesario.(física/moral)\n\nConcepto: Publitek\n\n⏳ Libero los fondos en cuanto confirmo el pago.\n¡Cualquier duda estoy a tus órdenes! 🙌🏻\n",
+          "status": "read",
+          "createTime": 1768593854000,
+          "self": true
+        },
+        {
+          "id": "2055226635376020224",
+          "uuid": "228455710533398446081768593853452",
+          "type": "system",
+          "orderNo": "22845571053339844608",
+          "content": "{\"type\":\"seller_merchant_trading\"}",
+          "status": "read",
+          "createTime": 1768593854000,
+          "self": false
+        }
+      ],
+      "hasRealName": false,
+      "allFields": "{\"code\":\"000000\",\"message\":\"success\",\"data\":[{\"id\":\"2055226645140359937\",\"uuid\":\"228455710533398446081768593854086\",\"type\":\"auto_reply\",\"orderNo\":\"22845571053339844608\",\"content\":\"✨ ¡Hola! Gracias por elegir QuantumCash, con mucho gusto te atiendo 😊\\n\\nClientes frecuentes cambié de clabe 📌\\n👀 No acepto pagos desde Banco Azteca, BX+, DolarApp ni Baz.\\n🪪 Podrá solicitarse una verificación adicional para seguridad de ambas partes en caso de ser necesario.(física/moral)\\n\\nConcepto: Publitek\\n\\n",
+      "rawData": "{\"code\":\"000000\",\"message\":\"success\",\"data\":[{\"id\":\"2055226645140359937\",\"uuid\":\"228455710533398446081768593854086\",\"type\":\"auto_reply\",\"orderNo\":\"22845571053339844608\",\"content\":\"✨ ¡Hola! Gracias por elegir QuantumCash, con mucho gusto te atiendo 😊\\n\\nClientes frecuentes cambié de clabe 📌\\n👀 No acepto pagos desde Banco Azteca, BX+, DolarApp ni Baz.\\n🪪 Podrá solicitarse una verificación adicional para seguridad de ambas partes en caso de ser necesario.(física/moral)\\n\\nConcepto: Publitek\\n\\n⏳ Libero los fondos en cuanto confirmo el pago.\\n¡Cualquier duda estoy a tus órdenes! 🙌🏻\\n\",\"status\":\"read\",\"createTime\":1768593854000,\"self\":true},{\"id\":\"2055226635376020224\",\"uuid\":\"228455710533398446081768593853452\",\"type\":\"system\",\"orderNo\":\"22845571053339844608\",\"content\":\"{\\\"type\\\":\\\"seller_merchant_trading\\\"}\",\"status\":\"read\",\"createTime\":1768593854000,\"self\":false}],\"total\":3,\"success\":true}"
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getAppealDetail",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/verifyPayment",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/preRelease",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    },
+    {
+      "endpoint": "/sapi/v1/c2c/orderMatch/getReleaseInfo",
+      "method": "POST",
+      "hasData": "",
+      "hasRealName": false,
+      "allFields": "(no data)",
+      "rawData": null
+    }
+  ]
+}

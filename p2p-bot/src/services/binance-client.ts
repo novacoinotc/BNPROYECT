@@ -531,6 +531,11 @@ export class BinanceC2CClient {
    * Get order detail
    * POST /sapi/v1/c2c/orderMatch/getUserOrderDetail
    * Note: API expects 'adOrderNo' not 'orderNumber' (per SAPI v7.4 docs)
+   *
+   * IMPORTANT: The API returns buyer's real name in 'buyerName' field (not 'buyer.realName')
+   * Example response fields:
+   *   - buyerNickname: "User-42c9d" (the nickname)
+   *   - buyerName: "MENDOZA TORRES JOSE ALEJANDRO" (the KYC verified real name)
    */
   async getOrderDetail(orderNumber: string): Promise<OrderData> {
     const response = await this.signedPost<OrderData>(
@@ -538,33 +543,34 @@ export class BinanceC2CClient {
       { adOrderNo: orderNumber }
     );
 
-    // Normalize orderStatus to ensure it's a string
+    const rawResponse = response as any;
+
+    // Normalize orderStatus and EXTRACT the buyer's real name from correct field
     const normalizedOrder = {
       ...response,
       orderStatus: normalizeOrderStatus(response.orderStatus as unknown as number | string),
+      // CRITICAL: Extract buyer's KYC verified real name from 'buyerName' field
+      // This is the name we need for third-party payment verification
+      buyerRealName: rawResponse.buyerName || null,
+      sellerRealName: rawResponse.sellerName || null,
     };
 
-    // Log buyer info for debugging name verification issues
-    const rawResponse = response as any;
+    // Log buyer name fields - this is critical for name verification
     logger.info({
       orderNumber,
       status: normalizedOrder.orderStatus,
       amount: normalizedOrder.totalPrice,
-      // Possible locations for buyer name
+      // The CORRECT fields for buyer identity:
+      buyerNickname: rawResponse.buyerNickname,
+      buyerName: rawResponse.buyerName, // ← THIS is the KYC verified real name
+      sellerNickname: rawResponse.sellerNickname,
+      sellerName: rawResponse.sellerName,
+      // For backwards compatibility, also check old field names
       counterPartNickName: rawResponse.counterPartNickName,
-      buyerNickName: rawResponse.buyer?.nickName,
-      buyerRealName: rawResponse.buyer?.realName,
-      makerRealName: rawResponse.maker?.realName,
-      takerRealName: rawResponse.taker?.realName,
-      // Check if buyer/seller objects exist
-      hasBuyer: !!rawResponse.buyer,
-      hasSeller: !!rawResponse.seller,
-      hasMaker: !!rawResponse.maker,
-      hasTaker: !!rawResponse.taker,
-    }, '[ORDER DETAIL] Buyer name fields');
+    }, '📋 [ORDER DETAIL] Buyer identity fields');
 
-    // Debug: Log full response structure to see all available fields
-    logger.debug({ orderNumber, responseKeys: Object.keys(rawResponse), response }, '[API DEBUG] getOrderDetail full response');
+    // Debug: Log full response structure
+    logger.debug({ orderNumber, responseKeys: Object.keys(rawResponse) }, '[API DEBUG] getOrderDetail keys');
 
     return normalizedOrder;
   }
