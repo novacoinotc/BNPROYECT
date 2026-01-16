@@ -490,14 +490,13 @@ export class BinanceC2CClient {
     );
 
     // Debug: Log raw response to understand structure
-    logger.info({
-      orderNumber,
-      responseKeys: response ? Object.keys(response) : [],
-      hasBuyer: !!(response as any)?.buyer,
-      hasSeller: !!(response as any)?.seller,
-      buyerKeys: (response as any)?.buyer ? Object.keys((response as any).buyer) : [],
-      sellerKeys: (response as any)?.seller ? Object.keys((response as any).seller) : [],
-    }, '🔍 [API DEBUG] getOrderDetail response structure');
+    const keys = response ? Object.keys(response) : [];
+    const hasBuyer = !!(response as any)?.buyer;
+    const hasSeller = !!(response as any)?.seller;
+    logger.info(
+      `🔍 [API DEBUG] getOrderDetail ${orderNumber}: keys=[${keys.join(',')}], hasBuyer=${hasBuyer}, hasSeller=${hasSeller}, ` +
+      `counterPartNickName=${(response as any)?.counterPartNickName || 'N/A'}`
+    );
 
     return response;
   }
