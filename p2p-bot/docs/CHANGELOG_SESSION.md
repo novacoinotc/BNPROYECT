@@ -1,6 +1,6 @@
 # Binance P2P Bot - Session Changelog
 
-**Última actualización:** 2025-01-14 UTC
+**Última actualización:** 2026-01-16 UTC
 
 Este documento contiene todos los cambios realizados durante la sesión de desarrollo para poder continuar en caso de reiniciar el chat.
 
@@ -559,3 +559,197 @@ Si necesitas retomar este proyecto en una nueva conversación:
 4. Las credenciales están en Railway y en `.env` local
 
 **Contexto clave:** El bot es para P2P de Binance, verifica pagos bancarios vía webhook y los vincula con órdenes de Binance. Auto-release está deshabilitado hasta completar pruebas.
+
+---
+
+## Sesión 2026-01-16 - Reducción de Ruido en Logs y Fixes Críticos
+
+### 17. Reducción de Verbose Logging (Commit: bc3ea8d)
+
+**Problema:** Los logs en Railway tenían demasiado ruido, dificultando ver eventos importantes.
+
+**Cambios realizados:**
+
+1. **`src/services/binance-client.ts`:**
+   - Cambiado `[API DEBUG] getOrderDetail FULL RESPONSE` de `logger.info` a `logger.debug`
+   - Cambiado `[PENDING ORDERS] Fetched` de `logger.info` a `logger.debug`
+
+2. **`src/services/auto-release.ts`:**
+   - Agregado `loggedBlockedOrders: Map<string, string>` para throttle de mensajes repetidos
+   - Agregada función `logBlockedOnce(reason, message)` que solo loguea una vez por razón
+   - Cambiado `[AUTO-RELEASE CHECK]` de `logger.info` a `logger.debug`
+   - Los mensajes `[AUTO-RELEASE BLOCKED]` ahora solo se muestran una vez por orden/razón
+
+3. **`src/services/order-manager.ts`:**
+   - Cambiado "Detected status change from recent orders" de `logger.info` a `logger.debug`
+
+### 18. Fix Race Condition en Auto-Release (Commit: aff96d1)
+
+**Problema:** El sistema intentaba liberar crypto ANTES de que el pago bancario fuera emparejado, causando múltiples errores "Payment not verified, refusing to release" antes de eventualmente tener éxito.
+
+**Causa raíz en `auto-release.ts:813`:**
+```typescript
+const hasBankMatch = !this.config.requireBankMatch || !!pending.bankMatch;
+```
+Cuando `REQUIRE_BANK_MATCH=false` (default), `hasBankMatch` era siempre `true`, permitiendo que órdenes se pusieran en cola para liberar sin tener transacción bancaria real.
+
+**Solución en `auto-release.ts:965-967`:**
+```typescript
+// SAFETY: Always require actual bank transaction ID before queueing for release
+const hasActualBankMatch = !!pending.bankMatch?.transactionId;
+
+if (hasActualBankMatch && hasBankMatch && hasOcrVerification && meetsConfidence) {
+  // Queue for release
+}
+```
+
+**Resultado:** Ahora las órdenes NO se ponen en cola para liberar hasta que haya confirmación bancaria real.
+
+### 19. Throttling para Reducir Procesamiento Duplicado (Commit: 2aeda78)
+
+**Problema:** La misma orden se procesaba múltiples veces por segundo, generando logs repetidos.
+
+**Cambios en `auto-release.ts`:**
+```typescript
+// Throttle checkReadyForRelease to prevent duplicate processing
+private lastCheckTime: Map<string, number> = new Map();
+private readonly CHECK_THROTTLE_MS = 5000; // Only check once per 5 seconds per order
+
+private async checkReadyForRelease(orderNumber: string): Promise<void> {
+  // Throttle: Skip if we checked this order recently
+  const now = Date.now();
+  const lastCheck = this.lastCheckTime.get(orderNumber) || 0;
+  if (now - lastCheck < this.CHECK_THROTTLE_MS) {
+    return; // Skip - already checked recently
+  }
+  this.lastCheckTime.set(orderNumber, now);
+  // ... rest of function
+}
+```
+
+**Cleanup:** Se agregó limpieza de mapas (`lastCheckTime`, `loggedBlockedOrders`) cuando órdenes se completan/cancelan para evitar memory leaks.
+
+### 20. Debug Logging para Sync Endpoint (Commit: 2aeda78)
+
+**Problema:** El dashboard mostraba "Sincronizado: 0 ordenes actualizadas de 19" - la sincronización no actualizaba órdenes liberadas manualmente.
+
+**Cambios en `dashboard/src/app/api/orders/sync/route.ts`:**
+```typescript
+// Log raw response for debugging
+console.log(`[BINANCE API] Order ${orderNumber} raw response:`, JSON.stringify(data).substring(0, 500));
+console.log(`[BINANCE API] Order ${orderNumber}: status=${orderData?.orderStatus}`);
+
+// Enhanced logging for debugging
+console.log(`[SYNC] Order ${order.orderNumber}: API result = ${JSON.stringify({
+  success: result.success,
+  hasData: !!binanceOrder,
+  binanceStatus: binanceOrder?.orderStatus,
+  dbStatus: order.status,
+})}`);
+```
+
+**Para diagnosticar:** Revisar logs de Vercel después de hacer clic en "Sincronizar con Binance".
+
+### 21. Fix: Orden de Prioridad en Sync de Órdenes (Commit: 2d5c487) ⭐ CRÍTICO
+
+**Problema:** "Order status changed" aparecía cada 5 segundos aunque el status NO había cambiado realmente.
+
+**Causa raíz en `order-manager.ts` línea 110:**
+```typescript
+// ANTES (bug):
+for (const order of [...pendingOrders, ...activeOrders, ...recentOrders]) {
+  allOrders.set(order.orderNumber, order);
+}
+```
+
+El problema: `recentOrders` (datos más viejos) sobreescribía a `pendingOrders` (status actual).
+
+**Ejemplo del bug:**
+1. `pendingOrders` tiene Order A con "BUYER_PAYED" (actual)
+2. `recentOrders` tiene Order A con "TRADING" (de hace 1 hora)
+3. Se guarda "TRADING" en memoria
+4. El poll obtiene "BUYER_PAYED" de Binance
+5. "TRADING" ≠ "BUYER_PAYED" → ¡Cambio de status detectado!
+6. Se repite cada 5 segundos...
+
+**Solución:**
+```typescript
+// DESPUÉS (fix):
+// pendingOrders has MOST CURRENT status for active orders
+// so it should be processed LAST to take priority
+for (const order of [...recentOrders, ...activeOrders, ...pendingOrders]) {
+  allOrders.set(order.orderNumber, order);
+}
+```
+
+### 22. Debug Logging para Comparación de Status (Commit: 809a0cd)
+
+**Cambio temporal** para diagnosticar el problema:
+```typescript
+} else if (existingOrder.orderStatus !== order.orderStatus) {
+  // DEBUG: Log the actual comparison values
+  logger.info({
+    orderNumber: order.orderNumber,
+    existingStatus: existingOrder.orderStatus,
+    newStatus: order.orderStatus,
+    existingType: typeof existingOrder.orderStatus,
+    newType: typeof order.orderStatus,
+  }, '[DEBUG] Status comparison - values differ');
+```
+
+---
+
+## Resumen de Commits 2026-01-16
+
+| Commit | Descripción | Archivos |
+|--------|-------------|----------|
+| `bc3ea8d` | Reduce verbose logging | binance-client.ts, auto-release.ts, order-manager.ts |
+| `aff96d1` | Fix race condition - require bank match | auto-release.ts |
+| `2aeda78` | Add throttling + sync debug logging | auto-release.ts, sync/route.ts |
+| `809a0cd` | Add debug for status comparison | order-manager.ts |
+| `2d5c487` | **Fix: Correct sync order priority** | order-manager.ts |
+
+---
+
+## Estado Actual del Auto-Release (2026-01-16)
+
+**Configuración:**
+```
+ENABLE_AUTO_RELEASE=true
+MAX_AUTO_RELEASE_AMOUNT=5000 MXN
+ENABLE_BUYER_RISK_CHECK=true
+SKIP_RISK_CHECK_THRESHOLD=800 MXN
+REQUIRE_BANK_MATCH=false (pero ahora se requiere transacción real)
+```
+
+**Criterios de Buyer Risk Check:**
+- Mínimo 100 órdenes totales
+- Mínimo 15 órdenes en 30 días
+- Mínimo 100 días registrado
+- Mínimo 85% tasa positiva
+
+**El sistema ES SEGURO:**
+- ✅ NO libera a compradores sin historial confiable
+- ✅ NO libera sin confirmación de pago bancario
+- ✅ Compradores riesgosos son BLOQUEADOS para revisión manual
+
+---
+
+## Problemas Pendientes
+
+1. **Dashboard sync "0 actualizadas"** - Necesita revisar logs de Vercel para diagnosticar
+2. **"Order status changed" repetido** - Fix aplicado (commit 2d5c487), pendiente verificar
+3. **Órdenes liberadas manualmente no actualizan** - Relacionado con el sync
+
+---
+
+## Para Continuar
+
+Si reinicias la conversación:
+
+1. **Lee este archivo primero** - Tiene todo el contexto
+2. **Commits recientes importantes:**
+   - `2d5c487` - Fix del orden de sync (debería resolver logs repetidos)
+   - `aff96d1` - Fix de race condition en auto-release
+3. **Revisar logs de Railway** después del deploy de `2d5c487`
+4. **Revisar logs de Vercel** si el sync sigue sin funcionar
