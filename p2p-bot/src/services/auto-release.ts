@@ -161,10 +161,64 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       `amount=$${order.totalPrice} MXN, payment=$${payment.amount} from ${payment.senderName}`
     );
 
+    // CRITICAL: Fetch order detail to get buyer's KYC verified real name
+    // listPendingOrders does NOT include buyerName field
+    let buyerRealName: string | null = null;
+    let orderWithDetails = order;
+
+    try {
+      logger.info({ orderNumber: order.orderNumber }, '🔍 [SYNC_MATCHED] Fetching order detail for buyer name...');
+      const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+      buyerRealName = (orderDetail as any).buyerRealName || null;
+      orderWithDetails = { ...order, ...orderDetail };
+
+      logger.info({
+        orderNumber: order.orderNumber,
+        buyerRealName: buyerRealName || '(not available)',
+      }, '📋 [SYNC_MATCHED] Got buyer real name');
+    } catch (error) {
+      logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [SYNC_MATCHED] Failed to fetch order detail');
+    }
+
+    // Verify name match
+    const senderName = payment.senderName || '';
+    const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
+    const hasRealName = !!buyerRealName;
+    const nameMatches = hasRealName && nameMatchScore > 0.3;
+
+    logger.info({
+      orderNumber: order.orderNumber,
+      senderName,
+      buyerRealName: buyerRealName || '(not available)',
+      nameMatchScore: nameMatchScore.toFixed(2),
+      nameMatches,
+    }, nameMatches
+      ? '✅ [SYNC_MATCHED] Name verification PASSED'
+      : '❌ [SYNC_MATCHED] Name verification FAILED');
+
+    // Add verification step for name check
+    if (hasRealName) {
+      await db.addVerificationStep(
+        order.orderNumber,
+        nameMatches ? VerificationStatus.NAME_VERIFIED : VerificationStatus.NAME_MISMATCH,
+        nameMatches
+          ? `✅ Nombre verificado: "${senderName}" ≈ "${buyerRealName}" (${(nameMatchScore * 100).toFixed(0)}%)`
+          : `⚠️ Nombre NO coincide: "${senderName}" vs "${buyerRealName}" (${(nameMatchScore * 100).toFixed(0)}%)`,
+        { senderName, buyerRealName, matchScore: nameMatchScore }
+      );
+    } else {
+      await db.addVerificationStep(
+        order.orderNumber,
+        VerificationStatus.NAME_MISMATCH,
+        '⚠️ No se pudo obtener nombre real del comprador - Requiere verificación manual',
+        { senderName, reason: 'real_name_not_available' }
+      );
+    }
+
     // Create pending release record
     const pending: PendingRelease = {
       orderNumber: order.orderNumber,
-      order,
+      order: orderWithDetails,
       bankMatch: {
         transactionId: payment.transactionId,
         amount: payment.amount,
@@ -179,7 +233,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       },
       ocrVerified: true, // Skip OCR for sync matches
       ocrConfidence: 1.0,
-      nameVerified: false, // Must verify name match before release
+      nameVerified: nameMatches, // Set based on actual name verification
       queuedAt: new Date(),
       attempts: 0,
     };
