@@ -737,8 +737,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Handle bank payment match
-   * NOTE: This method is designed to be resilient to DB errors - it will catch
-   * DB errors and continue processing so that checkReadyForRelease is always called
+   * NOTE: This method is designed to be COMPLETELY resilient to errors - it will catch
+   * ALL errors and continue processing so that checkReadyForRelease is always called
+   * with the correct nameVerified status
    */
   private async handlePaymentMatch(order: OrderData, match: OrderMatch): Promise<void> {
     let pending = this.pendingReleases.get(order.orderNumber);
@@ -757,32 +758,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       this.pendingReleases.set(order.orderNumber, pending);
     }
 
-    // Store bank match info
-    pending.bankMatch = {
-      transactionId: match.bankTransactionId || '',
-      amount: match.receivedAmount || 0,
-      currency: order.fiat || order.fiatUnit || 'MXN',
-      senderName: match.senderName || '',
-      senderAccount: '',
-      receiverAccount: '',
-      concept: '',
-      timestamp: match.matchedAt?.toISOString() || new Date().toISOString(),
-      bankReference: '',
-      status: 'completed',
-    };
-
-    logger.info({
-      orderNumber: order.orderNumber,
-      bankAmount: match.receivedAmount,
-      expectedAmount: match.expectedAmount,
-    }, 'Bank payment matched to order');
-
-    // VERIFY AMOUNT
-    const expectedAmount = match.expectedAmount || parseFloat(order.totalPrice);
+    // Variables for verification - declared at top level so they're available in finally
+    let amountMatches = false;
+    let nameMatches = false;
+    let buyerRealName: string | null = (order as any).buyerRealName || null;
+    const senderName = match.senderName || '';
+    const expectedAmount = match.expectedAmount || parseFloat(order.totalPrice) || 0;
     const receivedAmount = match.receivedAmount || 0;
-    const amountDiff = Math.abs(receivedAmount - expectedAmount);
-    const amountTolerance = expectedAmount * 0.01; // 1% tolerance
-    const amountMatches = amountDiff <= amountTolerance;
+    const buyerNickName = order.counterPartNickName || (order as any).buyerNickname || order.buyer?.nickName || '';
 
     // Helper to safely add verification steps (non-blocking on DB errors)
     const safeAddVerificationStep = async (
@@ -798,103 +781,93 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       }
     };
 
-    if (amountMatches) {
-      await safeAddVerificationStep(
-        VerificationStatus.AMOUNT_VERIFIED,
-        `Monto verificado: $${receivedAmount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)} (diferencia: $${amountDiff.toFixed(2)})`,
-        {
-          receivedAmount,
-          expectedAmount,
-          difference: amountDiff,
-          tolerance: amountTolerance,
-          withinTolerance: true,
-        }
-      );
-    } else {
-      await safeAddVerificationStep(
-        VerificationStatus.AMOUNT_MISMATCH,
-        `⚠️ ALERTA: Monto no coincide - Recibido: $${receivedAmount.toFixed(2)} vs Esperado: $${expectedAmount.toFixed(2)}`,
-        {
-          receivedAmount,
-          expectedAmount,
-          difference: amountDiff,
-          tolerance: amountTolerance,
-          withinTolerance: false,
-        }
-      );
-    }
+    try {
+      // Store bank match info
+      pending.bankMatch = {
+        transactionId: match.bankTransactionId || '',
+        amount: receivedAmount,
+        currency: order.fiat || order.fiatUnit || 'MXN',
+        senderName: senderName,
+        senderAccount: '',
+        receiverAccount: '',
+        concept: '',
+        timestamp: match.matchedAt?.toISOString() || new Date().toISOString(),
+        bankReference: '',
+        status: 'completed',
+      };
 
-    // VERIFY NAME - CRITICAL: Fetch order detail to get buyer's KYC verified real name
-    // The 'buyerName' field is ONLY available from getOrderDetail endpoint
-    // listPendingOrders does NOT include this field
-    let buyerRealName = (order as any).buyerRealName;
+      logger.info({
+        orderNumber: order.orderNumber,
+        bankAmount: receivedAmount,
+        expectedAmount: expectedAmount,
+      }, 'Bank payment matched to order');
 
-    if (!buyerRealName) {
-      // Fetch full order details to get the buyer's real name
-      try {
-        logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] Fetching order detail to get buyer real name...');
-        const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
-        buyerRealName = (orderDetail as any).buyerRealName;
+      // VERIFY AMOUNT
+      const amountDiff = Math.abs(receivedAmount - expectedAmount);
+      const amountTolerance = expectedAmount * 0.01; // 1% tolerance
+      amountMatches = amountDiff <= amountTolerance;
 
-        // Also update the order in pending releases with the full details
-        if (pending) {
-          pending.order = { ...pending.order, ...orderDetail };
-        }
-
-        logger.info({
-          orderNumber: order.orderNumber,
-          buyerRealName: buyerRealName || '(not available)',
-        }, '📋 [NAME CHECK] Got buyer real name from order detail');
-      } catch (error) {
-        logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [NAME CHECK] Failed to fetch order detail');
+      if (amountMatches) {
+        await safeAddVerificationStep(
+          VerificationStatus.AMOUNT_VERIFIED,
+          `Monto verificado: $${receivedAmount.toFixed(2)} ≈ $${expectedAmount.toFixed(2)} (diferencia: $${amountDiff.toFixed(2)})`,
+          { receivedAmount, expectedAmount, difference: amountDiff, tolerance: amountTolerance, withinTolerance: true }
+        );
+      } else {
+        await safeAddVerificationStep(
+          VerificationStatus.AMOUNT_MISMATCH,
+          `⚠️ ALERTA: Monto no coincide - Recibido: $${receivedAmount.toFixed(2)} vs Esperado: $${expectedAmount.toFixed(2)}`,
+          { receivedAmount, expectedAmount, difference: amountDiff, tolerance: amountTolerance, withinTolerance: false }
+        );
       }
-    }
 
-    const buyerNickName = order.counterPartNickName || (order as any).buyerNickname || order.buyer?.nickName || '';
-    const senderName = match.senderName || '';
-    const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
-    const hasRealName = !!buyerRealName;
-    const nameMatches = hasRealName && nameMatchScore > 0.3;
+      // VERIFY NAME - Fetch order detail to get buyer's KYC verified real name
+      if (!buyerRealName) {
+        try {
+          logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] Fetching order detail to get buyer real name...');
+          const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+          buyerRealName = (orderDetail as any).buyerRealName || null;
 
-    if (!hasRealName) {
-      await safeAddVerificationStep(
-        VerificationStatus.NAME_MISMATCH,
-        `⚠️ No se pudo obtener nombre real del comprador desde Binance API - Requiere verificación manual`,
-        {
-          senderName,
-          buyerNickName,
-          reason: 'real_name_not_available_from_api',
-        }
-      );
-    } else if (nameMatches) {
-      await safeAddVerificationStep(
-        VerificationStatus.NAME_VERIFIED,
-        `✅ Nombre verificado: "${senderName}" ≈ "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
-        {
-          senderName,
-          buyerRealName,
-          buyerNickName,
-          matchScore: nameMatchScore,
-        }
-      );
-    } else {
-      await safeAddVerificationStep(
-        VerificationStatus.NAME_MISMATCH,
-        `⚠️ ALERTA: Nombre NO coincide - SPEI: "${senderName}" vs Binance KYC: "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
-        {
-          senderName,
-          buyerRealName,
-          buyerNickName,
-          matchScore: nameMatchScore,
-        }
-      );
-    }
+          if (pending) {
+            pending.order = { ...pending.order, ...orderDetail };
+          }
 
-    // UPDATE PENDING RELEASE WITH NAME VERIFICATION RESULT
-    // CRITICAL: This determines if auto-release is allowed
-    const pendingRelease = this.pendingReleases.get(order.orderNumber);
-    if (pendingRelease) {
-      pendingRelease.nameVerified = nameMatches;
+          logger.info({
+            orderNumber: order.orderNumber,
+            buyerRealName: buyerRealName || '(not available)',
+          }, '📋 [NAME CHECK] Got buyer real name from order detail');
+        } catch (error) {
+          logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [NAME CHECK] Failed to fetch order detail');
+        }
+      }
+
+      // Calculate name match
+      const hasRealName = !!buyerRealName;
+      const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
+      nameMatches = hasRealName && nameMatchScore > 0.3;
+
+      // Log and save name verification result
+      if (!hasRealName) {
+        await safeAddVerificationStep(
+          VerificationStatus.NAME_MISMATCH,
+          `⚠️ No se pudo obtener nombre real del comprador desde Binance API - Requiere verificación manual`,
+          { senderName, buyerNickName, reason: 'real_name_not_available_from_api' }
+        );
+      } else if (nameMatches) {
+        await safeAddVerificationStep(
+          VerificationStatus.NAME_VERIFIED,
+          `✅ Nombre verificado: "${senderName}" ≈ "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+          { senderName, buyerRealName, buyerNickName, matchScore: nameMatchScore }
+        );
+      } else {
+        await safeAddVerificationStep(
+          VerificationStatus.NAME_MISMATCH,
+          `⚠️ ALERTA: Nombre NO coincide - SPEI: "${senderName}" vs Binance KYC: "${buyerRealName}" (similitud: ${(nameMatchScore * 100).toFixed(0)}%)`,
+          { senderName, buyerRealName, buyerNickName, matchScore: nameMatchScore }
+        );
+      }
+
+      // Log name verification result
       logger.info({
         orderNumber: order.orderNumber,
         nameVerified: nameMatches,
@@ -906,42 +879,42 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       }, nameMatches
         ? '✅ [NAME VERIFIED] Bank sender matches Binance buyer KYC name'
         : '❌ [NAME NOT VERIFIED] Bank sender does NOT match - manual release required');
-    }
 
-    // FINAL DETERMINATION
-    if (amountMatches && nameMatches) {
-      await safeAddVerificationStep(
-        VerificationStatus.READY_TO_RELEASE,
-        `✅ VERIFICACIÓN COMPLETA - Todas las validaciones pasaron`,
-        {
-          amountVerified: true,
-          nameVerified: true,
-          recommendation: 'RELEASE',
-          autoReleaseEnabled: this.config.enableAutoRelease,
-        }
-      );
+      // FINAL DETERMINATION - save to DB
+      if (amountMatches && nameMatches) {
+        await safeAddVerificationStep(
+          VerificationStatus.READY_TO_RELEASE,
+          `✅ VERIFICACIÓN COMPLETA - Todas las validaciones pasaron`,
+          { amountVerified: true, nameVerified: true, recommendation: 'RELEASE', autoReleaseEnabled: this.config.enableAutoRelease }
+        );
+      } else {
+        await safeAddVerificationStep(
+          VerificationStatus.MANUAL_REVIEW,
+          `👤 REQUIERE REVISIÓN MANUAL - ${!amountMatches ? 'Monto no coincide' : ''} ${!nameMatches ? 'Nombre no coincide' : ''}`,
+          { amountVerified: amountMatches, nameVerified: nameMatches, recommendation: 'MANUAL_REVIEW' }
+        );
+      }
 
-      if (!this.config.enableAutoRelease) {
+    } catch (error) {
+      // Log error but CONTINUE - we must still set nameVerified and call checkReadyForRelease
+      logger.error({ orderNumber: order.orderNumber, error },
+        '❌ [PAYMENT MATCH] Error during verification - will still check release status');
+    } finally {
+      // CRITICAL: Always update pending.nameVerified regardless of errors
+      // This ensures checkReadyForRelease has the correct state
+      const finalPending = this.pendingReleases.get(order.orderNumber);
+      if (finalPending) {
+        finalPending.nameVerified = nameMatches;
         logger.info({
           orderNumber: order.orderNumber,
-          amount: receivedAmount,
-          sender: senderName,
-        }, '🔒 [MODO AUDITORÍA] Verificación completa - Auto-release DESHABILITADO');
-      }
-    } else {
-      await safeAddVerificationStep(
-        VerificationStatus.MANUAL_REVIEW,
-        `👤 REQUIERE REVISIÓN MANUAL - ${!amountMatches ? 'Monto no coincide' : ''} ${!nameMatches ? 'Nombre no coincide' : ''}`,
-        {
-          amountVerified: amountMatches,
           nameVerified: nameMatches,
-          recommendation: 'MANUAL_REVIEW',
-        }
-      );
-    }
+          amountMatches,
+        }, '📋 [PAYMENT MATCH] Final verification status set');
+      }
 
-    // Check if ready for release - ALWAYS called even if DB steps failed above
-    await this.checkReadyForRelease(order.orderNumber);
+      // ALWAYS call checkReadyForRelease
+      await this.checkReadyForRelease(order.orderNumber);
+    }
   }
 
   /**
