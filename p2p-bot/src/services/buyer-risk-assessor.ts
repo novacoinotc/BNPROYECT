@@ -5,7 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { getBinanceClient } from './binance-client.js';
-import { UserStats } from '../types/binance.js';
+import { UserStats, CounterPartyStats } from '../types/binance.js';
 
 export interface BuyerRiskConfig {
   minTotalOrders: number;        // Minimum total completed orders
@@ -17,7 +17,8 @@ export interface BuyerRiskConfig {
 
 export interface BuyerRiskAssessment {
   isTrusted: boolean;
-  buyerNo: string;
+  buyerNo?: string;          // Optional - may not have userNo when using orderNumber lookup
+  orderNumber?: string;      // Order number used for lookup
   stats: {
     totalOrders: number;
     orders30Day: number;
@@ -143,6 +144,103 @@ export class BuyerRiskAssessor {
     return {
       isTrusted,
       buyerNo,
+      stats,
+      orderAmount,
+      failedCriteria,
+      recommendation,
+    };
+  }
+
+  /**
+   * Assess buyer risk using order number - PREFERRED METHOD
+   * Uses queryCounterPartyOrderStatistic endpoint which returns buyer stats
+   * directly without needing their userNo.
+   */
+  async assessBuyerByOrder(orderNumber: string, orderAmount: number): Promise<BuyerRiskAssessment> {
+    const failedCriteria: string[] = [];
+
+    logger.info(
+      `🔍 [RISK-ASSESSOR] Evaluating counterparty for order ${orderNumber}, amount $${orderAmount}`
+    );
+
+    // Check amount first (no API call needed)
+    if (orderAmount > this.config.maxAutoReleaseAmount) {
+      failedCriteria.push(
+        `Monto $${orderAmount} excede límite $${this.config.maxAutoReleaseAmount}`
+      );
+    }
+
+    // Fetch counterparty stats using the new endpoint
+    let stats: BuyerRiskAssessment['stats'] = null;
+
+    try {
+      const counterPartyStats = await this.client.getCounterPartyStats(orderNumber);
+
+      stats = {
+        totalOrders: counterPartyStats.completedOrderNum || 0,
+        orders30Day: counterPartyStats.completedOrderNumOfLatest30day || 0,
+        registerDays: counterPartyStats.registerDays || 0,
+        positiveRate: counterPartyStats.finishRate || 0,
+        finishRate: counterPartyStats.finishRateLatest30Day || 0,
+      };
+
+      logger.info(
+        `📊 [RISK-ASSESSOR] Counterparty stats for order ${orderNumber}: ` +
+        `totalOrders=${stats.totalOrders}, ` +
+        `30day=${stats.orders30Day}, ` +
+        `days=${stats.registerDays}, ` +
+        `positiveRate=${(stats.positiveRate * 100).toFixed(1)}%`
+      );
+
+      // Evaluate criteria
+      if (stats.totalOrders < this.config.minTotalOrders) {
+        failedCriteria.push(
+          `Órdenes totales ${stats.totalOrders} < ${this.config.minTotalOrders} requeridas`
+        );
+      }
+
+      if (stats.orders30Day < this.config.min30DayOrders) {
+        failedCriteria.push(
+          `Órdenes 30 días ${stats.orders30Day} < ${this.config.min30DayOrders} requeridas`
+        );
+      }
+
+      if (stats.registerDays < this.config.minRegisterDays) {
+        failedCriteria.push(
+          `Días registrado ${stats.registerDays} < ${this.config.minRegisterDays} requeridos`
+        );
+      }
+
+      if (stats.positiveRate < this.config.minPositiveRate) {
+        failedCriteria.push(
+          `Tasa positiva ${(stats.positiveRate * 100).toFixed(1)}% < ${(this.config.minPositiveRate * 100).toFixed(0)}% requerida`
+        );
+      }
+
+    } catch (error) {
+      logger.warn(
+        { error, orderNumber },
+        '⚠️ [RISK-ASSESSOR] Could not fetch counterparty stats - treating as risky'
+      );
+      failedCriteria.push('No se pudieron obtener estadísticas del comprador');
+    }
+
+    const isTrusted = failedCriteria.length === 0;
+    const recommendation = isTrusted ? 'AUTO_RELEASE' : 'MANUAL_VERIFICATION';
+
+    if (isTrusted) {
+      logger.info(
+        `✅ [RISK-ASSESSOR] Order ${orderNumber} counterparty is TRUSTED - auto-release approved`
+      );
+    } else {
+      logger.warn(
+        `⚠️ [RISK-ASSESSOR] Order ${orderNumber} counterparty requires MANUAL verification: ${failedCriteria.join(', ')}`
+      );
+    }
+
+    return {
+      isTrusted,
+      orderNumber,
       stats,
       orderAmount,
       failedCriteria,

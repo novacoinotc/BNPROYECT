@@ -22,6 +22,7 @@ import {
   MerchantAdsDetail,
   ReferencePrice,
   UserStats,
+  CounterPartyStats,
   TradeType,
 } from '../types/binance.js';
 
@@ -506,6 +507,28 @@ export class BinanceC2CClient {
       '/sapi/v1/c2c/orderMatch/getUserStats',
       { userNo }
     );
+    return response;
+  }
+
+  /**
+   * Get counterparty order statistics - IMPORTANT: This returns buyer stats by orderNumber!
+   * POST /sapi/v1/c2c/orderMatch/queryCounterPartyOrderStatistic
+   *
+   * This endpoint returns the counterparty's (buyer's) statistics for a specific order
+   * without needing their userNo.
+   */
+  async getCounterPartyStats(orderNumber: string): Promise<CounterPartyStats> {
+    const response = await this.signedPost<CounterPartyStats>(
+      '/sapi/v1/c2c/orderMatch/queryCounterPartyOrderStatistic',
+      { orderNumber }
+    );
+
+    logger.info(
+      `🔍 [COUNTERPARTY STATS] Order ${orderNumber}: ` +
+      `totalOrders=${response.completedOrderNum}, orders30d=${response.completedOrderNumOfLatest30day}, ` +
+      `finishRate=${(response.finishRate * 100).toFixed(1)}%, registerDays=${response.registerDays}`
+    );
+
     return response;
   }
 

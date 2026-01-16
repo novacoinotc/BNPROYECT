@@ -244,6 +244,19 @@ export interface UserStats {
   registerDays: number;
 }
 
+/**
+ * Counter party statistics - returned by queryCounterPartyOrderStatistic
+ * This gives us buyer stats directly by order number (no userNo needed!)
+ */
+export interface CounterPartyStats {
+  completedOrderNum: number;              // Total completed orders
+  completedOrderNumOfLatest30day: number; // Completed orders in last 30 days
+  finishRate: number;                     // Completion rate (0-1)
+  finishRateLatest30Day: number;          // Completion rate last 30 days (0-1)
+  numberOfTradesWithCounterpartyCompleted30day: number;  // Trades with this counterparty
+  registerDays: number;                   // Account age in days
+}
+
 export interface ChatCredential {
   chatWssUrl: string;
   listenKey: string;

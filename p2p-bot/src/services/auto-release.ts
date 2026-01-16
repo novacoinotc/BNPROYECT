@@ -854,47 +854,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     if (this.config.enableBuyerRiskCheck && hasBankMatch && !skipRiskCheck) {
       try {
-        // Get buyer's userNo from order detail
-        const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
-
-        // Debug: Log what we got from the API
-        logger.info({
-          orderNumber,
-          hasBuyer: !!orderDetail?.buyer,
-          buyerUserNo: orderDetail?.buyer?.userNo,
-          buyerNickName: orderDetail?.buyer?.nickName,
-          counterPartNickName: orderDetail?.counterPartNickName,
-          orderDetailKeys: orderDetail ? Object.keys(orderDetail) : [],
-        }, '🔍 [BUYER-RISK DEBUG] Order detail response');
-
-        const buyerNo = orderDetail?.buyer?.userNo;
-
-        if (!buyerNo) {
-          // Buyer userNo not available - REQUIRE manual verification for amounts > skipRiskCheckThreshold
-          logger.warn(
-            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: BuyerNo unavailable - requiring manual verification`
-          );
-          await db.addVerificationStep(
-            orderNumber,
-            VerificationStatus.MANUAL_REVIEW,
-            `👤 REQUIERE REVISIÓN MANUAL - No se pudo obtener ID del comprador para verificar historial`,
-            { reason: 'buyer_id_not_available', amount: orderAmount }
-          );
-          this.emit('release', {
-            type: 'manual_required',
-            orderNumber,
-            reason: 'Buyer ID unavailable - cannot verify buyer history',
-          } as ReleaseEvent);
-          return;
-        }
-
-        // Buyer userNo available - perform full risk assessment
-        const riskAssessment = await this.buyerRiskAssessor.assessBuyer(buyerNo, orderAmount);
+        // Use the new endpoint that gets counterparty stats directly by order number
+        // No need to get userNo - queryCounterPartyOrderStatistic returns stats for the buyer
+        const riskAssessment = await this.buyerRiskAssessor.assessBuyerByOrder(orderNumber, orderAmount);
         pending.buyerRiskAssessment = riskAssessment;
 
         if (!riskAssessment.isTrusted) {
           logger.warn(
-            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: Buyer ${buyerNo} failed risk assessment - ` +
+            `⚠️ [BUYER-RISK BLOCKED] Order ${orderNumber}: Counterparty failed risk assessment - ` +
             `${riskAssessment.failedCriteria.join(', ')}`
           );
 
@@ -903,7 +870,6 @@ export class AutoReleaseOrchestrator extends EventEmitter {
             VerificationStatus.MANUAL_REVIEW,
             `👤 REQUIERE VERIFICACIÓN MANUAL - Comprador no cumple criterios de confianza`,
             {
-              buyerNo,
               stats: riskAssessment.stats,
               failedCriteria: riskAssessment.failedCriteria,
               recommendation: riskAssessment.recommendation,
@@ -921,7 +887,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
         // Buyer is trusted - log and continue
         logger.info(
-          `✅ [BUYER-RISK OK] Order ${orderNumber}: Buyer ${buyerNo} passed risk assessment - ` +
+          `✅ [BUYER-RISK OK] Order ${orderNumber}: Counterparty passed risk assessment - ` +
           `orders=${riskAssessment.stats?.totalOrders}, days=${riskAssessment.stats?.registerDays}, ` +
           `positive=${((riskAssessment.stats?.positiveRate || 0) * 100).toFixed(0)}%`
         );
@@ -931,7 +897,6 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           VerificationStatus.READY_TO_RELEASE,
           `✅ Comprador verificado - Historial confiable`,
           {
-            buyerNo,
             totalOrders: riskAssessment.stats?.totalOrders,
             orders30Day: riskAssessment.stats?.orders30Day,
             registerDays: riskAssessment.stats?.registerDays,
