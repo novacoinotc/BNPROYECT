@@ -490,6 +490,16 @@ export class BinanceC2CClient {
       '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
       { adOrderNo: orderNumber }
     );
+
+    // Debug: Log raw response to understand structure
+    logger.debug({
+      orderNumber,
+      responseKeys: response ? Object.keys(response) : [],
+      hasBuyer: !!(response as any)?.buyer,
+      hasSeller: !!(response as any)?.seller,
+      buyerKeys: (response as any)?.buyer ? Object.keys((response as any).buyer) : [],
+    }, 'getOrderDetail raw response structure');
+
     return response;
   }
 

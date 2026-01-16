@@ -856,6 +856,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       try {
         // Get buyer's userNo from order detail
         const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+
+        // Debug: Log what we got from the API
+        logger.info({
+          orderNumber,
+          hasBuyer: !!orderDetail?.buyer,
+          buyerUserNo: orderDetail?.buyer?.userNo,
+          buyerNickName: orderDetail?.buyer?.nickName,
+          counterPartNickName: orderDetail?.counterPartNickName,
+          orderDetailKeys: orderDetail ? Object.keys(orderDetail) : [],
+        }, '🔍 [BUYER-RISK DEBUG] Order detail response');
+
         const buyerNo = orderDetail?.buyer?.userNo;
 
         if (!buyerNo) {
