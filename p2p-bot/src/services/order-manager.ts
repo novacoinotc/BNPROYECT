@@ -38,6 +38,7 @@ export class OrderManager extends EventEmitter {
   private pendingMatches: Map<string, OrderMatch> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
+  private isPolling: boolean = false; // Guard against concurrent polling
 
   constructor(config: OrderManagerConfig) {
     super();
@@ -203,6 +204,13 @@ export class OrderManager extends EventEmitter {
    * Poll for order updates
    */
   private async pollOrders(): Promise<void> {
+    // Guard against concurrent polling
+    if (this.isPolling) {
+      logger.debug('Previous poll still in progress, skipping');
+      return;
+    }
+
+    this.isPolling = true;
     try {
       // Get pending orders using the working endpoint
       let pendingOrders: OrderData[] = [];
@@ -247,6 +255,8 @@ export class OrderManager extends EventEmitter {
       await this.checkExpiredOrders();
     } catch (error) {
       logger.error({ error }, 'Error polling orders');
+    } finally {
+      this.isPolling = false;
     }
   }
 
@@ -263,14 +273,6 @@ export class OrderManager extends EventEmitter {
         this.activeOrders.set(order.orderNumber, order);
       }
     } else if (existingOrder.orderStatus !== order.orderStatus) {
-      // DEBUG: Log the actual comparison values
-      logger.info({
-        orderNumber: order.orderNumber,
-        existingStatus: existingOrder.orderStatus,
-        newStatus: order.orderStatus,
-        existingType: typeof existingOrder.orderStatus,
-        newType: typeof order.orderStatus,
-      }, '[DEBUG] Status comparison - values differ');
       // Status actually changed - process it
       await this.handleStatusChange(existingOrder, order);
 

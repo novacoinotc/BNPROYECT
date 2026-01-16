@@ -24,7 +24,42 @@ import {
   UserStats,
   CounterPartyStats,
   TradeType,
+  OrderStatusString,
 } from '../types/binance.js';
+
+/**
+ * Normalize order status to string format
+ * Binance API returns numeric codes when filtering by orderStatusList,
+ * but returns strings from other endpoints. This ensures consistency.
+ */
+function normalizeOrderStatus(status: number | string): OrderStatusString {
+  // If already a string, return as-is
+  if (typeof status === 'string') {
+    return status as OrderStatusString;
+  }
+
+  // Map numeric status codes to string values
+  const statusMap: Record<number, OrderStatusString> = {
+    1: 'TRADING',           // Wait for payment
+    2: 'BUYER_PAYED',       // Buyer marked as paid
+    3: 'APPEALING',         // In dispute
+    4: 'COMPLETED',         // Order completed
+    6: 'CANCELLED',         // Cancelled by user
+    7: 'CANCELLED_BY_SYSTEM', // Cancelled by system
+  };
+
+  return statusMap[status] || 'TRADING';
+}
+
+/**
+ * Normalize all orders in an array to have string orderStatus
+ */
+function normalizeOrders(orders: OrderData[]): OrderData[] {
+  return orders.map(order => ({
+    ...order,
+    orderStatus: normalizeOrderStatus(order.orderStatus as unknown as number | string),
+  }));
+}
 
 export class BinanceC2CClient {
   private readonly apiKey: string;
@@ -417,7 +452,8 @@ export class BinanceC2CClient {
       body
     );
     // API returns { data: [...] } or array directly
-    return (response as any)?.data || response || [];
+    const orders = (response as any)?.data || response || [];
+    return normalizeOrders(orders);
   }
 
   /**
@@ -440,7 +476,9 @@ export class BinanceC2CClient {
         '/sapi/v1/c2c/orderMatch/listOrders',
         body
       );
-      const orders = (response as any)?.data || response || [];
+      const rawOrders = (response as any)?.data || response || [];
+      // IMPORTANT: Normalize status from numeric to string
+      const orders = normalizeOrders(rawOrders);
 
       if (Array.isArray(orders) && orders.length > 0) {
         // Log status distribution at debug level (reduce noise)
@@ -463,7 +501,7 @@ export class BinanceC2CClient {
         { tradeType: 'SELL', rows, page: 1 }
       );
       const orders = (response as any)?.data || response || [];
-      return orders;
+      return normalizeOrders(orders);
     } catch (error: any) {
       logger.error({ error: error?.message }, 'listPendingOrders: All methods failed');
       return [];
@@ -485,7 +523,8 @@ export class BinanceC2CClient {
         endTimestamp: request.endTimestamp,
       }
     );
-    return (response as any)?.data || response || [];
+    const orders = (response as any)?.data || response || [];
+    return normalizeOrders(orders);
   }
 
   /**
@@ -499,11 +538,17 @@ export class BinanceC2CClient {
       { adOrderNo: orderNumber }
     );
 
+    // Normalize orderStatus to ensure it's a string
+    const normalizedOrder = {
+      ...response,
+      orderStatus: normalizeOrderStatus(response.orderStatus as unknown as number | string),
+    };
+
     // Debug: Log only essential info (full response available at debug level)
     logger.debug({ orderNumber, response }, '[API DEBUG] getOrderDetail full response');
-    logger.info({ orderNumber, status: response.orderStatus, amount: response.totalPrice }, 'Got order detail');
+    logger.info({ orderNumber, status: normalizedOrder.orderStatus, amount: normalizedOrder.totalPrice }, 'Got order detail');
 
-    return response;
+    return normalizedOrder;
   }
 
   /**

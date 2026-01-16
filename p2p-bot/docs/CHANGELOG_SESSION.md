@@ -743,13 +743,109 @@ REQUIRE_BANK_MATCH=false (pero ahora se requiere transacción real)
 
 ---
 
+### 23. Fix: Normalización de orderStatus numérico vs string (2026-01-16) ⭐⭐ CRÍTICO
+
+**Problema:** Después del fix anterior (commit 2d5c487), el log "[DEBUG] Status comparison - values differ" SEGUÍA apareciendo cada 5 segundos para las mismas órdenes.
+
+**Causa raíz descubierta:**
+
+La API de Binance devuelve `orderStatus` en **DIFERENTES FORMATOS** según el endpoint:
+
+1. **`listPendingOrders`** usa `orderStatusList: [1, 2, 3]` (números) → API retorna `orderStatus` como **NÚMERO** (1, 2, 3, etc.)
+2. **`listOrderHistory`** no filtra por status → API retorna `orderStatus` como **STRING** ("TRADING", "BUYER_PAYED", etc.)
+
+**El bug:**
+```javascript
+// En processOrder():
+existingOrder.orderStatus !== order.orderStatus
+// Comparaba: 2 !== "BUYER_PAYED" → TRUE (siempre diferente!)
+```
+
+**Solución en `src/services/binance-client.ts`:**
+
+1. **Nueva función `normalizeOrderStatus()`:**
+```typescript
+function normalizeOrderStatus(status: number | string): OrderStatusString {
+  if (typeof status === 'string') {
+    return status as OrderStatusString;
+  }
+
+  const statusMap: Record<number, OrderStatusString> = {
+    1: 'TRADING',
+    2: 'BUYER_PAYED',
+    3: 'APPEALING',
+    4: 'COMPLETED',
+    6: 'CANCELLED',
+    7: 'CANCELLED_BY_SYSTEM',
+  };
+
+  return statusMap[status] || 'TRADING';
+}
+```
+
+2. **Nueva función `normalizeOrders()`:**
+```typescript
+function normalizeOrders(orders: OrderData[]): OrderData[] {
+  return orders.map(order => ({
+    ...order,
+    orderStatus: normalizeOrderStatus(order.orderStatus),
+  }));
+}
+```
+
+3. **Aplicado a todos los returns de API:**
+   - `listOrders()` → `return normalizeOrders(orders);`
+   - `listPendingOrders()` → `return normalizeOrders(orders);` (ambos paths)
+   - `listOrderHistory()` → `return normalizeOrders(orders);`
+   - `getOrderDetail()` → `orderStatus: normalizeOrderStatus(...)`
+
+**También en `src/services/order-manager.ts`:**
+
+4. **Guard contra polling concurrente:**
+```typescript
+private isPolling: boolean = false;
+
+private async pollOrders(): Promise<void> {
+  if (this.isPolling) {
+    logger.debug('Previous poll still in progress, skipping');
+    return;
+  }
+  this.isPolling = true;
+  try {
+    // ... poll logic
+  } finally {
+    this.isPolling = false;
+  }
+}
+```
+
+5. **Removido debug logging temporal** (ya no necesario).
+
+**Resultado:** Ahora todos los `orderStatus` son strings consistentes. La comparación `"BUYER_PAYED" === "BUYER_PAYED"` funciona correctamente.
+
+---
+
+## Resumen de Commits 2026-01-16 (Actualizado)
+
+| Commit | Descripción | Archivos |
+|--------|-------------|----------|
+| `bc3ea8d` | Reduce verbose logging | binance-client.ts, auto-release.ts, order-manager.ts |
+| `aff96d1` | Fix race condition - require bank match | auto-release.ts |
+| `2aeda78` | Add throttling + sync debug logging | auto-release.ts, sync/route.ts |
+| `809a0cd` | Add debug for status comparison | order-manager.ts |
+| `2d5c487` | Fix: Correct sync order priority | order-manager.ts |
+| `PENDING` | **Fix: Normalize numeric orderStatus to string** | binance-client.ts, order-manager.ts |
+
+---
+
 ## Para Continuar
 
 Si reinicias la conversación:
 
 1. **Lee este archivo primero** - Tiene todo el contexto
 2. **Commits recientes importantes:**
-   - `2d5c487` - Fix del orden de sync (debería resolver logs repetidos)
+   - `PENDING` - **Fix de normalización de orderStatus** (número vs string)
+   - `2d5c487` - Fix del orden de sync
    - `aff96d1` - Fix de race condition en auto-release
-3. **Revisar logs de Railway** después del deploy de `2d5c487`
-4. **Revisar logs de Vercel** si el sync sigue sin funcionar
+3. **Revisar logs de Railway** después del deploy - ya no debería mostrar "Order status changed" repetidamente
+4. **El bug era:** La API de Binance devuelve status numérico (2) desde algunos endpoints y string ("BUYER_PAYED") desde otros
