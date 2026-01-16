@@ -844,7 +844,7 @@ Si reinicias la conversación:
 
 1. **Lee este archivo primero** - Tiene todo el contexto
 2. **Commits recientes importantes:**
-   - `PENDING` - **CRITICAL: Require name verification for auto-release** (previene pagos de terceros)
+   - `a5993e6` - **CRITICAL: Require name verification for auto-release** (previene pagos de terceros)
    - `51ce695` - Fix de normalización de orderStatus (número vs string)
    - `2d5c487` - Fix del orden de sync
    - `aff96d1` - Fix de race condition en auto-release
