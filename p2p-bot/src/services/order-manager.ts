@@ -124,6 +124,32 @@ export class OrderManager extends EventEmitter {
       let savedCount = 0;
       for (const order of allOrders.values()) {
         try {
+          // For BUYER_PAYED orders, fetch detail to get buyer's real name and nickname
+          if (order.orderStatus === 'BUYER_PAYED') {
+            try {
+              const orderDetail = await this.client.getOrderDetail(order.orderNumber);
+              // Extract buyer info from order detail
+              if (orderDetail.buyer?.realName) {
+                (order as any).buyerRealName = orderDetail.buyer.realName;
+              }
+              // If counterPartNickName is missing, use buyer.nickName from detail
+              if (!order.counterPartNickName && orderDetail.buyer?.nickName) {
+                (order as any).counterPartNickName = orderDetail.buyer.nickName;
+              }
+              // Also capture counterPartNickName from detail if available
+              if (orderDetail.counterPartNickName && !order.counterPartNickName) {
+                order.counterPartNickName = orderDetail.counterPartNickName;
+              }
+              logger.info({
+                orderNumber: order.orderNumber,
+                counterPartNickName: order.counterPartNickName,
+                buyerRealName: (order as any).buyerRealName,
+              }, 'Fetched buyer info from order detail for sync');
+            } catch (detailErr) {
+              logger.warn({ orderNumber: order.orderNumber, error: detailErr }, 'Could not fetch order detail during sync');
+            }
+          }
+
           await saveOrder(order);
           savedCount++;
 
@@ -261,7 +287,30 @@ export class OrderManager extends EventEmitter {
       status: order.orderStatus,
     }, 'New order detected');
 
-    // Save order to database
+    // For BUYER_PAYED orders, fetch detail BEFORE saving to get buyer info
+    if (order.orderStatus === 'BUYER_PAYED') {
+      try {
+        const orderDetail = await this.client.getOrderDetail(order.orderNumber);
+        if (orderDetail.buyer?.realName) {
+          (order as any).buyerRealName = orderDetail.buyer.realName;
+        }
+        if (!order.counterPartNickName && orderDetail.buyer?.nickName) {
+          (order as any).counterPartNickName = orderDetail.buyer.nickName;
+        }
+        if (orderDetail.counterPartNickName && !order.counterPartNickName) {
+          order.counterPartNickName = orderDetail.counterPartNickName;
+        }
+        logger.info({
+          orderNumber: order.orderNumber,
+          counterPartNickName: order.counterPartNickName,
+          buyerRealName: (order as any).buyerRealName,
+        }, 'Fetched buyer info from order detail for new order');
+      } catch (detailError) {
+        logger.warn({ orderNumber: order.orderNumber, error: detailError }, 'Could not fetch order detail for buyer info');
+      }
+    }
+
+    // Save order to database (now with buyer info if available)
     try {
       await saveOrder(order);
       logger.debug({ orderNumber: order.orderNumber }, 'Order saved to database');
@@ -301,25 +350,11 @@ export class OrderManager extends EventEmitter {
 
     // If order is already in BUYER_PAYED status, also emit 'paid' event
     // This handles cases where the order was marked paid before we saw it
+    // Note: buyer info was already fetched above before saving
     if (order.orderStatus === 'BUYER_PAYED') {
       logger.info({
         orderNumber: order.orderNumber,
       }, 'New order already in BUYER_PAYED status - triggering verification');
-
-      // Try to fetch buyer's real name for better matching
-      try {
-        const orderDetail = await this.client.getOrderDetail(order.orderNumber);
-        if (orderDetail.buyer?.realName) {
-          (order as any).buyerRealName = orderDetail.buyer.realName;
-          logger.info({
-            orderNumber: order.orderNumber,
-            buyerRealName: orderDetail.buyer.realName,
-          }, 'Got real buyer name from order detail');
-        }
-      } catch (detailError) {
-        logger.warn({ orderNumber: order.orderNumber, error: detailError }, 'Could not fetch order detail for buyer name');
-      }
-
       this.emit('order', { type: 'paid', order } as OrderEvent);
     }
   }
@@ -337,48 +372,81 @@ export class OrderManager extends EventEmitter {
       newStatus: newOrder.orderStatus,
     }, 'Order status changed');
 
-    // Update order in database
-    try {
-      await saveOrder(newOrder);
-    } catch (dbError) {
-      logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
-    }
-
     // Status is now a string like "TRADING", "BUYER_PAYED", etc.
     switch (newOrder.orderStatus) {
       case 'BUYER_PAYED':
-        // Buyer marked as paid - fetch order detail to get real buyer name
+        // Buyer marked as paid - fetch order detail to get buyer info BEFORE saving
         try {
           const orderDetail = await this.client.getOrderDetail(newOrder.orderNumber);
-          // The detail API returns buyer.realName if available
+          // Extract buyer real name
           if (orderDetail.buyer?.realName) {
             (newOrder as any).buyerRealName = orderDetail.buyer.realName;
-            logger.info({
-              orderNumber: newOrder.orderNumber,
-              buyerRealName: orderDetail.buyer.realName,
-            }, 'Got real buyer name from order detail');
           }
+          // Extract buyer nickname if missing
+          if (!newOrder.counterPartNickName && orderDetail.buyer?.nickName) {
+            (newOrder as any).counterPartNickName = orderDetail.buyer.nickName;
+          }
+          if (orderDetail.counterPartNickName && !newOrder.counterPartNickName) {
+            newOrder.counterPartNickName = orderDetail.counterPartNickName;
+          }
+          logger.info({
+            orderNumber: newOrder.orderNumber,
+            counterPartNickName: newOrder.counterPartNickName,
+            buyerRealName: (newOrder as any).buyerRealName,
+          }, 'Got buyer info from order detail');
         } catch (detailError) {
-          logger.warn({ orderNumber: newOrder.orderNumber, error: detailError }, 'Could not fetch order detail for buyer name');
+          logger.warn({ orderNumber: newOrder.orderNumber, error: detailError }, 'Could not fetch order detail for buyer info');
         }
+
+        // Now save the order with buyer info
+        try {
+          await saveOrder(newOrder);
+        } catch (dbError) {
+          logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+        }
+
         this.emit('order', { type: 'paid', order: newOrder } as OrderEvent);
         break;
 
       case 'COMPLETED':
-        // Order completed (crypto released)
+        // Order completed (crypto released) - save first
+        try {
+          await saveOrder(newOrder);
+        } catch (dbError) {
+          logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+        }
         this.handleOrderCompleted(newOrder);
         break;
 
       case 'CANCELLED':
       case 'CANCELLED_BY_SYSTEM':
-        // Order cancelled
+        // Order cancelled - save first
+        try {
+          await saveOrder(newOrder);
+        } catch (dbError) {
+          logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+        }
         this.handleOrderCancelled(newOrder);
         break;
 
       case 'APPEALING':
+        try {
+          await saveOrder(newOrder);
+        } catch (dbError) {
+          logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+        }
         logger.warn({
           orderNumber: newOrder.orderNumber,
         }, 'Order in appeal');
+        break;
+
+      default:
+        // For any other status, just save
+        try {
+          await saveOrder(newOrder);
+        } catch (dbError) {
+          logger.error({ orderNumber: newOrder.orderNumber, error: dbError }, 'Failed to update order in database');
+        }
         break;
     }
   }

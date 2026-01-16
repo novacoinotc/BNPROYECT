@@ -70,12 +70,19 @@ export async function saveOrder(order: OrderData): Promise<void> {
   // For SELL orders: counterPart is the buyer
   // For BUY orders: counterPart is the seller
   const isSellOrder = order.tradeType === 'SELL';
-  const counterPartNick = order.counterPartNickName || (order as any).counterPartNickName || 'unknown';
+
+  // Try multiple sources for the buyer nickname:
+  // 1. counterPartNickName (from list endpoints)
+  // 2. buyer.nickName (from order detail endpoint)
+  const counterPartNick = order.counterPartNickName
+    || (order as any).counterPartNickName
+    || order.buyer?.nickName
+    || 'unknown';
 
   // Map to buyer/seller based on trade type
   const buyerUserNo = isSellOrder ? 'counterpart' : 'self';
   const buyerNickName = isSellOrder ? counterPartNick : 'self';
-  // Get real name from order detail if available
+  // Get real name from order detail if available (multiple sources)
   const buyerRealName = (order as any).buyerRealName || order.buyer?.realName || null;
   const sellerUserNo = isSellOrder ? 'self' : 'counterpart';
   const sellerNickName = isSellOrder ? 'self' : counterPartNick;
@@ -94,17 +101,18 @@ export async function saveOrder(order: OrderData): Promise<void> {
   unitPrice = unitPrice || '0';
 
   try {
-    // Try to update first - also update buyerRealName if we now have it
+    // Try to update first - also update buyerRealName and buyerNickName if we now have better values
     const updateResult = await db.query(
       `UPDATE "Order" SET
         status = $1::"OrderStatus",
         "buyerRealName" = COALESCE($4, "buyerRealName"),
+        "buyerNickName" = CASE WHEN $5 <> 'unknown' AND ("buyerNickName" = 'unknown' OR "buyerNickName" IS NULL) THEN $5 ELSE "buyerNickName" END,
         "paidAt" = CASE WHEN $2 = 'PAID' AND "paidAt" IS NULL THEN NOW() ELSE "paidAt" END,
         "releasedAt" = CASE WHEN $2 = 'COMPLETED' AND "releasedAt" IS NULL THEN NOW() ELSE "releasedAt" END,
         "cancelledAt" = CASE WHEN $2 IN ('CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT') AND "cancelledAt" IS NULL THEN NOW() ELSE "cancelledAt" END,
         "updatedAt" = NOW()
       WHERE "orderNumber" = $3`,
-      [status, status, order.orderNumber, buyerRealName]
+      [status, status, order.orderNumber, buyerRealName, buyerNickName]
     );
 
     // If no rows updated, insert new order
