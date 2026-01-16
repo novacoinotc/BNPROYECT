@@ -67,14 +67,19 @@ async function getOrderFromBinance(orderNumber: string): Promise<{ success: bool
 
     const data = await response.json();
 
+    // Log raw response for debugging
+    console.log(`[BINANCE API] Order ${orderNumber} raw response:`, JSON.stringify(data).substring(0, 500));
+
     // Check if Binance returned an error
     if (data.code && data.code !== '000000' && data.code !== 0) {
-      console.log(`Binance returned code ${data.code} for order ${orderNumber}: ${data.message || data.msg}`);
+      console.log(`[BINANCE API] Order ${orderNumber}: error code=${data.code}, msg=${data.message || data.msg}`);
       // Order not found is a valid response
       return { success: true, data: null };
     }
 
-    return { success: true, data: data.data || data };
+    const orderData = data.data || data;
+    console.log(`[BINANCE API] Order ${orderNumber}: status=${orderData?.orderStatus}`);
+    return { success: true, data: orderData };
   } catch (error) {
     console.error(`Error fetching order ${orderNumber}:`, error);
     return { success: false, error: 'Network error' };
@@ -141,9 +146,19 @@ export async function POST(request: NextRequest) {
 
         const binanceOrder = result.data;
 
+        // Enhanced logging for debugging
+        console.log(`[SYNC] Order ${order.orderNumber}: API result = ${JSON.stringify({
+          success: result.success,
+          hasData: !!binanceOrder,
+          binanceStatus: binanceOrder?.orderStatus,
+          dbStatus: order.status,
+        })}`);
+
         if (binanceOrder && binanceOrder.orderStatus) {
           // Got order data from Binance
           const newStatus = mapBinanceStatus(binanceOrder.orderStatus);
+
+          console.log(`[SYNC] Order ${order.orderNumber}: Binance=${binanceOrder.orderStatus} -> mapped=${newStatus}, DB=${order.status}`);
 
           if (newStatus !== order.status) {
             // Update status in DB
@@ -170,8 +185,10 @@ export async function POST(request: NextRequest) {
           const orderAge = Date.now() - new Date(order.binanceCreateTime || 0).getTime();
           const hoursOld = orderAge / (1000 * 60 * 60);
 
+          console.log(`[SYNC] Order ${order.orderNumber}: NOT FOUND in Binance, age=${hoursOld.toFixed(1)}h, dbStatus=${order.status}`);
+
           if (hoursOld > 24) {
-            console.log(`Order ${order.orderNumber} not found in Binance and is ${hoursOld.toFixed(1)}h old, marking as COMPLETED`);
+            console.log(`[SYNC] Order ${order.orderNumber} not found and ${hoursOld.toFixed(1)}h old -> marking COMPLETED`);
 
             await prisma.order.update({
               where: { id: order.id },

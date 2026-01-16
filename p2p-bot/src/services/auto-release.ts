@@ -70,6 +70,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   // Track already-logged blocked orders to avoid log spam
   private loggedBlockedOrders: Map<string, string> = new Map(); // orderNumber -> reason
 
+  // Throttle checkReadyForRelease to prevent duplicate processing
+  private lastCheckTime: Map<string, number> = new Map(); // orderNumber -> timestamp
+  private readonly CHECK_THROTTLE_MS = 5000; // Only check once per 5 seconds per order
+
   // 2FA code callback (for manual entry or TOTP generation)
   private getVerificationCode: ((orderNumber: string, authType: AuthType) => Promise<string>) | null = null;
 
@@ -211,8 +215,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
       case 'released':
       case 'cancelled':
-        // Cleanup
+        // Cleanup all maps for this order
         this.pendingReleases.delete(event.order.orderNumber);
+        this.lastCheckTime.delete(event.order.orderNumber);
+        this.loggedBlockedOrders.delete(event.order.orderNumber);
         this.chatHandler.unwatchOrder(event.order.orderNumber);
         break;
     }
@@ -415,8 +421,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // Find any orders associated with this transaction
     for (const [orderNumber, pending] of this.pendingReleases) {
       if (pending.bankMatch?.transactionId === event.payload.transactionId) {
-        // Remove from release queue
+        // Cleanup all maps for this order
         this.pendingReleases.delete(orderNumber);
+        this.lastCheckTime.delete(orderNumber);
+        this.loggedBlockedOrders.delete(orderNumber);
         this.releaseQueue = this.releaseQueue.filter(o => o !== orderNumber);
 
         logger.error({
@@ -809,6 +817,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     if (!pending) return;
 
+    // Throttle: Skip if we checked this order recently (prevents duplicate processing)
+    const now = Date.now();
+    const lastCheck = this.lastCheckTime.get(orderNumber) || 0;
+    if (now - lastCheck < this.CHECK_THROTTLE_MS) {
+      return; // Skip - already checked recently
+    }
+    this.lastCheckTime.set(orderNumber, now);
+
     // Check conditions
     const hasBankMatch = !this.config.requireBankMatch || !!pending.bankMatch;
     const hasOcrVerification = !this.config.requireOcrVerification || pending.ocrVerified;
@@ -1143,7 +1159,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           },
         } as ReleaseEvent);
 
+        // Cleanup all maps for this order
         this.pendingReleases.delete(orderNumber);
+        this.lastCheckTime.delete(orderNumber);
+        this.loggedBlockedOrders.delete(orderNumber);
       } else {
         throw new Error('Release API call failed');
       }
@@ -1226,7 +1245,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
    * Cancel pending release
    */
   cancelRelease(orderNumber: string): void {
+    // Cleanup all maps for this order
     this.pendingReleases.delete(orderNumber);
+    this.lastCheckTime.delete(orderNumber);
+    this.loggedBlockedOrders.delete(orderNumber);
     this.releaseQueue = this.releaseQueue.filter(o => o !== orderNumber);
     logger.info({ orderNumber }, 'Release cancelled');
   }
