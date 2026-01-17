@@ -13,7 +13,8 @@ import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
 import { createTOTPService, TOTPService } from './services/totp-service.js';
-import { testConnection, disconnect } from './services/database-pg.js';
+import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from './services/database-pg.js';
+import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -44,6 +45,8 @@ let webhookReceiver: ReturnType<typeof createWebhookReceiver>;
 let ocrService: ReturnType<typeof createOCRService>;
 let autoRelease: ReturnType<typeof createAutoReleaseOrchestrator>;
 let totpService: TOTPService;
+let positioningOrchestrator: PositioningOrchestrator | null = null;
+let positioningCheckInterval: NodeJS.Timeout | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -256,12 +259,73 @@ async function startServices(): Promise<void> {
     );
     logger.info('Price auto-update started');
   }
+
+  // Start positioning bot status check (checks every 30 seconds if user enabled it)
+  positioningCheckInterval = setInterval(checkPositioningStatus, 30000);
+  logger.info('Positioning bot check started (checks DB every 30s for activation)');
+}
+
+// ==================== POSITIONING BOT ====================
+
+/**
+ * Check if positioning bot should be started/stopped based on database config.
+ * This runs every 30 seconds to check if user enabled/disabled via dashboard.
+ */
+async function checkPositioningStatus(): Promise<void> {
+  try {
+    const enabled = await isPositioningEnabled();
+    const config = await getBotConfig();
+
+    if (enabled && !positioningOrchestrator) {
+      // User enabled positioning - start it
+      positioningOrchestrator = createPositioningOrchestrator();
+
+      // Determine mode from config
+      const mode = (config.positioningMode || 'smart') as PositioningMode;
+      positioningOrchestrator.setMode(mode);
+
+      // If follow mode, set target
+      if (mode === 'follow' && (config.followTargetNickName || config.followTargetUserNo)) {
+        positioningOrchestrator.setFollowTarget(
+          config.followTargetNickName || undefined,
+          config.followTargetUserNo || undefined
+        );
+      }
+
+      // Start with 5 second interval (silent checks, only logs on price change)
+      if (BOT_CONFIG.advNo) {
+        positioningOrchestrator.start(
+          BOT_CONFIG.advNo,
+          BOT_CONFIG.asset,
+          BOT_CONFIG.fiat,
+          BOT_CONFIG.tradeType,
+          5000 // 5 seconds
+        );
+      }
+    } else if (!enabled && positioningOrchestrator) {
+      // User disabled positioning - stop it
+      positioningOrchestrator.stop();
+      positioningOrchestrator = null;
+    }
+  } catch (error) {
+    // Silent error - don't spam logs if DB connection issue
+  }
 }
 
 // ==================== SHUTDOWN ====================
 
 async function shutdown(): Promise<void> {
   logger.info('Shutting down...');
+
+  // Stop positioning bot
+  if (positioningCheckInterval) {
+    clearInterval(positioningCheckInterval);
+    positioningCheckInterval = null;
+  }
+  if (positioningOrchestrator) {
+    positioningOrchestrator.stop();
+    positioningOrchestrator = null;
+  }
 
   // Stop services
   orderManager.stop();
@@ -302,5 +366,6 @@ export {
   webhookReceiver,
   ocrService,
   autoRelease,
+  positioningOrchestrator,
   BOT_CONFIG,
 };

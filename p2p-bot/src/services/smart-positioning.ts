@@ -38,19 +38,7 @@ export class SmartPositioning {
   constructor(config: Partial<SmartPositioningConfig> = {}) {
     this.client = getBinanceClient();
     this.config = this.buildConfig(config);
-
-    logger.info({
-      config: {
-        minUserGrade: this.config.minUserGrade,
-        minMonthFinishRate: `${(this.config.minMonthFinishRate * 100).toFixed(0)}%`,
-        minMonthOrderCount: this.config.minMonthOrderCount,
-        minPositiveRate: `${(this.config.minPositiveRate * 100).toFixed(0)}%`,
-        requireOnline: this.config.requireOnline,
-        requireProMerchant: this.config.requireProMerchant,
-        minSurplusAmount: `${this.config.minSurplusAmount} USDT`,
-        undercutAmount: `${this.config.undercutAmount} centavos`,
-      },
-    }, '📊 [SMART POSITIONING] Initialized with config');
+    // Silent initialization - no logs
   }
 
   private buildConfig(partial: Partial<SmartPositioningConfig>): SmartPositioningConfig {
@@ -162,7 +150,7 @@ export class SmartPositioning {
     bestQualifiedPrice: number;
     averagePrice: number;
   }> {
-    // Fetch competitor ads
+    // Fetch competitor ads (silent)
     const allAds = await this.client.searchAds({
       asset,
       fiat,
@@ -170,13 +158,6 @@ export class SmartPositioning {
       page: 1,
       rows: this.config.maxCompetitorsToAnalyze,
     });
-
-    logger.info({
-      asset,
-      fiat,
-      tradeType,
-      adsFound: allAds.length,
-    }, '📊 [SMART POSITIONING] Fetched competitor ads');
 
     // Apply filters
     const filterResults: FilterResults = {
@@ -208,22 +189,10 @@ export class SmartPositioning {
       if (parseFloat(ad.surplusAmount) >= this.config.minSurplusAmount) filterResults.passedSurplus++;
       if (parseFloat(ad.maxSingleTransAmount) >= this.config.minMaxTransAmount) filterResults.passedMaxTrans++;
 
-      // Only include if ALL filters passed
+      // Only include if ALL filters passed (silent)
       if (result.failedFilters.length === 0) {
         qualifiedAds.push(ad);
         filterResults.qualified++;
-
-        logger.debug({
-          nickName: adv.nickName,
-          price: ad.price,
-          passed: result.passedFilters.join(', '),
-        }, '✅ [FILTER] Ad passed all filters');
-      } else {
-        logger.debug({
-          nickName: adv.nickName,
-          price: ad.price,
-          failed: result.failedFilters.join(', '),
-        }, '❌ [FILTER] Ad failed filters');
       }
     }
 
@@ -242,20 +211,7 @@ export class SmartPositioning {
       ? qualifiedAds.reduce((sum, ad) => sum + parseFloat(ad.price), 0) / qualifiedAds.length
       : 0;
 
-    logger.info({
-      total: allAds.length,
-      qualified: qualifiedAds.length,
-      bestPrice: bestQualifiedPrice.toFixed(2),
-      avgPrice: averagePrice.toFixed(2),
-      filterSummary: {
-        grade: `${filterResults.passedGrade}/${allAds.length}`,
-        finishRate: `${filterResults.passedFinishRate}/${allAds.length}`,
-        orderCount: `${filterResults.passedOrderCount}/${allAds.length}`,
-        positiveRate: `${filterResults.passedPositiveRate}/${allAds.length}`,
-        online: `${filterResults.passedOnline}/${allAds.length}`,
-        surplus: `${filterResults.passedSurplus}/${allAds.length}`,
-      },
-    }, '📊 [SMART POSITIONING] Filter results');
+    // Silent - no log for filter results
 
     return {
       allAds,
@@ -309,14 +265,7 @@ export class SmartPositioning {
       targetPrice = Math.min(maxPrice, Math.max(minPrice, targetPrice));
     }
 
-    logger.info({
-      bestQualified: bestQualifiedPrice.toFixed(2),
-      reference: referencePrice.toFixed(2),
-      target: targetPrice.toFixed(2),
-      minPrice: minPrice.toFixed(2),
-      maxPrice: maxPrice.toFixed(2),
-      undercutCents: this.config.undercutAmount,
-    }, '💰 [SMART POSITIONING] Calculated target price');
+    // Silent - price calculation logged by orchestrator only when changed
 
     return targetPrice;
   }
@@ -408,7 +357,7 @@ export class SmartPositioning {
    */
   updateConfig(config: Partial<SmartPositioningConfig>): void {
     this.config = { ...this.config, ...config };
-    logger.info({ config: this.config }, '📊 [SMART POSITIONING] Config updated');
+    // Silent - no log
   }
 
   /**

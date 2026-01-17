@@ -29,16 +29,7 @@ export class FollowPositioning {
   constructor(config: Partial<FollowModeConfig> = {}) {
     this.client = getBinanceClient();
     this.config = this.buildConfig(config);
-
-    if (this.config.enabled) {
-      logger.info({
-        targetNickName: this.config.targetNickName,
-        targetUserNo: this.config.targetUserNo || '(not set)',
-        strategy: this.config.followStrategy,
-        undercutAmount: this.config.undercutAmount,
-        fallbackToSmart: this.config.fallbackToSmart,
-      }, '👁️ [FOLLOW MODE] Initialized');
-    }
+    // Silent initialization - no logs
   }
 
   private buildConfig(partial: Partial<FollowModeConfig>): FollowModeConfig {
@@ -71,7 +62,7 @@ export class FollowPositioning {
     fiat: string,
     tradeType: TradeType
   ): Promise<TargetInfo> {
-    // Fetch competitor ads
+    // Fetch competitor ads (silent)
     const ads = await this.client.searchAds({
       asset,
       fiat,
@@ -79,12 +70,6 @@ export class FollowPositioning {
       page: 1,
       rows: 50, // Fetch more to ensure we find our target
     });
-
-    logger.debug({
-      targetNickName: this.config.targetNickName,
-      targetUserNo: this.config.targetUserNo,
-      adsToSearch: ads.length,
-    }, '👁️ [FOLLOW MODE] Searching for target');
 
     // Search by userNo first (more stable), then by nickName
     let targetAd: AdData | undefined;
@@ -119,18 +104,11 @@ export class FollowPositioning {
       };
 
       this.lastTargetInfo = info;
-
-      logger.info({
-        nickName: info.nickName,
-        userNo: info.userNo,
-        price: info.price.toFixed(2),
-        isOnline: info.isOnline,
-      }, '✅ [FOLLOW MODE] Target found!');
-
+      // Silent - no log for target found
       return info;
     }
 
-    // Target not found
+    // Target not found (silent)
     const notFoundInfo: TargetInfo = {
       nickName: this.config.targetNickName,
       userNo: this.config.targetUserNo || '',
@@ -140,13 +118,6 @@ export class FollowPositioning {
     };
 
     this.lastTargetInfo = notFoundInfo;
-
-    logger.warn({
-      targetNickName: this.config.targetNickName,
-      targetUserNo: this.config.targetUserNo,
-      adsSearched: ads.length,
-    }, '⚠️ [FOLLOW MODE] Target NOT found in competitor ads');
-
     return notFoundInfo;
   }
 
@@ -161,34 +132,21 @@ export class FollowPositioning {
     let calculatedPrice: number;
 
     if (this.config.followStrategy === 'match') {
-      // Match target's price exactly
+      // Match target's price exactly (silent)
       calculatedPrice = targetPrice;
-      logger.info({
-        targetPrice: targetPrice.toFixed(2),
-        strategy: 'match',
-        calculatedPrice: calculatedPrice.toFixed(2),
-      }, '📍 [FOLLOW MODE] Matching target price');
     } else {
-      // Undercut by specified amount
+      // Undercut by specified amount (silent)
       const undercutValue = this.config.undercutAmount / 100; // Convert centavos to pesos
       if (tradeType === TradeType.SELL) {
         calculatedPrice = targetPrice - undercutValue;
       } else {
         calculatedPrice = targetPrice + undercutValue;
       }
-      logger.info({
-        targetPrice: targetPrice.toFixed(2),
-        strategy: 'undercut',
-        undercutCents: this.config.undercutAmount,
-        calculatedPrice: calculatedPrice.toFixed(2),
-      }, '📍 [FOLLOW MODE] Undercutting target price');
     }
 
     // Apply margin limits for safety
     const minPrice = referencePrice * (1 + this.config.minMargin / 100);
     const maxPrice = referencePrice * (1 + this.config.maxMargin / 100);
-
-    const originalPrice = calculatedPrice;
 
     if (tradeType === TradeType.SELL) {
       calculatedPrice = Math.max(minPrice, Math.min(maxPrice, calculatedPrice));
@@ -196,16 +154,7 @@ export class FollowPositioning {
       calculatedPrice = Math.min(maxPrice, Math.max(minPrice, calculatedPrice));
     }
 
-    if (calculatedPrice !== originalPrice) {
-      logger.warn({
-        originalPrice: originalPrice.toFixed(2),
-        clampedPrice: calculatedPrice.toFixed(2),
-        minPrice: minPrice.toFixed(2),
-        maxPrice: maxPrice.toFixed(2),
-        reason: originalPrice < minPrice ? 'below_min_margin' : 'above_max_margin',
-      }, '⚠️ [FOLLOW MODE] Price clamped to margin limits');
-    }
-
+    // Silent - price clamp logged by orchestrator only when changed
     return calculatedPrice;
   }
 
@@ -218,25 +167,20 @@ export class FollowPositioning {
     tradeType: TradeType
   ): Promise<PositioningAnalysis | null> {
     if (!this.config.enabled) {
-      logger.debug('👁️ [FOLLOW MODE] Mode is disabled');
       return null;
     }
 
     if (!this.config.targetNickName && !this.config.targetUserNo) {
-      logger.warn('⚠️ [FOLLOW MODE] No target specified (set FOLLOW_TARGET_NICKNAME or FOLLOW_TARGET_USERNO)');
       return null;
     }
 
     const timestamp = new Date();
 
-    // Find target
+    // Find target (silent)
     const targetInfo = await this.findTarget(asset, fiat, tradeType);
 
     if (!targetInfo.found) {
-      // Target not found - return null to trigger fallback
-      logger.warn({
-        fallbackToSmart: this.config.fallbackToSmart,
-      }, '⚠️ [FOLLOW MODE] Target not found, fallback may be triggered');
+      // Target not found - return null to trigger fallback (silent)
       return null;
     }
 
@@ -302,11 +246,7 @@ export class FollowPositioning {
    */
   updateConfig(config: Partial<FollowModeConfig>): void {
     this.config = { ...this.config, ...config };
-    logger.info({
-      targetNickName: this.config.targetNickName,
-      strategy: this.config.followStrategy,
-      enabled: this.config.enabled,
-    }, '👁️ [FOLLOW MODE] Config updated');
+    // Silent - no log
   }
 
   /**
@@ -322,11 +262,7 @@ export class FollowPositioning {
   setTarget(nickName?: string, userNo?: string): void {
     if (nickName) this.config.targetNickName = nickName;
     if (userNo) this.config.targetUserNo = userNo;
-
-    logger.info({
-      targetNickName: this.config.targetNickName,
-      targetUserNo: this.config.targetUserNo,
-    }, '👁️ [FOLLOW MODE] New target set');
+    // Silent - no log
   }
 }
 

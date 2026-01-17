@@ -68,36 +68,23 @@ export class PositioningOrchestrator extends EventEmitter {
     this.smartPositioning = createSmartPositioning(smartConfig);
     this.followPositioning = createFollowPositioning(followConfig);
 
-    // Determine initial mode
-    if (this.followPositioning.isEnabled()) {
-      this.mode = 'follow';
-    } else if (process.env.POSITIONING_MODE === 'smart' || process.env.ENABLE_PRICE_UPDATES === 'true') {
-      this.mode = 'smart';
-    } else if (process.env.POSITIONING_MODE === 'manual') {
-      this.mode = 'manual';
-    } else {
-      this.mode = 'off';
-    }
-
-    logger.info({
-      initialMode: this.mode,
-      followEnabled: this.followPositioning.isEnabled(),
-      smartConfig: this.smartPositioning.getConfig(),
-    }, '🎯 [POSITIONING] Orchestrator initialized');
+    // Determine initial mode (silent - mode will be set by integration)
+    this.mode = 'off';
   }
 
   /**
    * Start automatic positioning updates
+   * @param intervalMs - Override interval in milliseconds (default: 5000 = 5 seconds)
    */
   start(
     advNo: string,
     asset: string = 'USDT',
     fiat: string = 'MXN',
-    tradeType: TradeType = TradeType.SELL
+    tradeType: TradeType = TradeType.SELL,
+    intervalMs: number = 5000 // Default 5 seconds for fast market checks
   ): void {
     if (this.mode === 'off') {
-      logger.warn('🎯 [POSITIONING] Cannot start - mode is OFF');
-      return;
+      return; // Silent - no warning
     }
 
     this.advNo = advNo;
@@ -108,24 +95,13 @@ export class PositioningOrchestrator extends EventEmitter {
     // Stop any existing interval
     this.stop();
 
-    // Determine update interval based on mode
-    const intervalMs = this.mode === 'follow'
-      ? this.followPositioning.getConfig().updateIntervalMs
-      : this.smartPositioning.getConfig().updateIntervalMs;
-
-    logger.info({
-      advNo,
-      asset,
-      fiat,
-      tradeType,
-      mode: this.mode,
-      intervalMs,
-    }, '🎯 [POSITIONING] Starting automatic updates');
+    // Log only once when starting (not every check)
+    logger.info({ mode: this.mode, intervalMs }, '🎯 [POSITIONING] Started');
 
     // Initial update
     this.runUpdate();
 
-    // Schedule periodic updates
+    // Schedule periodic updates (silent)
     this.updateInterval = setInterval(() => this.runUpdate(), intervalMs);
   }
 
@@ -136,28 +112,27 @@ export class PositioningOrchestrator extends EventEmitter {
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
-      logger.info('🎯 [POSITIONING] Stopped automatic updates');
+      logger.info('🎯 [POSITIONING] Stopped');
     }
   }
 
   /**
-   * Run a single positioning update
+   * Run a single positioning update (SILENT - only logs on price change)
    */
   private async runUpdate(): Promise<void> {
     try {
       let analysis: PositioningAnalysis | null = null;
 
       if (this.mode === 'follow') {
-        // Try follow mode first
+        // Try follow mode first (silent)
         analysis = await this.followPositioning.getRecommendedPrice(
           this.asset,
           this.fiat,
           this.tradeType
         );
 
-        // If target not found and fallback enabled, switch to smart
+        // If target not found and fallback enabled, switch to smart (silent)
         if (!analysis && this.followPositioning.shouldFallbackToSmart()) {
-          logger.info('🔄 [POSITIONING] Follow target not found, falling back to smart mode');
           this.emit('positioning', {
             type: 'fallback_activated',
             mode: 'smart',
@@ -173,7 +148,7 @@ export class PositioningOrchestrator extends EventEmitter {
             analysis.mode = 'smart'; // Mark as fallback
           }
         } else if (!analysis) {
-          // Target not found and no fallback - emit event and keep current price
+          // Target not found and no fallback (silent)
           this.emit('positioning', {
             type: 'target_lost',
             mode: 'follow',
@@ -193,8 +168,7 @@ export class PositioningOrchestrator extends EventEmitter {
       }
 
       if (!analysis) {
-        logger.warn('🎯 [POSITIONING] No analysis result');
-        return;
+        return; // Silent - no analysis result
       }
 
       // Set current price in analysis
@@ -213,13 +187,14 @@ export class PositioningOrchestrator extends EventEmitter {
         this.currentPrice = analysis.targetPrice;
         analysis.priceChanged = true;
 
+        // ONLY LOG WHEN PRICE ACTUALLY CHANGES
         logger.info({
           mode: analysis.mode,
           oldPrice: oldPrice.toFixed(2),
           newPrice: analysis.targetPrice.toFixed(2),
           margin: `${analysis.marginPercent.toFixed(2)}%`,
-          qualified: analysis.qualifiedCompetitors,
-        }, '✅ [POSITIONING] Price updated');
+          competitors: analysis.qualifiedCompetitors,
+        }, '💰 [POSITIONING] Price changed');
 
         this.emit('positioning', {
           type: 'price_updated',
@@ -229,12 +204,7 @@ export class PositioningOrchestrator extends EventEmitter {
           newPrice: analysis.targetPrice,
         } as PositioningEvent);
       } else {
-        logger.debug({
-          currentPrice: this.currentPrice.toFixed(2),
-          targetPrice: analysis.targetPrice.toFixed(2),
-          diff: priceDiff.toFixed(4),
-        }, '📍 [POSITIONING] Price unchanged (within threshold)');
-
+        // Silent - no log when price unchanged
         this.emit('positioning', {
           type: 'price_unchanged',
           mode: this.mode,
@@ -250,11 +220,14 @@ export class PositioningOrchestrator extends EventEmitter {
       this.errorCount++;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-      logger.error({
-        error: errorMessage,
-        mode: this.mode,
-        errorCount: this.errorCount,
-      }, '❌ [POSITIONING] Update failed');
+      // Only log errors every 10th occurrence to reduce noise
+      if (this.errorCount % 10 === 1) {
+        logger.error({
+          error: errorMessage,
+          mode: this.mode,
+          errorCount: this.errorCount,
+        }, '❌ [POSITIONING] Update error');
+      }
 
       this.emit('positioning', {
         type: 'error',
@@ -282,10 +255,10 @@ export class PositioningOrchestrator extends EventEmitter {
     const oldMode = this.mode;
     this.mode = mode;
 
-    logger.info({
-      oldMode,
-      newMode: mode,
-    }, '🎯 [POSITIONING] Mode changed');
+    // Only log if mode actually changed
+    if (oldMode !== mode) {
+      logger.info({ oldMode, newMode: mode }, '🎯 [POSITIONING] Mode changed');
+    }
 
     this.emit('positioning', {
       type: 'mode_changed',
@@ -294,6 +267,7 @@ export class PositioningOrchestrator extends EventEmitter {
 
     // If running, restart with new interval
     if (this.updateInterval) {
+      this.stop();
       this.start(this.advNo, this.asset, this.fiat, this.tradeType);
     }
   }
@@ -308,9 +282,7 @@ export class PositioningOrchestrator extends EventEmitter {
     await this.updateAdPrice(price);
     this.currentPrice = price;
 
-    logger.info({
-      price: price.toFixed(2),
-    }, '✋ [POSITIONING] Manual price set');
+    logger.info({ price: price.toFixed(2) }, '✋ [POSITIONING] Manual price set');
   }
 
   /**
