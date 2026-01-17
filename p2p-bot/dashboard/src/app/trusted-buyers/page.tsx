@@ -45,14 +45,15 @@ export default function TrustedBuyersPage() {
     fetchTrustedBuyers();
   }, [fetchTrustedBuyers]);
 
-  const handleRemove = async (counterPartNickName: string) => {
-    if (!confirm(`Remove "${counterPartNickName}" from trusted list?`)) return;
+  const handleRemove = async (buyer: TrustedBuyer) => {
+    const displayName = buyer.realName || buyer.counterPartNickName;
+    if (!confirm(`Remove "${displayName}" from trusted list?`)) return;
 
     try {
       const response = await fetch('/api/trusted-buyers', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ counterPartNickName }),
+        body: JSON.stringify({ id: buyer.id }),
       });
 
       const data = await response.json();
@@ -184,7 +185,7 @@ export default function TrustedBuyersPage() {
                           Editar
                         </button>
                         <button
-                          onClick={() => handleRemove(buyer.counterPartNickName)}
+                          onClick={() => handleRemove(buyer)}
                           className="text-red-400 hover:text-red-300 text-sm"
                         >
                           Remover
@@ -363,7 +364,7 @@ function EditTrustedBuyerModal({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          counterPartNickName: buyer.counterPartNickName,
+          id: buyer.id,
           realName: realName.trim() || null,
           notes: notes.trim() || null,
         }),

@@ -41,18 +41,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upsert - create or reactivate
-    const trustedBuyer = await prisma.trustedBuyer.upsert({
-      where: { counterPartNickName },
-      update: {
-        isActive: true,
-        realName: realName || undefined,
-        verifiedBy: verifiedBy || undefined,
-        notes: notes || undefined,
-        verifiedAt: new Date(),
-        updatedAt: new Date(),
+    // Check if exact match already exists (same nickname AND realName)
+    const existing = await prisma.trustedBuyer.findFirst({
+      where: {
+        counterPartNickName,
+        realName: realName || null,
       },
-      create: {
+    });
+
+    if (existing) {
+      // Reactivate existing entry if it was inactive
+      if (!existing.isActive) {
+        const reactivated = await prisma.trustedBuyer.update({
+          where: { id: existing.id },
+          data: {
+            isActive: true,
+            verifiedBy: verifiedBy || existing.verifiedBy,
+            notes: notes || existing.notes,
+            verifiedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+        return NextResponse.json({
+          success: true,
+          trustedBuyer: reactivated,
+          message: `Trusted buyer "${counterPartNickName}" reactivated`,
+        });
+      }
+
+      // Already exists and is active
+      return NextResponse.json(
+        { success: false, error: `Buyer "${counterPartNickName}" with name "${realName || 'N/A'}" already exists` },
+        { status: 409 }
+      );
+    }
+
+    // Create new entry (allows multiple buyers with same censored nickname but different realNames)
+    const trustedBuyer = await prisma.trustedBuyer.create({
+      data: {
         counterPartNickName,
         realName: realName || null,
         verifiedBy: verifiedBy || null,
@@ -64,7 +90,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       trustedBuyer,
-      message: `Trusted buyer "${counterPartNickName}" added successfully`,
+      message: `Trusted buyer "${counterPartNickName}" (${realName || 'no name'}) added successfully`,
     });
   } catch (error) {
     console.error('Error adding trusted buyer:', error);
@@ -79,17 +105,17 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { counterPartNickName, realName, notes } = body;
+    const { id, realName, notes } = body;
 
-    if (!counterPartNickName) {
+    if (!id) {
       return NextResponse.json(
-        { success: false, error: 'counterPartNickName is required' },
+        { success: false, error: 'id is required' },
         { status: 400 }
       );
     }
 
     const trustedBuyer = await prisma.trustedBuyer.update({
-      where: { counterPartNickName },
+      where: { id },
       data: {
         realName: realName !== undefined ? realName : undefined,
         notes: notes !== undefined ? notes : undefined,
@@ -100,7 +126,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       success: true,
       trustedBuyer,
-      message: `Trusted buyer "${counterPartNickName}" updated`,
+      message: `Trusted buyer updated`,
     });
   } catch (error: any) {
     if (error.code === 'P2025') {
@@ -121,17 +147,17 @@ export async function PATCH(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
-    const { counterPartNickName } = body;
+    const { id } = body;
 
-    if (!counterPartNickName) {
+    if (!id) {
       return NextResponse.json(
-        { success: false, error: 'counterPartNickName is required' },
+        { success: false, error: 'id is required' },
         { status: 400 }
       );
     }
 
     const result = await prisma.trustedBuyer.update({
-      where: { counterPartNickName },
+      where: { id },
       data: {
         isActive: false,
         updatedAt: new Date(),
@@ -140,7 +166,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Trusted buyer "${counterPartNickName}" removed`,
+      message: `Trusted buyer removed`,
     });
   } catch (error: any) {
     if (error.code === 'P2025') {
