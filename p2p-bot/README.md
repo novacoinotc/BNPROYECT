@@ -164,6 +164,12 @@ p2p-bot/
 
 ## Changelog
 
+### 2026-01-17 - Simplified Payment Flow
+- Eliminada pestaña "Pendientes" - ya no hay estado PENDING
+- Logica simplificada: Pago coincide → MATCHED, No coincide → THIRD_PARTY
+- Solo existe la pagina "Pagos de Terceros" para revision manual
+- Navegacion actualizada: "Pagos" → "Terceros"
+
 ### 2026-01-17 - Third-Party Payment Detection
 - **THIRD_PARTY status**: Nuevo estado para pagos de terceros
 - Deteccion automatica: Si el nombre del ordenante NO coincide con ningun comprador conocido, el pago se marca como THIRD_PARTY
