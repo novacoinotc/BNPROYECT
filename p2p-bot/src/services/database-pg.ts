@@ -375,6 +375,26 @@ export async function markPaymentReleased(orderNumber: string): Promise<void> {
   );
 }
 
+/**
+ * Unmatch a payment from its order (reset to PENDING)
+ * Used when name verification fails - allows payment to match other orders
+ */
+export async function unmatchPayment(transactionId: string): Promise<void> {
+  const db = getPool();
+
+  await db.query(
+    `UPDATE "Payment" SET
+      status = 'PENDING',
+      "matchedOrderId" = NULL,
+      "matchedAt" = NULL,
+      "updatedAt" = NOW()
+    WHERE "transactionId" = $1`,
+    [transactionId]
+  );
+
+  logger.info({ transactionId }, '🔄 Payment unmatched - available for re-matching');
+}
+
 export async function markPaymentReversed(transactionId: string): Promise<void> {
   const db = getPool();
 

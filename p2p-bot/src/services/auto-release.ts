@@ -244,6 +244,25 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     this.pendingReleases.set(order.orderNumber, pending);
 
+    // CRITICAL: If name verification FAILED, unmatch the payment so it can match other orders
+    // This handles the case where two orders have the same amount but different buyers
+    if (!nameMatches && payment.transactionId) {
+      logger.warn({
+        orderNumber: order.orderNumber,
+        transactionId: payment.transactionId,
+        senderName: payment.senderName,
+        buyerRealName: buyerRealName || '(unknown)',
+      }, '🔄 [SYNC NAME MISMATCH] Unmatching payment so it can match other orders with same amount');
+
+      try {
+        await db.unmatchPayment(payment.transactionId);
+        // Clear bankMatch from pending so this order can match a different payment
+        pending.bankMatch = undefined;
+      } catch (unmatchError) {
+        logger.error({ unmatchError, transactionId: payment.transactionId }, '❌ Failed to unmatch payment');
+      }
+    }
+
     // CRITICAL: Clear throttle before checking - this is a significant state change
     // (name verification completed) that must be evaluated immediately
     this.lastCheckTime.delete(order.orderNumber);
@@ -983,6 +1002,25 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           nameVerified: nameMatches,
           amountMatches,
         }, '📋 [PAYMENT MATCH] Final verification status set');
+
+        // CRITICAL: If name verification FAILED, unmatch the payment so it can match other orders
+        // This handles the case where two orders have the same amount but different buyers
+        if (!nameMatches && finalPending.bankMatch?.transactionId) {
+          const transactionId = finalPending.bankMatch.transactionId;
+          logger.warn({
+            orderNumber: order.orderNumber,
+            transactionId,
+            senderName: finalPending.bankMatch.senderName,
+          }, '🔄 [NAME MISMATCH] Unmatching payment so it can match other orders with same amount');
+
+          try {
+            await db.unmatchPayment(transactionId);
+            // Clear bankMatch from pending so this order can match a different payment
+            finalPending.bankMatch = undefined;
+          } catch (unmatchError) {
+            logger.error({ unmatchError, transactionId }, '❌ Failed to unmatch payment');
+          }
+        }
       }
 
       // Release the processing lock
