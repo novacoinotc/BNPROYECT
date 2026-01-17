@@ -691,11 +691,41 @@ export class BinanceC2CClient {
    * POST /sapi/v1/c2c/chat/sendMessage
    */
   async sendChatMessage(orderNo: string, content: string): Promise<boolean> {
-    await this.signedPost<void>(
-      '/sapi/v1/c2c/chat/sendMessage',
-      { orderNo, content, type: 'text' }
-    );
-    return true;
+    try {
+      const signedParams = this.buildSignedParams({});
+      const response = await this.client.post(
+        `/sapi/v1/c2c/chat/sendMessage?${signedParams}`,
+        { orderNo, content, type: 'text' }
+      );
+
+      // Log the full response for debugging
+      logger.info({
+        orderNo,
+        responseCode: response.data?.code,
+        responseSuccess: response.data?.success,
+        responseMessage: response.data?.message,
+        contentLength: content.length,
+      }, '💬 [CHAT API] sendMessage response');
+
+      // Check if response indicates success
+      if (response.data?.code !== '000000' && response.data?.success !== true) {
+        logger.warn({
+          orderNo,
+          code: response.data?.code,
+          message: response.data?.message,
+        }, '⚠️ [CHAT API] Message may not have been sent');
+        return false;
+      }
+
+      return true;
+    } catch (error: any) {
+      logger.error({
+        orderNo,
+        error: error?.response?.data || error?.message,
+        status: error?.response?.status,
+      }, '❌ [CHAT API] sendMessage failed');
+      return false;
+    }
   }
 
   /**
