@@ -190,7 +190,91 @@ export interface Advertiser {
   monthOrderCount: number;
   positiveRate: number;
   isOnline: boolean;
-  proMerchant?: boolean;
+  proMerchant: boolean;
+}
+
+// ==================== POSITIONING CONFIG ====================
+
+export interface SmartPositioningConfig {
+  // === FILTROS DE VENDEDOR ===
+  minUserGrade: number;          // Nivel mínimo (1-5), default: 2
+  minMonthFinishRate: number;    // Tasa completado mínima (0-1), default: 0.90
+  minMonthOrderCount: number;    // Órdenes mínimas del mes, default: 10
+  minPositiveRate: number;       // Feedback positivo mínimo (0-1), default: 0.95
+  requireOnline: boolean;        // Solo vendedores online, default: true
+  requireProMerchant: boolean;   // Solo merchants verificados, default: false
+
+  // === FILTROS DE ANUNCIO ===
+  minSurplusAmount: number;      // Volumen mínimo disponible (USDT), default: 100
+  minMaxTransAmount: number;     // Monto máximo mínimo (MXN), default: 5000
+
+  // === ESTRATEGIA DE PRECIO ===
+  undercutAmount: number;        // Monto a bajar (centavos), default: 1
+  undercutPercent: number;       // O porcentaje a bajar, default: 0
+  minMargin: number;             // Margen mínimo sobre referencia (%), default: 0.5
+  maxMargin: number;             // Margen máximo sobre referencia (%), default: 2.0
+
+  // === COMPORTAMIENTO ===
+  updateIntervalMs: number;      // Intervalo de actualización, default: 30000
+  maxCompetitorsToAnalyze: number; // Cuántos analizar, default: 20
+}
+
+export interface FollowModeConfig {
+  enabled: boolean;              // Activar modo seguimiento
+  targetNickName: string;        // Nickname del vendedor a seguir
+  targetUserNo?: string;         // O userNo (más estable que nickname)
+
+  // Estrategia
+  followStrategy: 'match' | 'undercut';  // Igualar o bajar
+  undercutAmount: number;        // Centavos a bajar (si undercut)
+
+  // Fallback cuando el target no está activo
+  fallbackToSmart: boolean;      // Usar modo inteligente como fallback
+
+  // Límites de seguridad
+  minMargin: number;             // No bajar de este margen
+  maxMargin: number;             // No subir de este margen
+
+  // Comportamiento
+  updateIntervalMs: number;
+}
+
+export interface PositioningAnalysis {
+  timestamp: Date;
+  mode: 'smart' | 'follow' | 'manual';
+
+  // Mercado
+  totalAdsAnalyzed: number;
+  qualifiedCompetitors: number;
+  bestQualifiedPrice: number;
+  averagePrice: number;
+  referencePrice: number;
+
+  // Mi posición
+  currentPrice: number;
+  targetPrice: number;
+  priceChanged: boolean;
+  marginPercent: number;
+
+  // Filtros aplicados (solo modo smart)
+  filterResults?: {
+    passedGrade: number;
+    passedFinishRate: number;
+    passedOrderCount: number;
+    passedPositiveRate: number;
+    passedOnline: number;
+    passedSurplus: number;
+    passedMaxTrans: number;
+  };
+
+  // Target info (solo modo follow)
+  targetInfo?: {
+    nickName: string;
+    userNo: string;
+    price: number;
+    isOnline: boolean;
+    found: boolean;
+  };
 }
 
 // Order data as returned by listUserOrderHistory API

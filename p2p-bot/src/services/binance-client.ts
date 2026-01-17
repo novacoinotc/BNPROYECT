@@ -220,6 +220,12 @@ export class BinanceC2CClient {
             nickName: string;
             realName?: string;
             userType: string;
+            userGrade?: number;
+            monthFinishRate?: number;
+            monthOrderCount?: number;
+            positiveRate?: number;
+            isOnline?: boolean;
+            proMerchant?: boolean;
           };
         }>;
       };
@@ -241,12 +247,13 @@ export class BinanceC2CClient {
             nickName: item.advertiser.nickName,
             realName: item.advertiser.realName,
             userType: item.advertiser.userType,
-            // Default values for properties not available from public API
-            userGrade: 0,
-            monthFinishRate: 0,
-            monthOrderCount: 0,
-            positiveRate: 0,
-            isOnline: false,
+            // Capture all advertiser stats from API (P2P public API returns these)
+            userGrade: item.advertiser.userGrade ?? 0,
+            monthFinishRate: item.advertiser.monthFinishRate ?? 0,
+            monthOrderCount: item.advertiser.monthOrderCount ?? 0,
+            positiveRate: item.advertiser.positiveRate ?? 0,
+            isOnline: item.advertiser.isOnline ?? false,
+            proMerchant: item.advertiser.proMerchant ?? false,
           },
           priceType: item.adv.priceType,
           priceFloatingRatio: item.adv.priceFloatingRatio,
