@@ -1136,6 +1136,15 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     if (!underLimit) {
       logBlockedOnce('exceeds_limit', `❌ [AUTO-RELEASE BLOCKED] Order ${orderNumber}: Amount $${orderAmount} exceeds limit $${this.config.maxAutoReleaseAmount}`);
+
+      // Update verification status to show in dashboard that manual release is needed
+      await db.addVerificationStep(
+        orderNumber,
+        VerificationStatus.MANUAL_REVIEW,
+        `Monto $${orderAmount} excede límite de auto-liberación ($${this.config.maxAutoReleaseAmount}) - Requiere liberación manual`,
+        { orderAmount, limit: this.config.maxAutoReleaseAmount, reason: 'exceeds_limit' }
+      );
+
       this.emit('release', {
         type: 'manual_required',
         orderNumber,

@@ -991,8 +991,24 @@ export async function blockBuyer(userNo: string, reason: string): Promise<void> 
 
 // ==================== VERIFICATION TRACKING ====================
 
+// Status progression order (higher number = more advanced)
+const STATUS_PROGRESSION: Record<string, number> = {
+  'AWAITING_PAYMENT': 0,
+  'BUYER_MARKED_PAID': 1,
+  'BANK_PAYMENT_RECEIVED': 2,
+  'PAYMENT_MATCHED': 3,
+  'AMOUNT_VERIFIED': 4,
+  'AMOUNT_MISMATCH': 4,  // Same level as AMOUNT_VERIFIED (error state)
+  'NAME_VERIFIED': 5,
+  'NAME_MISMATCH': 5,    // Same level as NAME_VERIFIED (error state)
+  'READY_TO_RELEASE': 6,
+  'MANUAL_REVIEW': 6,    // Same level as READY_TO_RELEASE (can override when limit exceeded)
+  'RELEASED': 7,
+};
+
 /**
  * Add a verification step to an order's timeline
+ * Note: Status will only update if it's progressing forward (not regressing)
  */
 export async function addVerificationStep(
   orderNumber: string,
@@ -1009,15 +1025,41 @@ export async function addVerificationStep(
     details,
   };
 
-  // Update order with new verification status and append to timeline
-  await db.query(
-    `UPDATE "Order" SET
-      "verificationStatus" = $1,
-      "verificationTimeline" = COALESCE("verificationTimeline", '[]'::jsonb) || $2::jsonb,
-      "updatedAt" = NOW()
-    WHERE "orderNumber" = $3`,
-    [status, JSON.stringify([step]), orderNumber]
+  // Get current status to check if we should update it
+  const currentResult = await db.query(
+    `SELECT "verificationStatus" FROM "Order" WHERE "orderNumber" = $1`,
+    [orderNumber]
   );
+  const currentStatus = currentResult.rows[0]?.verificationStatus;
+  const currentLevel = STATUS_PROGRESSION[currentStatus] ?? -1;
+  const newLevel = STATUS_PROGRESSION[status] ?? 0;
+
+  // Only update verificationStatus if new status is more advanced (or same level for error states)
+  // Always append to timeline for debugging/history
+  if (newLevel >= currentLevel) {
+    // Status is progressing forward - update both
+    await db.query(
+      `UPDATE "Order" SET
+        "verificationStatus" = $1,
+        "verificationTimeline" = COALESCE("verificationTimeline", '[]'::jsonb) || $2::jsonb,
+        "updatedAt" = NOW()
+      WHERE "orderNumber" = $3`,
+      [status, JSON.stringify([step]), orderNumber]
+    );
+  } else {
+    // Status would regress - only append to timeline, don't change status
+    await db.query(
+      `UPDATE "Order" SET
+        "verificationTimeline" = COALESCE("verificationTimeline", '[]'::jsonb) || $2::jsonb,
+        "updatedAt" = NOW()
+      WHERE "orderNumber" = $1`,
+      [orderNumber, JSON.stringify([step])]
+    );
+    logger.debug(
+      { orderNumber, currentStatus, attemptedStatus: status },
+      '⏭️ [VERIFICATION] Status not regressed (timeline updated only)'
+    );
+  }
 
   // Log with emoji for visibility
   const emoji = getStatusEmoji(status);
