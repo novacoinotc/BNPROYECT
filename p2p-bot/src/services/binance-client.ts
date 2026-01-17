@@ -698,31 +698,39 @@ export class BinanceC2CClient {
         { orderNo, content, type: 'text' }
       );
 
-      // Log the full response for debugging
+      // Log the FULL response for debugging
       logger.info({
         orderNo,
-        responseCode: response.data?.code,
-        responseSuccess: response.data?.success,
-        responseMessage: response.data?.message,
         contentLength: content.length,
-      }, '💬 [CHAT API] sendMessage response');
+        httpStatus: response.status,
+        fullResponse: JSON.stringify(response.data),
+      }, '💬 [CHAT API] sendMessage FULL response');
 
-      // Check if response indicates success
-      if (response.data?.code !== '000000' && response.data?.success !== true) {
-        logger.warn({
-          orderNo,
-          code: response.data?.code,
-          message: response.data?.message,
-        }, '⚠️ [CHAT API] Message may not have been sent');
-        return false;
+      // Binance API typically returns { code: "000000", message: null, data: ... } on success
+      // Or it might just return empty/null on success
+      const data = response.data;
+
+      // If we got here without an error, and status is 200, consider it success
+      if (response.status === 200) {
+        // Check for explicit error codes
+        if (data?.code && data.code !== '000000') {
+          logger.warn({
+            orderNo,
+            code: data.code,
+            message: data.message,
+          }, '⚠️ [CHAT API] API returned error code');
+          return false;
+        }
+        return true;
       }
 
-      return true;
+      return false;
     } catch (error: any) {
       logger.error({
         orderNo,
         error: error?.response?.data || error?.message,
         status: error?.response?.status,
+        fullError: JSON.stringify(error?.response?.data),
       }, '❌ [CHAT API] sendMessage failed');
       return false;
     }
