@@ -491,12 +491,55 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       logger.error({ error }, 'Error during smart payment matching');
     }
 
-    // No match found - payment is saved in DB by webhook-receiver for future matching
-    logger.info({
-      transactionId: payment.transactionId,
-      amount: payment.amount,
-      sender: payment.senderName,
-    }, '📝 Payment saved, waiting for matching order (by amount AND name)');
+    // No match found - check if this is a THIRD-PARTY payment
+    // A THIRD-PARTY payment is one where the sender name doesn't match ANY known buyer
+    // in ANY open order (regardless of amount)
+    try {
+      const thirdPartyCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
+
+      if (!thirdPartyCheck.hasMatch) {
+        // No open order has a buyer with this name - mark as THIRD_PARTY
+        logger.warn({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+        }, '🚨 [THIRD_PARTY DETECTED] Payment sender does not match any known buyer - marking as THIRD_PARTY');
+
+        await db.markPaymentAsThirdParty(
+          payment.transactionId,
+          `Sender "${payment.senderName}" does not match any buyer in open orders`
+        );
+
+        // Create alert for manual review
+        await db.createAlert({
+          type: 'third_party_payment',
+          severity: 'warning',
+          title: 'Pago de Tercero Detectado',
+          message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ningún comprador conocido`,
+          metadata: {
+            transactionId: payment.transactionId,
+            amount: payment.amount,
+            senderName: payment.senderName,
+          },
+        });
+      } else {
+        // Sender matches some buyer, but no order with matching amount - keep as PENDING
+        logger.info({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+          potentialMatches: thirdPartyCheck.matchedOrders?.map(o => o.orderNumber),
+        }, '📝 Payment saved, waiting for matching order (sender matches known buyer, waiting for amount match)');
+      }
+    } catch (error) {
+      logger.error({ error, transactionId: payment.transactionId }, 'Error checking for third-party payment');
+      // On error, keep as PENDING for safety
+      logger.info({
+        transactionId: payment.transactionId,
+        amount: payment.amount,
+        sender: payment.senderName,
+      }, '📝 Payment saved as PENDING (third-party check failed)');
+    }
   }
 
   /**

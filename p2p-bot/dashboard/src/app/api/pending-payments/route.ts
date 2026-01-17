@@ -6,20 +6,25 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// GET - List pending payments
+// GET - List pending or third-party payments
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const limit = parseInt(searchParams.get('limit') || '50');
+    const status = searchParams.get('status') || 'PENDING'; // 'PENDING' or 'THIRD_PARTY'
+
+    // Validate status parameter
+    const validStatuses = ['PENDING', 'THIRD_PARTY'];
+    const filterStatus = validStatuses.includes(status) ? status : 'PENDING';
 
     const result = await pool.query(
       `SELECT id, "transactionId", amount, currency, "senderName", "senderAccount",
               "bankReference", "bankTimestamp", "createdAt", status
        FROM "Payment"
-       WHERE status = 'PENDING'
+       WHERE status = $1
        ORDER BY "createdAt" DESC
-       LIMIT $1`,
-      [limit]
+       LIMIT $2`,
+      [filterStatus, limit]
     );
 
     const payments = result.rows.map(row => ({
@@ -31,6 +36,7 @@ export async function GET(request: NextRequest) {
       success: true,
       payments,
       count: payments.length,
+      status: filterStatus,
     });
   } catch (error) {
     console.error('Error fetching pending payments:', error);

@@ -24,10 +24,13 @@ interface MatchableOrder {
   createdAt: string;
 }
 
+type PaymentTab = 'PENDING' | 'THIRD_PARTY';
+
 export default function PendingPaymentsPage() {
   const [payments, setPayments] = useState<PendingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<PaymentTab>('PENDING');
 
   // Modal states
   const [showMatchModal, setShowMatchModal] = useState(false);
@@ -40,7 +43,7 @@ export default function PendingPaymentsPage() {
   const fetchPayments = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/pending-payments');
+      const response = await fetch(`/api/pending-payments?status=${activeTab}`);
       const data = await response.json();
 
       if (data.success) {
@@ -53,7 +56,7 @@ export default function PendingPaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     fetchPayments();
@@ -154,9 +157,9 @@ export default function PendingPaymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Pagos Pendientes</h1>
+          <h1 className="text-2xl font-bold text-white">Pagos Bancarios</h1>
           <p className="text-gray-400 text-sm mt-1">
-            Pagos recibidos que no han sido vinculados a ninguna orden
+            Pagos recibidos que requieren atencion manual
           </p>
         </div>
         <button
@@ -167,20 +170,59 @@ export default function PendingPaymentsPage() {
         </button>
       </div>
 
-      {/* Info Card */}
-      <div className="card p-4 border-l-4 border-l-amber-500">
-        <div className="flex items-start gap-3">
-          <span className="text-2xl">💳</span>
-          <div>
-            <h3 className="font-medium text-white">Pagos sin vincular</h3>
-            <p className="text-sm text-gray-400 mt-1">
-              Estos pagos no coincidieron automaticamente con ninguna orden (nombre diferente).
-              Puedes <strong>vincular manualmente</strong> a una orden si es un pago de tercero valido,
-              o <strong>marcar como resuelto</strong> si no corresponde a ninguna operacion.
-            </p>
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-dark-border">
+        <button
+          onClick={() => setActiveTab('PENDING')}
+          className={`px-4 py-2 font-medium transition border-b-2 -mb-px ${
+            activeTab === 'PENDING'
+              ? 'text-amber-400 border-amber-400'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          Pendientes
+        </button>
+        <button
+          onClick={() => setActiveTab('THIRD_PARTY')}
+          className={`px-4 py-2 font-medium transition border-b-2 -mb-px ${
+            activeTab === 'THIRD_PARTY'
+              ? 'text-red-400 border-red-400'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          Pagos de Terceros
+        </button>
+      </div>
+
+      {/* Info Card - changes based on tab */}
+      {activeTab === 'PENDING' ? (
+        <div className="card p-4 border-l-4 border-l-amber-500">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">💳</span>
+            <div>
+              <h3 className="font-medium text-white">Pagos sin vincular</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Estos pagos no coincidieron automaticamente con ninguna orden (nombre diferente).
+                Puedes <strong>vincular manualmente</strong> a una orden si es un pago de tercero valido,
+                o <strong>marcar como resuelto</strong> si no corresponde a ninguna operacion.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="card p-4 border-l-4 border-l-red-500">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">🚨</span>
+            <div>
+              <h3 className="font-medium text-white">Pagos de Terceros Detectados</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Estos pagos fueron recibidos de personas que <strong>no coinciden con ningun comprador</strong> conocido
+                en ordenes abiertas. Podrian ser pagos de terceros no autorizados. Revisa cuidadosamente antes de vincular.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Payments List */}
       <div className="card overflow-hidden">
@@ -193,8 +235,10 @@ export default function PendingPaymentsPage() {
           <div className="p-6 text-center text-red-400">{error}</div>
         ) : payments.length === 0 ? (
           <div className="p-6 text-center text-gray-500">
-            <span className="text-4xl block mb-2">✅</span>
-            No hay pagos pendientes de vincular
+            <span className="text-4xl block mb-2">{activeTab === 'PENDING' ? '✅' : '🎉'}</span>
+            {activeTab === 'PENDING'
+              ? 'No hay pagos pendientes de vincular'
+              : 'No hay pagos de terceros detectados'}
           </div>
         ) : (
           <table className="w-full">

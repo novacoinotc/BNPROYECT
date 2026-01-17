@@ -646,6 +646,154 @@ export async function markPaymentReversed(transactionId: string): Promise<void> 
   });
 }
 
+/**
+ * Mark a payment as THIRD_PARTY (sender doesn't match any known buyer)
+ * These payments require manual review and won't auto-match
+ */
+export async function markPaymentAsThirdParty(
+  transactionId: string,
+  reason?: string
+): Promise<void> {
+  const db = getPool();
+
+  await db.query(
+    `UPDATE "Payment" SET status = 'THIRD_PARTY', "updatedAt" = NOW()
+    WHERE "transactionId" = $1`,
+    [transactionId]
+  );
+
+  logger.warn({ transactionId, reason }, '🚨 [THIRD_PARTY] Payment marked as third-party - requires manual review');
+}
+
+/**
+ * Check if ANY open order (PENDING or PAID) has a buyer name that matches the sender
+ * Used to detect third-party payments - if no match, payment is from unknown sender
+ */
+export async function hasOrderWithMatchingBuyerName(
+  senderName: string,
+  toleranceScore: number = 0.3
+): Promise<{
+  hasMatch: boolean;
+  matchedOrders?: Array<{ orderNumber: string; buyerRealName: string | null; buyerNickName: string; matchScore: number }>;
+}> {
+  const db = getPool();
+
+  // Normalize sender name for comparison
+  const normalizedSender = senderName
+    .toLowerCase()
+    .trim()
+    .replace(/[,\/\.\-\_\|]/g, ' ')
+    .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const senderWords = new Set(normalizedSender.split(/\s+/).filter(w => w.length > 2));
+
+  // Get ALL open orders (PENDING or PAID status, not released)
+  const result = await db.query(
+    `SELECT "orderNumber", "buyerRealName", "buyerNickName"
+     FROM "Order"
+     WHERE status IN ('PENDING', 'PAID')
+       AND "releasedAt" IS NULL
+     ORDER BY "binanceCreateTime" DESC
+     LIMIT 100`
+  );
+
+  if (result.rows.length === 0) {
+    logger.info({ senderName }, '🔍 [THIRD_PARTY CHECK] No open orders found to compare');
+    return { hasMatch: false };
+  }
+
+  // Score each order by name similarity
+  const matchedOrders: Array<{ orderNumber: string; buyerRealName: string | null; buyerNickName: string; matchScore: number }> = [];
+
+  for (const order of result.rows) {
+    const buyerName = order.buyerRealName || '';
+    if (!buyerName) continue; // Skip orders without real name
+
+    // Normalize buyer name
+    const normalizedBuyer = buyerName
+      .toLowerCase()
+      .trim()
+      .replace(/[,\/\.\-\_\|]/g, ' ')
+      .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const buyerWords = new Set(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
+
+    // Calculate word overlap score
+    let matches = 0;
+    for (const word of senderWords) {
+      if (buyerWords.has(word)) matches++;
+    }
+    const totalWords = Math.max(senderWords.size, buyerWords.size);
+    const score = totalWords > 0 ? matches / totalWords : 0;
+
+    if (score >= toleranceScore) {
+      matchedOrders.push({
+        orderNumber: order.orderNumber,
+        buyerRealName: order.buyerRealName,
+        buyerNickName: order.buyerNickName,
+        matchScore: score,
+      });
+    }
+  }
+
+  if (matchedOrders.length > 0) {
+    logger.info({
+      senderName,
+      matchedCount: matchedOrders.length,
+      matchedOrders: matchedOrders.map(o => ({
+        orderNumber: o.orderNumber,
+        buyerRealName: o.buyerRealName,
+        matchScore: o.matchScore.toFixed(2),
+      })),
+    }, '✅ [THIRD_PARTY CHECK] Found orders with matching buyer name');
+    return { hasMatch: true, matchedOrders };
+  }
+
+  logger.warn({
+    senderName,
+    normalizedSender,
+    openOrdersChecked: result.rows.length,
+  }, '🚨 [THIRD_PARTY CHECK] No orders found with matching buyer name - THIRD PARTY PAYMENT');
+  return { hasMatch: false };
+}
+
+/**
+ * Get all third-party payments (for dashboard)
+ */
+export async function getThirdPartyPayments(limit: number = 50): Promise<Array<{
+  id: string;
+  transactionId: string;
+  amount: number;
+  currency: string;
+  senderName: string;
+  senderAccount: string | null;
+  bankReference: string | null;
+  bankTimestamp: Date;
+  createdAt: Date;
+  status: string;
+}>> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT id, "transactionId", amount, currency, "senderName", "senderAccount",
+            "bankReference", "bankTimestamp", "createdAt", status
+     FROM "Payment"
+     WHERE status = 'THIRD_PARTY'
+     ORDER BY "createdAt" DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return result.rows.map(row => ({
+    ...row,
+    amount: typeof row.amount === 'string' ? parseFloat(row.amount) : Number(row.amount),
+  }));
+}
+
 // ==================== PENDING PAYMENTS MANAGEMENT ====================
 
 /**

@@ -162,6 +162,29 @@ p2p-bot/
 └── railway.json
 ```
 
+## Changelog
+
+### 2026-01-17 - Third-Party Payment Detection
+- **THIRD_PARTY status**: Nuevo estado para pagos de terceros
+- Deteccion automatica: Si el nombre del ordenante NO coincide con ningun comprador conocido, el pago se marca como THIRD_PARTY
+- Dashboard: Nueva pestaña "Pagos de Terceros" en la seccion de pagos pendientes
+- Alerta automatica cuando se detecta un pago de tercero
+- Pagos THIRD_PARTY nunca se vinculan automaticamente - requieren revision manual
+
+### 2026-01-17 - Trusted Buyers Fix
+- Corregido: Compradores confiables con nickname censurado (ej: "Use***") ya no se sobreescriben
+- Ahora se permite multiples compradores con el mismo nickname pero diferente nombre real
+- API actualizada para usar `findFirst` + `create` en lugar de `upsert`
+
+### 2026-01-17 - Verification Status Improvements
+- Status MANUAL_REVIEW para ordenes que exceden el limite de auto-liberacion
+- Prevencion de regresion de status: El status de verificacion solo avanza, nunca retrocede
+- Timeline de verificacion siempre se actualiza para debugging
+
+### 2026-01-17 - TOTP Retry Logic
+- Reintento automatico con codigo TOTP fresco si la liberacion falla
+- Espera al siguiente periodo de 30 segundos antes de reintentar
+
 ## Licencia
 
 Privado - Todos los derechos reservados

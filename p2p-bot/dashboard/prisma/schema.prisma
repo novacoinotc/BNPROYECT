@@ -37,6 +37,7 @@ enum PaymentStatus {
   RELEASED
   FAILED
   REVERSED
+  THIRD_PARTY  // Payment sender doesn't match any known buyer - requires manual review
 }
 
 enum VerificationMethod {
