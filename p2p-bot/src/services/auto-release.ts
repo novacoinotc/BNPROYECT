@@ -491,54 +491,34 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       logger.error({ error }, 'Error during smart payment matching');
     }
 
-    // No match found - check if this is a THIRD-PARTY payment
-    // A THIRD-PARTY payment is one where the sender name doesn't match ANY known buyer
-    // in ANY open order (regardless of amount)
+    // No match found - mark as THIRD_PARTY
+    // Any payment that doesn't immediately match an order by amount AND name is suspicious
+    logger.warn({
+      transactionId: payment.transactionId,
+      amount: payment.amount,
+      sender: payment.senderName,
+    }, '🚨 [THIRD_PARTY] Payment did not match any order - marking as THIRD_PARTY');
+
     try {
-      const thirdPartyCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
+      await db.markPaymentAsThirdParty(
+        payment.transactionId,
+        `No order matched for sender "${payment.senderName}" with amount $${payment.amount}`
+      );
 
-      if (!thirdPartyCheck.hasMatch) {
-        // No open order has a buyer with this name - mark as THIRD_PARTY
-        logger.warn({
+      // Create alert for manual review
+      await db.createAlert({
+        type: 'third_party_payment',
+        severity: 'warning',
+        title: 'Pago de Tercero Detectado',
+        message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ninguna orden`,
+        metadata: {
           transactionId: payment.transactionId,
           amount: payment.amount,
-          sender: payment.senderName,
-        }, '🚨 [THIRD_PARTY DETECTED] Payment sender does not match any known buyer - marking as THIRD_PARTY');
-
-        await db.markPaymentAsThirdParty(
-          payment.transactionId,
-          `Sender "${payment.senderName}" does not match any buyer in open orders`
-        );
-
-        // Create alert for manual review
-        await db.createAlert({
-          type: 'third_party_payment',
-          severity: 'warning',
-          title: 'Pago de Tercero Detectado',
-          message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ningún comprador conocido`,
-          metadata: {
-            transactionId: payment.transactionId,
-            amount: payment.amount,
-            senderName: payment.senderName,
-          },
-        });
-      } else {
-        // Sender matches some buyer, but no order with matching amount - keep as PENDING
-        logger.info({
-          transactionId: payment.transactionId,
-          amount: payment.amount,
-          sender: payment.senderName,
-          potentialMatches: thirdPartyCheck.matchedOrders?.map(o => o.orderNumber),
-        }, '📝 Payment saved, waiting for matching order (sender matches known buyer, waiting for amount match)');
-      }
+          senderName: payment.senderName,
+        },
+      });
     } catch (error) {
-      logger.error({ error, transactionId: payment.transactionId }, 'Error checking for third-party payment');
-      // On error, keep as PENDING for safety
-      logger.info({
-        transactionId: payment.transactionId,
-        amount: payment.amount,
-        sender: payment.senderName,
-      }, '📝 Payment saved as PENDING (third-party check failed)');
+      logger.error({ error, transactionId: payment.transactionId }, 'Error marking payment as third-party');
     }
   }
 
