@@ -1445,6 +1445,16 @@ export class AutoReleaseOrchestrator extends EventEmitter {
    * Execute crypto release
    */
   private async executeRelease(orderNumber: string): Promise<void> {
+    // KILL SWITCH CHECK - Stop all releases if disabled
+    const releaseEnabled = await db.isReleaseEnabled();
+    if (!releaseEnabled) {
+      logger.warn({ orderNumber }, '🛑 [KILL SWITCH] Release bot is DISABLED - skipping release');
+      return;
+    }
+
+    // Update last active timestamp
+    await db.updateBotLastActive('release');
+
     const pending = this.pendingReleases.get(orderNumber);
 
     if (!pending) {

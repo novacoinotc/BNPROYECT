@@ -291,3 +291,27 @@ model AuditLog {
   @@index([orderNumber])
   @@index([createdAt])
 }
+
+/// Bot configuration - kill switches and settings
+model BotConfig {
+  id                  String   @id @default("main")
+
+  // Kill switches
+  releaseEnabled      Boolean  @default(true)   // Auto-release bot on/off
+  positioningEnabled  Boolean  @default(false)  // Positioning bot on/off
+
+  // Positioning mode: smart | follow | manual | off
+  positioningMode     String   @default("off")
+
+  // Follow mode target (if mode = follow)
+  followTargetNickName String?
+  followTargetUserNo   String?
+
+  // Status tracking
+  releaseLastActive   DateTime?
+  positioningLastActive DateTime?
+
+  // Timestamps
+  updatedAt           DateTime @updatedAt
+  updatedBy           String?
+}

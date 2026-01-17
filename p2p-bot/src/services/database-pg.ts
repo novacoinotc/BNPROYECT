@@ -1591,6 +1591,94 @@ export async function incrementTrustedBuyerStats(
   logger.debug({ counterPartNickName, amountReleased }, 'Trusted buyer stats updated');
 }
 
+// ==================== BOT CONFIG ====================
+
+export interface BotConfig {
+  releaseEnabled: boolean;
+  positioningEnabled: boolean;
+  positioningMode: string;
+  followTargetNickName: string | null;
+  followTargetUserNo: string | null;
+}
+
+/**
+ * Get bot configuration from database
+ * Returns default config if not found
+ */
+export async function getBotConfig(): Promise<BotConfig> {
+  const db = getPool();
+
+  try {
+    // Try to get existing config
+    let result = await db.query(
+      `SELECT * FROM "BotConfig" WHERE id = 'main'`
+    );
+
+    // If no config exists, create default
+    if (result.rows.length === 0) {
+      await db.query(
+        `INSERT INTO "BotConfig" (id, "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
+         VALUES ('main', true, false, 'off', NOW())
+         ON CONFLICT (id) DO NOTHING`
+      );
+      result = await db.query(
+        `SELECT * FROM "BotConfig" WHERE id = 'main'`
+      );
+    }
+
+    const row = result.rows[0];
+    return {
+      releaseEnabled: row?.releaseEnabled ?? true,
+      positioningEnabled: row?.positioningEnabled ?? false,
+      positioningMode: row?.positioningMode ?? 'off',
+      followTargetNickName: row?.followTargetNickName ?? null,
+      followTargetUserNo: row?.followTargetUserNo ?? null,
+    };
+  } catch (error) {
+    logger.warn({ error }, 'Failed to get bot config, using defaults');
+    return {
+      releaseEnabled: true,
+      positioningEnabled: false,
+      positioningMode: 'off',
+      followTargetNickName: null,
+      followTargetUserNo: null,
+    };
+  }
+}
+
+/**
+ * Update bot last active timestamp
+ */
+export async function updateBotLastActive(botType: 'release' | 'positioning'): Promise<void> {
+  const db = getPool();
+
+  const column = botType === 'release' ? 'releaseLastActive' : 'positioningLastActive';
+
+  try {
+    await db.query(
+      `UPDATE "BotConfig" SET "${column}" = NOW() WHERE id = 'main'`
+    );
+  } catch (error) {
+    logger.debug({ error, botType }, 'Failed to update bot last active timestamp');
+  }
+}
+
+/**
+ * Check if release bot is enabled
+ */
+export async function isReleaseEnabled(): Promise<boolean> {
+  const config = await getBotConfig();
+  return config.releaseEnabled;
+}
+
+/**
+ * Check if positioning bot is enabled
+ */
+export async function isPositioningEnabled(): Promise<boolean> {
+  const config = await getBotConfig();
+  return config.positioningEnabled;
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {
