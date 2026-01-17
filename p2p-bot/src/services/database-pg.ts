@@ -602,6 +602,182 @@ export async function markPaymentReversed(transactionId: string): Promise<void> 
   });
 }
 
+// ==================== PENDING PAYMENTS MANAGEMENT ====================
+
+/**
+ * Get all pending payments (for dashboard)
+ */
+export async function getPendingPayments(limit: number = 50): Promise<Array<{
+  id: string;
+  transactionId: string;
+  amount: number;
+  currency: string;
+  senderName: string;
+  senderAccount: string | null;
+  bankReference: string | null;
+  bankTimestamp: Date;
+  createdAt: Date;
+  status: string;
+}>> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT id, "transactionId", amount, currency, "senderName", "senderAccount",
+            "bankReference", "bankTimestamp", "createdAt", status
+     FROM "Payment"
+     WHERE status = 'PENDING'
+     ORDER BY "createdAt" DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return result.rows.map(row => ({
+    ...row,
+    amount: typeof row.amount === 'string' ? parseFloat(row.amount) : Number(row.amount),
+  }));
+}
+
+/**
+ * Manually match a pending payment to an order (for third-party resolution)
+ */
+export async function manuallyMatchPayment(
+  transactionId: string,
+  orderNumber: string,
+  resolvedBy: string
+): Promise<{ success: boolean; error?: string }> {
+  const db = getPool();
+
+  // Check payment exists and is pending
+  const paymentCheck = await db.query(
+    'SELECT status FROM "Payment" WHERE "transactionId" = $1',
+    [transactionId]
+  );
+
+  if (paymentCheck.rows.length === 0) {
+    return { success: false, error: 'Payment not found' };
+  }
+
+  if (paymentCheck.rows[0].status === 'RELEASED') {
+    return { success: false, error: 'Payment already released' };
+  }
+
+  // Check order exists
+  const orderCheck = await db.query(
+    'SELECT id, status FROM "Order" WHERE "orderNumber" = $1',
+    [orderNumber]
+  );
+
+  if (orderCheck.rows.length === 0) {
+    return { success: false, error: 'Order not found' };
+  }
+
+  // Match payment to order
+  await db.query(
+    `UPDATE "Payment" SET
+      status = 'MATCHED',
+      "matchedOrderId" = $1,
+      "matchedAt" = NOW(),
+      "verificationMethod" = 'MANUAL',
+      "updatedAt" = NOW()
+    WHERE "transactionId" = $2`,
+    [orderCheck.rows[0].id, transactionId]
+  );
+
+  // Add verification step
+  await addVerificationStep(
+    orderNumber,
+    VerificationStatus.PAYMENT_MATCHED,
+    `✅ Pago vinculado manualmente por ${resolvedBy} (pago de tercero)`,
+    {
+      transactionId,
+      resolvedBy,
+      matchType: 'manual_third_party',
+    }
+  );
+
+  logger.info({ transactionId, orderNumber, resolvedBy }, '✅ Payment manually matched to order');
+
+  return { success: true };
+}
+
+/**
+ * Mark a pending payment as resolved/ignored (won't match any order)
+ */
+export async function markPaymentResolved(
+  transactionId: string,
+  resolvedBy: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  const db = getPool();
+
+  // Check payment exists
+  const paymentCheck = await db.query(
+    'SELECT status FROM "Payment" WHERE "transactionId" = $1',
+    [transactionId]
+  );
+
+  if (paymentCheck.rows.length === 0) {
+    return { success: false, error: 'Payment not found' };
+  }
+
+  if (paymentCheck.rows[0].status === 'RELEASED') {
+    return { success: false, error: 'Payment already released' };
+  }
+
+  // Mark as FAILED (resolved/ignored)
+  await db.query(
+    `UPDATE "Payment" SET
+      status = 'FAILED',
+      "updatedAt" = NOW()
+    WHERE "transactionId" = $1`,
+    [transactionId]
+  );
+
+  // Create audit log
+  await logAction('payment_resolved', undefined, {
+    transactionId,
+    resolvedBy,
+    reason,
+  }, true);
+
+  logger.info({ transactionId, resolvedBy, reason }, '📝 Payment marked as resolved/ignored');
+
+  return { success: true };
+}
+
+/**
+ * Get orders that could potentially match a payment amount (for manual matching UI)
+ */
+export async function getOrdersForManualMatch(
+  amount: number,
+  tolerancePercent: number = 5
+): Promise<Array<{
+  orderNumber: string;
+  totalPrice: string;
+  buyerNickName: string;
+  buyerRealName: string | null;
+  status: string;
+  createdAt: Date;
+}>> {
+  const db = getPool();
+  const tolerance = amount * (tolerancePercent / 100);
+  const minAmount = amount - tolerance;
+  const maxAmount = amount + tolerance;
+
+  const result = await db.query(
+    `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", status, "createdAt"
+     FROM "Order"
+     WHERE "totalPrice"::numeric BETWEEN $1 AND $2
+       AND status IN ('PAID', 'COMPLETED')
+       AND "createdAt" > NOW() - INTERVAL '7 days'
+     ORDER BY "createdAt" DESC
+     LIMIT 20`,
+    [minAmount, maxAmount]
+  );
+
+  return result.rows;
+}
+
 // ==================== CHAT MESSAGE OPERATIONS ====================
 
 export async function saveChatMessage(message: ChatMessage): Promise<void> {

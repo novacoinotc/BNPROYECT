@@ -39,6 +39,9 @@ export default function RootLayout({
                     <a href="/orders" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
                       Orders
                     </a>
+                    <a href="/pending-payments" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
+                      Pagos
+                    </a>
                     <a href="/trusted-buyers" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
                       Trusted
                     </a>
