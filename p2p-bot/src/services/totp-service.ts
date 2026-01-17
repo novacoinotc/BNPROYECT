@@ -17,6 +17,9 @@ export class TOTPService {
   private config: TOTPConfig;
   private totp: OTPAuth.TOTP | null = null;
 
+  // Track last used TOTP window to prevent replay rejections
+  private lastUsedWindow: number = 0;
+
   constructor(config: TOTPConfig) {
     this.config = config;
 
@@ -78,6 +81,53 @@ export class TOTPService {
    */
   getTimeRemaining(): number {
     return TOTP_PERIOD - (Math.floor(Date.now() / 1000) % TOTP_PERIOD);
+  }
+
+  /**
+   * Get current TOTP window number
+   */
+  private getCurrentWindow(): number {
+    return Math.floor(Date.now() / 1000 / TOTP_PERIOD);
+  }
+
+  /**
+   * Generate TOTP code with replay protection
+   * Waits for next window if current window was already used
+   * This prevents Binance from rejecting duplicate codes
+   */
+  async generateCodeWithReuseProtection(): Promise<string> {
+    if (!this.config.enabled) {
+      throw new Error('TOTP not enabled');
+    }
+
+    if (!this.totp) {
+      throw new Error('TOTP secret not configured');
+    }
+
+    const currentWindow = this.getCurrentWindow();
+
+    // If we already used a code in this window, wait for the next one
+    if (currentWindow === this.lastUsedWindow) {
+      const waitTime = this.getTimeRemaining();
+      logger.info(
+        { waitTime, currentWindow },
+        `🕐 [TOTP] Code already used in this window, waiting ${waitTime}s for next window`
+      );
+
+      // Wait for next window
+      await new Promise((resolve) => setTimeout(resolve, (waitTime + 1) * 1000));
+    }
+
+    // Generate and mark window as used
+    const code = this.totp.generate();
+    this.lastUsedWindow = this.getCurrentWindow();
+
+    logger.debug(
+      { codeLength: code.length, window: this.lastUsedWindow },
+      '🔐 [TOTP] Generated unique code (window marked as used)'
+    );
+
+    return code;
   }
 }
 
