@@ -132,9 +132,7 @@ async function initializeServices(): Promise<void> {
   autoRelease.setVerificationCodeProvider(async (orderNumber, authType) => {
     // Check if TOTP is configured for automatic code generation
     if (totpService.isConfigured() && authType === AuthType.GOOGLE) {
-      // Use reuse protection to prevent Binance rejecting duplicate codes
-      // when multiple releases happen within the same 30-second window
-      const code = await totpService.generateCodeWithReuseProtection();
+      const code = totpService.generateCode();
       logger.info({
         orderNumber,
         authType,

@@ -10,6 +10,7 @@ import { WebhookReceiver, WebhookEvent } from './webhook-receiver.js';
 import { OCRService } from './ocr-service.js';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { BuyerRiskAssessor, BuyerRiskAssessment } from './buyer-risk-assessor.js';
+import { getTOTPService } from './totp-service.js';
 import { logger } from '../utils/logger.js';
 import * as db from './database-pg.js';
 import {
@@ -1514,8 +1515,20 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       }, 'Failed to release crypto');
 
       if (pending.attempts < 3) {
-        // Retry
+        // Wait for next TOTP window before retrying to ensure fresh code
+        try {
+          const totpService = getTOTPService();
+          if (totpService.isConfigured()) {
+            logger.info({ orderNumber }, '🔄 [RETRY] Waiting for next TOTP window before retry...');
+            await totpService.waitForNextWindowAndGenerate(); // This waits and generates, we discard the code
+          }
+        } catch (totpError) {
+          logger.warn({ orderNumber, totpError }, 'Failed to wait for TOTP window');
+        }
+
+        // Retry with fresh code
         this.releaseQueue.push(orderNumber);
+        logger.info({ orderNumber, attempt: pending.attempts }, '🔄 [RETRY] Order re-queued for release with fresh TOTP code');
       } else {
         this.emit('release', {
           type: 'release_failed',

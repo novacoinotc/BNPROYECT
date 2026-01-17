@@ -17,9 +17,6 @@ export class TOTPService {
   private config: TOTPConfig;
   private totp: OTPAuth.TOTP | null = null;
 
-  // Track last used TOTP window to prevent replay rejections
-  private lastUsedWindow: number = 0;
-
   constructor(config: TOTPConfig) {
     this.config = config;
 
@@ -84,18 +81,10 @@ export class TOTPService {
   }
 
   /**
-   * Get current TOTP window number
+   * Wait for the next TOTP window and return a fresh code
+   * Use this when a release fails and you want to retry with a new code
    */
-  private getCurrentWindow(): number {
-    return Math.floor(Date.now() / 1000 / TOTP_PERIOD);
-  }
-
-  /**
-   * Generate TOTP code with replay protection
-   * Waits for next window if current window was already used
-   * This prevents Binance from rejecting duplicate codes
-   */
-  async generateCodeWithReuseProtection(): Promise<string> {
+  async waitForNextWindowAndGenerate(): Promise<string> {
     if (!this.config.enabled) {
       throw new Error('TOTP not enabled');
     }
@@ -104,28 +93,17 @@ export class TOTPService {
       throw new Error('TOTP secret not configured');
     }
 
-    const currentWindow = this.getCurrentWindow();
-
-    // If we already used a code in this window, wait for the next one
-    if (currentWindow === this.lastUsedWindow) {
-      const waitTime = this.getTimeRemaining();
-      logger.info(
-        { waitTime, currentWindow },
-        `🕐 [TOTP] Code already used in this window, waiting ${waitTime}s for next window`
-      );
-
-      // Wait for next window
-      await new Promise((resolve) => setTimeout(resolve, (waitTime + 1) * 1000));
-    }
-
-    // Generate and mark window as used
-    const code = this.totp.generate();
-    this.lastUsedWindow = this.getCurrentWindow();
-
-    logger.debug(
-      { codeLength: code.length, window: this.lastUsedWindow },
-      '🔐 [TOTP] Generated unique code (window marked as used)'
+    const waitTime = this.getTimeRemaining();
+    logger.info(
+      { waitTime },
+      `🕐 [TOTP] Waiting ${waitTime}s for next window to get fresh code`
     );
+
+    // Wait for next window + 1 second buffer
+    await new Promise((resolve) => setTimeout(resolve, (waitTime + 1) * 1000));
+
+    const code = this.totp.generate();
+    logger.debug({ codeLength: code.length }, '🔐 [TOTP] Generated fresh code after waiting');
 
     return code;
   }
