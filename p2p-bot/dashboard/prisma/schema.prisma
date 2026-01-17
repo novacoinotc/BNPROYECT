@@ -233,8 +233,8 @@ model BuyerCache {
 /// Uses counterPartNickName as identifier (more reliable than userNo)
 model TrustedBuyer {
   id                    String   @id @default(cuid())
-  counterPartNickName   String   @unique  // Binance nickname (identifier)
-  realName              String?            // Verified real name
+  counterPartNickName   String             // Binance nickname (may have duplicates like "Use***")
+  realName              String?            // Verified real name (used to distinguish buyers)
   verifiedAt            DateTime @default(now())
   verifiedBy            String?            // Admin who verified
   notes                 String?            // Verification notes
