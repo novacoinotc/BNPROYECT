@@ -805,6 +805,41 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                 </button>
                               </div>
                             )}
+
+                            {/* Dismiss Button - Hide stale orders from dashboard */}
+                            <div className="pt-2 border-t border-[#2d2640] mt-4">
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!confirm(`¿Descartar orden ${order.orderNumber.slice(-8)} del dashboard?`)) return;
+                                  try {
+                                    const response = await fetch('/api/orders', {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        orderNumber: order.orderNumber,
+                                        dismissed: true,
+                                      }),
+                                    });
+                                    const data = await response.json();
+                                    if (data.success) {
+                                      onRefresh?.();
+                                    } else {
+                                      alert(data.error || 'Error al descartar orden');
+                                    }
+                                  } catch (err: any) {
+                                    alert(err.message || 'Error de conexion');
+                                  }
+                                }}
+                                className="w-full px-4 py-2 bg-gray-500/10 text-gray-400 border border-gray-500/30 rounded-lg hover:bg-gray-500/20 hover:text-gray-300 transition text-sm flex items-center justify-center gap-2"
+                              >
+                                <span>🗑️</span>
+                                Descartar orden
+                              </button>
+                              <p className="text-xs text-gray-500 text-center mt-1">
+                                Oculta esta orden del dashboard (no la elimina)
+                              </p>
+                            </div>
                           </>
                         ) : (
                           /* Chat tab */

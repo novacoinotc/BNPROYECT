@@ -86,6 +86,9 @@ model Order {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
+  // Dashboard control
+  dismissed         Boolean     @default(false)  // Hide from dashboard when stale
+
   // Relations
   payments          Payment[]
   messages          ChatMessage[]
@@ -94,6 +97,7 @@ model Order {
   @@index([buyerUserNo])
   @@index([binanceCreateTime])
   @@index([verificationStatus])
+  @@index([dismissed])
 }
 
 /// Bank payments received via webhook

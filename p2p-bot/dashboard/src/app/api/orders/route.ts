@@ -56,12 +56,20 @@ export async function GET(request: NextRequest) {
     // PAID = buyer marked as paid, waiting for release
     // Use showAll=true to see completed/cancelled orders
     const activeStatuses = ['PENDING', 'PAID', 'APPEALING'];
+    const showDismissed = searchParams.get('showDismissed') === 'true';
 
-    const whereClause = status
-      ? { status: status as any }
-      : showAll
-        ? undefined
-        : { status: { in: activeStatuses as any } };
+    // Build where clause based on filters
+    // By default, hide dismissed orders unless showDismissed=true
+    const dismissedFilter = showDismissed ? {} : { dismissed: false };
+
+    let whereClause: any;
+    if (status) {
+      whereClause = { status: status as any, ...dismissedFilter };
+    } else if (showAll) {
+      whereClause = dismissedFilter;
+    } else {
+      whereClause = { status: { in: activeStatuses as any }, ...dismissedFilter };
+    }
 
     const orders = await prisma.order.findMany({
       where: whereClause,
@@ -102,6 +110,38 @@ export async function GET(request: NextRequest) {
     console.error('Error fetching orders:', error);
     return NextResponse.json(
       { error: 'Failed to fetch orders' },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH - Dismiss order (hide from dashboard)
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { orderNumber, dismissed } = body;
+
+    if (!orderNumber) {
+      return NextResponse.json(
+        { error: 'Missing orderNumber' },
+        { status: 400 }
+      );
+    }
+
+    const updated = await prisma.order.update({
+      where: { orderNumber },
+      data: { dismissed: dismissed ?? true },
+      select: { orderNumber: true, dismissed: true },
+    });
+
+    return NextResponse.json({
+      success: true,
+      order: updated,
+    });
+  } catch (error) {
+    console.error('Error dismissing order:', error);
+    return NextResponse.json(
+      { error: 'Failed to dismiss order' },
       { status: 500 }
     );
   }
