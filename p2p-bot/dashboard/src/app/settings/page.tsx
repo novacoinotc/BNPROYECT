@@ -46,7 +46,7 @@ export default function SettingsPage() {
   // Auto-message state
   const [autoMessageEnabled, setAutoMessageEnabled] = useState(false);
   const [autoMessageText, setAutoMessageText] = useState(
-    '¡Gracias por tu confianza! 🙏\n\nSi tu experiencia de compra fue positiva y el proceso fue rápido y confiable, agradeceríamos mucho un comentario positivo ⭐\n\nEstamos para servirte en tus futuras compras.\n¡Hasta pronto!'
+    '¡Gracias por tu confianza! 🙏\n\nSi tu experiencia de compra fue positiva y el proceso fue rápido y confiable, agradeceríamos mucho un comentario positivo ⭐\n\nEstamos para servirte en tus futuras compras.\n\n¿Necesitas ayuda adicional? Escribe: AYUDA\n\n¡Hasta pronto!'
   );
 
   const fetchConfig = useCallback(async () => {

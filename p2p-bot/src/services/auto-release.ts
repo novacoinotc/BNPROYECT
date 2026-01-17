@@ -327,6 +327,74 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         timestamp: new Date(event.message.createTime),
       });
     }
+
+    // Check for AYUDA keyword in text messages (support request)
+    if (event.type === 'message' && event.message && !event.message.self) {
+      const content = (event.message.content || '').toUpperCase().trim();
+      if (content === 'AYUDA' || content.includes('AYUDA')) {
+        await this.handleSupportRequest(event.message);
+      }
+    }
+  }
+
+  /**
+   * Handle support request when buyer writes AYUDA
+   */
+  private async handleSupportRequest(message: {
+    orderNo: string;
+    content: string;
+    fromNickName: string;
+  }): Promise<void> {
+    const orderNumber = message.orderNo;
+
+    try {
+      // Check if there's already a pending support request for this order
+      const hasPending = await db.hasPendingSupportRequest(orderNumber);
+      if (hasPending) {
+        logger.debug({ orderNumber }, '📋 [SUPPORT] Already has pending support request, skipping duplicate');
+        return;
+      }
+
+      // Get order details to include amount and buyer real name
+      const order = this.orderManager.getOrder(orderNumber);
+      const buyerNickName = message.fromNickName || order?.counterPartNickName || 'Unknown';
+      const buyerRealName = (order as any)?.buyerRealName || null;
+      const amount = order ? parseFloat(order.totalPrice) : 0;
+
+      // Create support request
+      await db.createSupportRequest(
+        orderNumber,
+        buyerNickName,
+        buyerRealName,
+        amount,
+        message.content || 'AYUDA'
+      );
+
+      logger.info({
+        orderNumber,
+        buyerNickName,
+        buyerRealName,
+        amount,
+      }, '🆘 [SUPPORT] New support request created - buyer needs assistance');
+
+      // Create alert for visibility in dashboard
+      await db.createAlert({
+        type: 'support_request',
+        severity: 'info',
+        title: 'Solicitud de Ayuda',
+        message: `${buyerNickName} necesita ayuda con la orden ${orderNumber}`,
+        orderNumber,
+        metadata: {
+          buyerNickName,
+          buyerRealName,
+          amount,
+          message: message.content,
+        },
+      });
+
+    } catch (error) {
+      logger.error({ orderNumber, error }, '❌ [SUPPORT] Error creating support request');
+    }
   }
 
   /**

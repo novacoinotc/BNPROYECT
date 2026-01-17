@@ -293,6 +293,30 @@ model AuditLog {
   @@index([createdAt])
 }
 
+/// Support requests from buyers who need additional help
+model SupportRequest {
+  id                String   @id @default(cuid())
+  orderNumber       String
+  buyerNickName     String
+  buyerRealName     String?
+  amount            Decimal  @db.Decimal(18, 2)
+  message           String?  // The message that triggered the request
+
+  // Status: PENDING, ATTENDED, CLOSED
+  status            String   @default("PENDING")
+
+  // Timestamps
+  createdAt         DateTime @default(now())
+  attendedAt        DateTime?
+  attendedBy        String?
+  closedAt          DateTime?
+  notes             String?  // Notes from support
+
+  @@index([status])
+  @@index([orderNumber])
+  @@index([createdAt])
+}
+
 /// Bot configuration - kill switches and settings
 model BotConfig {
   id                  String   @id @default("main")

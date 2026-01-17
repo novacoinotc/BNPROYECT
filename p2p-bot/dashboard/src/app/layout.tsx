@@ -45,6 +45,9 @@ export default function RootLayout({
                     <a href="/trusted-buyers" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
                       Trusted
                     </a>
+                    <a href="/support-requests" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
+                      Ayuda
+                    </a>
                     <a href="/settings" className="px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-hover transition-all">
                       Settings
                     </a>

@@ -1712,6 +1712,136 @@ export async function isPositioningEnabled(): Promise<boolean> {
   return config.positioningEnabled;
 }
 
+// ==================== SUPPORT REQUESTS ====================
+
+export interface SupportRequest {
+  id: string;
+  orderNumber: string;
+  buyerNickName: string;
+  buyerRealName: string | null;
+  amount: number;
+  message: string | null;
+  status: 'PENDING' | 'ATTENDED' | 'CLOSED';
+  createdAt: Date;
+  attendedAt: Date | null;
+  attendedBy: string | null;
+  closedAt: Date | null;
+  notes: string | null;
+}
+
+/**
+ * Create a new support request
+ */
+export async function createSupportRequest(
+  orderNumber: string,
+  buyerNickName: string,
+  buyerRealName: string | null,
+  amount: number,
+  message: string | null
+): Promise<SupportRequest> {
+  const db = getPool();
+  const id = generateId();
+
+  const result = await db.query(
+    `INSERT INTO "SupportRequest" (id, "orderNumber", "buyerNickName", "buyerRealName", amount, message, status, "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW())
+     RETURNING *`,
+    [id, orderNumber, buyerNickName, buyerRealName, amount, message]
+  );
+
+  logger.info({ orderNumber, buyerNickName }, '🆘 [SUPPORT] New support request created');
+  return result.rows[0];
+}
+
+/**
+ * Check if a support request already exists for this order (to avoid duplicates)
+ */
+export async function hasPendingSupportRequest(orderNumber: string): Promise<boolean> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT id FROM "SupportRequest" WHERE "orderNumber" = $1 AND status = 'PENDING' LIMIT 1`,
+    [orderNumber]
+  );
+
+  return result.rows.length > 0;
+}
+
+/**
+ * Get all support requests with optional status filter
+ */
+export async function getSupportRequests(status?: string): Promise<SupportRequest[]> {
+  const db = getPool();
+
+  let query = `SELECT * FROM "SupportRequest"`;
+  const params: any[] = [];
+
+  if (status) {
+    query += ` WHERE status = $1`;
+    params.push(status);
+  }
+
+  query += ` ORDER BY "createdAt" DESC`;
+
+  const result = await db.query(query, params);
+  return result.rows;
+}
+
+/**
+ * Update support request status
+ */
+export async function updateSupportRequestStatus(
+  id: string,
+  status: 'PENDING' | 'ATTENDED' | 'CLOSED',
+  attendedBy?: string,
+  notes?: string
+): Promise<void> {
+  const db = getPool();
+
+  const updates: string[] = [`status = $1`];
+  const values: any[] = [status];
+  let paramIndex = 2;
+
+  if (status === 'ATTENDED') {
+    updates.push(`"attendedAt" = NOW()`);
+    if (attendedBy) {
+      updates.push(`"attendedBy" = $${paramIndex++}`);
+      values.push(attendedBy);
+    }
+  }
+
+  if (status === 'CLOSED') {
+    updates.push(`"closedAt" = NOW()`);
+  }
+
+  if (notes !== undefined) {
+    updates.push(`notes = $${paramIndex++}`);
+    values.push(notes);
+  }
+
+  values.push(id);
+
+  await db.query(
+    `UPDATE "SupportRequest" SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+    values
+  );
+
+  logger.info({ id, status }, '📝 [SUPPORT] Request status updated');
+}
+
+/**
+ * Get count of pending support requests
+ */
+export async function getPendingSupportRequestCount(): Promise<number> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT COUNT(*) as count FROM "SupportRequest" WHERE status = 'PENDING'`
+  );
+
+  return parseInt(result.rows[0].count);
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {
