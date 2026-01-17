@@ -491,34 +491,54 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       logger.error({ error }, 'Error during smart payment matching');
     }
 
-    // No match found - mark as THIRD_PARTY
-    // Any payment that doesn't immediately match an order by amount AND name is suspicious
-    logger.warn({
-      transactionId: payment.transactionId,
-      amount: payment.amount,
-      sender: payment.senderName,
-    }, '🚨 [THIRD_PARTY] Payment did not match any order - marking as THIRD_PARTY');
-
+    // No immediate match found - check if sender is a KNOWN buyer (in any PENDING or PAID order)
+    // If sender is known → keep as PENDING (waiting for order to be marked as paid or amount to match)
+    // If sender is unknown → mark as THIRD_PARTY
     try {
-      await db.markPaymentAsThirdParty(
-        payment.transactionId,
-        `No order matched for sender "${payment.senderName}" with amount $${payment.amount}`
-      );
+      const knownBuyerCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
 
-      // Create alert for manual review
-      await db.createAlert({
-        type: 'third_party_payment',
-        severity: 'warning',
-        title: 'Pago de Tercero Detectado',
-        message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ninguna orden`,
-        metadata: {
+      if (knownBuyerCheck.hasMatch) {
+        // Sender is a known buyer - keep payment as PENDING
+        // It will match later when buyer marks order as paid or if amount changes
+        logger.info({
           transactionId: payment.transactionId,
           amount: payment.amount,
-          senderName: payment.senderName,
-        },
-      });
+          sender: payment.senderName,
+          potentialOrders: knownBuyerCheck.matchedOrders?.map(o => ({
+            orderNumber: o.orderNumber,
+            buyerRealName: o.buyerRealName,
+          })),
+        }, '📝 [PENDING] Payment from known buyer - waiting for order match');
+        // Payment stays as PENDING (default status from webhook-receiver)
+      } else {
+        // Sender is NOT a known buyer - mark as THIRD_PARTY
+        logger.warn({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+        }, '🚨 [THIRD_PARTY] Payment sender not recognized - marking as THIRD_PARTY');
+
+        await db.markPaymentAsThirdParty(
+          payment.transactionId,
+          `Sender "${payment.senderName}" does not match any buyer in open orders`
+        );
+
+        // Create alert for manual review
+        await db.createAlert({
+          type: 'third_party_payment',
+          severity: 'warning',
+          title: 'Pago de Tercero Detectado',
+          message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ningún comprador conocido`,
+          metadata: {
+            transactionId: payment.transactionId,
+            amount: payment.amount,
+            senderName: payment.senderName,
+          },
+        });
+      }
     } catch (error) {
-      logger.error({ error, transactionId: payment.transactionId }, 'Error marking payment as third-party');
+      logger.error({ error, transactionId: payment.transactionId }, 'Error checking for third-party payment');
+      // On error, keep as PENDING for safety (don't mark as third-party without confirmation)
     }
   }
 
