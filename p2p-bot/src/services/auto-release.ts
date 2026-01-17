@@ -179,6 +179,11 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         orderNumber: order.orderNumber,
         buyerRealName: buyerRealName || '(not available)',
       }, '📋 [SYNC_MATCHED] Got buyer real name');
+
+      // Save to DB for future lookups
+      if (buyerRealName) {
+        await db.updateOrderBuyerName(order.orderNumber, buyerRealName);
+      }
     } catch (error) {
       logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [SYNC_MATCHED] Failed to fetch order detail');
     }
@@ -337,7 +342,33 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       sender: payment.senderName,
     }, '💰 Processing bank payment webhook');
 
-    // SMART MATCH: Find order with matching amount AND buyer name
+    // STEP 1: Populate missing buyer names for PAID orders with matching amount
+    // This ensures we can compare names even when the order was synced before details were fetched
+    try {
+      const ordersNeedingNames = await db.getOrdersNeedingBuyerName(payment.amount, 1);
+      if (ordersNeedingNames.length > 0) {
+        logger.info({
+          count: ordersNeedingNames.length,
+          orders: ordersNeedingNames.map(o => o.orderNumber),
+        }, '🔄 [PRE-MATCH] Fetching buyer names for orders missing buyerRealName');
+
+        for (const order of ordersNeedingNames) {
+          try {
+            const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+            const buyerRealName = (orderDetail as any).buyerRealName;
+            if (buyerRealName) {
+              await db.updateOrderBuyerName(order.orderNumber, buyerRealName);
+            }
+          } catch (err) {
+            logger.warn({ orderNumber: order.orderNumber, error: err }, '⚠️ [PRE-MATCH] Failed to fetch order detail');
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ error: err }, '⚠️ [PRE-MATCH] Error populating buyer names');
+    }
+
+    // STEP 2: SMART MATCH - Find order with matching amount AND buyer name
     // This prevents payment from "bouncing" between orders with same amount
     try {
       const smartMatch = await db.findOrderByAmountAndName(
@@ -588,6 +619,10 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           try {
             const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
             buyerRealName = (orderDetail as any).buyerRealName || null;
+            // Save to DB for future lookups
+            if (buyerRealName) {
+              await db.updateOrderBuyerName(order.orderNumber, buyerRealName);
+            }
           } catch (err) {
             logger.warn({ orderNumber: order.orderNumber }, '⚠️ Could not fetch buyer real name');
           }

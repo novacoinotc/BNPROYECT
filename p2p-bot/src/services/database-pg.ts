@@ -476,6 +476,50 @@ export async function findOrderByAmountAndName(
 }
 
 /**
+ * Get PAID orders that have NULL buyerRealName and match a given amount
+ * Used to populate missing names before smart matching
+ */
+export async function getOrdersNeedingBuyerName(
+  amount: number,
+  tolerancePercent: number = 1
+): Promise<Array<{ orderNumber: string }>> {
+  const db = getPool();
+  const tolerance = amount * (tolerancePercent / 100);
+  const minAmount = amount - tolerance;
+  const maxAmount = amount + tolerance;
+
+  const result = await db.query(
+    `SELECT "orderNumber"
+     FROM "Order"
+     WHERE status = 'PAID'::"OrderStatus"
+       AND "totalPrice"::numeric BETWEEN $1 AND $2
+       AND "releasedAt" IS NULL
+       AND "buyerRealName" IS NULL
+     ORDER BY "binanceCreateTime" DESC
+     LIMIT 10`,
+    [minAmount, maxAmount]
+  );
+
+  return result.rows;
+}
+
+/**
+ * Update the buyerRealName for an order
+ */
+export async function updateOrderBuyerName(
+  orderNumber: string,
+  buyerRealName: string
+): Promise<void> {
+  const db = getPool();
+  await db.query(
+    `UPDATE "Order" SET "buyerRealName" = $1, "updatedAt" = NOW()
+     WHERE "orderNumber" = $2`,
+    [buyerRealName, orderNumber]
+  );
+  logger.info({ orderNumber, buyerRealName }, '📝 [DB] Updated buyer real name for order');
+}
+
+/**
  * Get payment by transaction ID
  */
 export async function getPaymentByTransactionId(transactionId: string) {
