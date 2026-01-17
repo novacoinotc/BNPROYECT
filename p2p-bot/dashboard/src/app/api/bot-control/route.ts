@@ -31,11 +31,31 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       config: {
+        // Kill switches
         releaseEnabled: config.releaseEnabled,
         positioningEnabled: config.positioningEnabled,
         positioningMode: config.positioningMode,
+
+        // Follow mode
         followTargetNickName: config.followTargetNickName,
         followTargetUserNo: config.followTargetUserNo,
+
+        // Smart mode filters
+        smartMinUserGrade: config.smartMinUserGrade ?? 2,
+        smartMinFinishRate: config.smartMinFinishRate ?? 0.90,
+        smartMinOrderCount: config.smartMinOrderCount ?? 10,
+        smartMinPositiveRate: config.smartMinPositiveRate ?? 0.95,
+        smartRequireOnline: config.smartRequireOnline ?? true,
+        smartMinSurplus: config.smartMinSurplus ?? 100,
+
+        // Strategy
+        undercutCents: config.undercutCents ?? 1,
+
+        // Auto-message
+        autoMessageEnabled: config.autoMessageEnabled ?? false,
+        autoMessageText: config.autoMessageText ?? '',
+
+        // Status
         releaseLastActive: config.releaseLastActive,
         positioningLastActive: config.positioningLastActive,
         updatedAt: config.updatedAt,
@@ -51,46 +71,80 @@ export async function GET() {
   }
 }
 
-// POST - Update bot configuration (kill switches)
+// POST - Update bot configuration
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const {
-      releaseEnabled,
-      positioningEnabled,
-      positioningMode,
-      followTargetNickName,
-      followTargetUserNo,
-    } = body;
 
     // Build dynamic update query
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
-    if (typeof releaseEnabled === 'boolean') {
+    // Kill switches
+    if (typeof body.releaseEnabled === 'boolean') {
       updates.push(`"releaseEnabled" = $${paramIndex++}`);
-      values.push(releaseEnabled);
+      values.push(body.releaseEnabled);
     }
-
-    if (typeof positioningEnabled === 'boolean') {
+    if (typeof body.positioningEnabled === 'boolean') {
       updates.push(`"positioningEnabled" = $${paramIndex++}`);
-      values.push(positioningEnabled);
+      values.push(body.positioningEnabled);
     }
-
-    if (typeof positioningMode === 'string') {
+    if (typeof body.positioningMode === 'string') {
       updates.push(`"positioningMode" = $${paramIndex++}`);
-      values.push(positioningMode);
+      values.push(body.positioningMode);
     }
 
-    if (followTargetNickName !== undefined) {
+    // Follow mode
+    if (body.followTargetNickName !== undefined) {
       updates.push(`"followTargetNickName" = $${paramIndex++}`);
-      values.push(followTargetNickName || null);
+      values.push(body.followTargetNickName || null);
+    }
+    if (body.followTargetUserNo !== undefined) {
+      updates.push(`"followTargetUserNo" = $${paramIndex++}`);
+      values.push(body.followTargetUserNo || null);
     }
 
-    if (followTargetUserNo !== undefined) {
-      updates.push(`"followTargetUserNo" = $${paramIndex++}`);
-      values.push(followTargetUserNo || null);
+    // Smart mode filters
+    if (typeof body.smartMinUserGrade === 'number') {
+      updates.push(`"smartMinUserGrade" = $${paramIndex++}`);
+      values.push(body.smartMinUserGrade);
+    }
+    if (typeof body.smartMinFinishRate === 'number') {
+      updates.push(`"smartMinFinishRate" = $${paramIndex++}`);
+      values.push(body.smartMinFinishRate);
+    }
+    if (typeof body.smartMinOrderCount === 'number') {
+      updates.push(`"smartMinOrderCount" = $${paramIndex++}`);
+      values.push(body.smartMinOrderCount);
+    }
+    if (typeof body.smartMinPositiveRate === 'number') {
+      updates.push(`"smartMinPositiveRate" = $${paramIndex++}`);
+      values.push(body.smartMinPositiveRate);
+    }
+    if (typeof body.smartRequireOnline === 'boolean') {
+      updates.push(`"smartRequireOnline" = $${paramIndex++}`);
+      values.push(body.smartRequireOnline);
+    }
+    if (typeof body.smartMinSurplus === 'number') {
+      updates.push(`"smartMinSurplus" = $${paramIndex++}`);
+      values.push(body.smartMinSurplus);
+    }
+
+    // Strategy
+    if (typeof body.undercutCents === 'number') {
+      updates.push(`"undercutCents" = $${paramIndex++}`);
+      values.push(body.undercutCents);
+    }
+
+    // Auto-message
+    if (typeof body.autoMessageEnabled === 'boolean') {
+      updates.push(`"autoMessageEnabled" = $${paramIndex++}`);
+      values.push(body.autoMessageEnabled);
+    }
+    if (body.autoMessageText !== undefined) {
+      updates.push(`"autoMessageText" = $${paramIndex++}`);
+      values.push(body.autoMessageText || null);
     }
 
     if (updates.length === 0) {
@@ -119,33 +173,31 @@ export async function POST(request: NextRequest) {
     const config = result.rows[0];
 
     // Log the action
-    const action = [];
-    if (typeof releaseEnabled === 'boolean') {
-      action.push(`release:${releaseEnabled ? 'ON' : 'OFF'}`);
-    }
-    if (typeof positioningEnabled === 'boolean') {
-      action.push(`positioning:${positioningEnabled ? 'ON' : 'OFF'}`);
-    }
-    if (positioningMode) {
-      action.push(`mode:${positioningMode}`);
-    }
-
     const logId = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
     await pool.query(
       `INSERT INTO "AuditLog" (id, action, details, success, "createdAt")
        VALUES ($1, 'bot_config_changed', $2, true, NOW())`,
-      [logId, JSON.stringify({ changes: action.join(', '), ...body })]
+      [logId, JSON.stringify(body)]
     );
 
     return NextResponse.json({
       success: true,
-      message: `Bot configuration updated: ${action.join(', ')}`,
+      message: 'Bot configuration updated',
       config: {
         releaseEnabled: config.releaseEnabled,
         positioningEnabled: config.positioningEnabled,
         positioningMode: config.positioningMode,
         followTargetNickName: config.followTargetNickName,
         followTargetUserNo: config.followTargetUserNo,
+        smartMinUserGrade: config.smartMinUserGrade,
+        smartMinFinishRate: config.smartMinFinishRate,
+        smartMinOrderCount: config.smartMinOrderCount,
+        smartMinPositiveRate: config.smartMinPositiveRate,
+        smartRequireOnline: config.smartRequireOnline,
+        smartMinSurplus: config.smartMinSurplus,
+        undercutCents: config.undercutCents,
+        autoMessageEnabled: config.autoMessageEnabled,
+        autoMessageText: config.autoMessageText,
         updatedAt: config.updatedAt,
       },
     });

@@ -1599,6 +1599,18 @@ export interface BotConfig {
   positioningMode: string;
   followTargetNickName: string | null;
   followTargetUserNo: string | null;
+  // Smart mode filters
+  smartMinUserGrade: number;
+  smartMinFinishRate: number;
+  smartMinOrderCount: number;
+  smartMinPositiveRate: number;
+  smartRequireOnline: boolean;
+  smartMinSurplus: number;
+  // Strategy
+  undercutCents: number;
+  // Auto-message
+  autoMessageEnabled: boolean;
+  autoMessageText: string | null;
 }
 
 /**
@@ -1633,6 +1645,18 @@ export async function getBotConfig(): Promise<BotConfig> {
       positioningMode: row?.positioningMode ?? 'off',
       followTargetNickName: row?.followTargetNickName ?? null,
       followTargetUserNo: row?.followTargetUserNo ?? null,
+      // Smart mode filters
+      smartMinUserGrade: row?.smartMinUserGrade ?? 2,
+      smartMinFinishRate: row?.smartMinFinishRate ?? 0.90,
+      smartMinOrderCount: row?.smartMinOrderCount ?? 10,
+      smartMinPositiveRate: row?.smartMinPositiveRate ?? 0.95,
+      smartRequireOnline: row?.smartRequireOnline ?? true,
+      smartMinSurplus: row?.smartMinSurplus ?? 100,
+      // Strategy
+      undercutCents: row?.undercutCents ?? 1,
+      // Auto-message
+      autoMessageEnabled: row?.autoMessageEnabled ?? false,
+      autoMessageText: row?.autoMessageText ?? null,
     };
   } catch (error) {
     logger.warn({ error }, 'Failed to get bot config, using defaults');
@@ -1642,6 +1666,15 @@ export async function getBotConfig(): Promise<BotConfig> {
       positioningMode: 'off',
       followTargetNickName: null,
       followTargetUserNo: null,
+      smartMinUserGrade: 2,
+      smartMinFinishRate: 0.90,
+      smartMinOrderCount: 10,
+      smartMinPositiveRate: 0.95,
+      smartRequireOnline: true,
+      smartMinSurplus: 100,
+      undercutCents: 1,
+      autoMessageEnabled: false,
+      autoMessageText: null,
     };
   }
 }

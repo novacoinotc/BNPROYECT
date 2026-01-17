@@ -308,6 +308,21 @@ model BotConfig {
   followTargetNickName String?
   followTargetUserNo   String?
 
+  // Smart mode filters
+  smartMinUserGrade     Int      @default(2)
+  smartMinFinishRate    Float    @default(0.90)
+  smartMinOrderCount    Int      @default(10)
+  smartMinPositiveRate  Float    @default(0.95)
+  smartRequireOnline    Boolean  @default(true)
+  smartMinSurplus       Float    @default(100)
+
+  // Positioning strategy
+  undercutCents         Float    @default(1)    // Centavos a bajar del mejor competidor
+
+  // Auto-message after release
+  autoMessageEnabled    Boolean  @default(false)
+  autoMessageText       String?  @db.Text
+
   // Status tracking
   releaseLastActive   DateTime?
   positioningLastActive DateTime?
