@@ -214,7 +214,7 @@ export async function matchPaymentToOrder(
   method: 'BANK_WEBHOOK' | 'OCR_RECEIPT' | 'MANUAL',
   ocrConfidence?: number,
   receiptUrl?: string
-): Promise<void> {
+): Promise<boolean> {
   const db = getPool();
 
   const orderResult = await db.query(
@@ -226,7 +226,26 @@ export async function matchPaymentToOrder(
     throw new Error(`Order ${orderNumber} not found`);
   }
 
-  await db.query(
+  // CRITICAL: Check if payment was already released (prevent double-spend)
+  const paymentCheck = await db.query(
+    'SELECT status, "matchedOrderId" FROM "Payment" WHERE "transactionId" = $1',
+    [transactionId]
+  );
+
+  if (paymentCheck.rows.length > 0) {
+    const payment = paymentCheck.rows[0];
+    if (payment.status === 'RELEASED') {
+      logger.warn({
+        transactionId,
+        orderNumber,
+        previousOrderId: payment.matchedOrderId,
+      }, '🚫 [DOUBLE-SPEND BLOCKED] Payment was already used for a released order!');
+      return false; // Payment already used - don't allow re-matching
+    }
+  }
+
+  // Only match if payment is PENDING (not already matched or released)
+  const result = await db.query(
     `UPDATE "Payment" SET
       status = 'MATCHED',
       "matchedOrderId" = $1,
@@ -235,11 +254,18 @@ export async function matchPaymentToOrder(
       "ocrConfidence" = $3,
       "receiptUrl" = $4,
       "updatedAt" = NOW()
-    WHERE "transactionId" = $5`,
+    WHERE "transactionId" = $5
+      AND status IN ('PENDING', 'MATCHED')`,
     [orderResult.rows[0].id, method, ocrConfidence || null, receiptUrl || null, transactionId]
   );
 
+  if (result.rowCount === 0) {
+    logger.warn({ transactionId, orderNumber }, '⚠️ Payment not matched - may already be released or not found');
+    return false;
+  }
+
   logger.info({ transactionId, orderNumber }, 'Payment matched to order');
+  return true;
 }
 
 /**
@@ -373,6 +399,47 @@ export async function markPaymentReleased(orderNumber: string): Promise<void> {
     AND status = 'MATCHED'`,
     [orderNumber]
   );
+}
+
+/**
+ * Check if a transactionId was already used to release crypto (double-spend protection)
+ * Call this BEFORE releasing crypto as a final safety check
+ */
+export async function isPaymentAlreadyReleased(transactionId: string): Promise<{
+  released: boolean;
+  orderNumber?: string;
+  releasedAt?: Date;
+}> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT p.status, p."matchedAt", o."orderNumber", o."releasedAt"
+     FROM "Payment" p
+     LEFT JOIN "Order" o ON p."matchedOrderId" = o.id
+     WHERE p."transactionId" = $1`,
+    [transactionId]
+  );
+
+  if (result.rows.length === 0) {
+    return { released: false };
+  }
+
+  const payment = result.rows[0];
+  if (payment.status === 'RELEASED') {
+    logger.warn({
+      transactionId,
+      orderNumber: payment.orderNumber,
+      releasedAt: payment.releasedAt,
+    }, '🚫 [DOUBLE-SPEND CHECK] This payment was already used for a released order!');
+
+    return {
+      released: true,
+      orderNumber: payment.orderNumber,
+      releasedAt: payment.releasedAt,
+    };
+  }
+
+  return { released: false };
 }
 
 /**

@@ -1327,6 +1327,43 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       return;
     }
 
+    // CRITICAL: Double-spend protection - verify payment wasn't already used
+    if (pending.bankMatch?.transactionId) {
+      const doubleSpendCheck = await db.isPaymentAlreadyReleased(pending.bankMatch.transactionId);
+      if (doubleSpendCheck.released) {
+        logger.error({
+          orderNumber,
+          transactionId: pending.bankMatch.transactionId,
+          previousOrder: doubleSpendCheck.orderNumber,
+          previousReleasedAt: doubleSpendCheck.releasedAt,
+        }, '🚫 [DOUBLE-SPEND BLOCKED] This payment was already used to release another order!');
+
+        // Create critical alert
+        await db.createAlert({
+          type: 'double_spend_attempt',
+          severity: 'critical',
+          title: 'Intento de doble uso de pago detectado',
+          message: `El pago ${pending.bankMatch.transactionId} ya fue usado para liberar la orden ${doubleSpendCheck.orderNumber}`,
+          orderNumber,
+          metadata: {
+            transactionId: pending.bankMatch.transactionId,
+            currentOrder: orderNumber,
+            previousOrder: doubleSpendCheck.orderNumber,
+            previousReleasedAt: doubleSpendCheck.releasedAt,
+          },
+        });
+
+        // Cleanup
+        this.pendingReleases.delete(orderNumber);
+        this.emit('release', {
+          type: 'release_failed',
+          orderNumber,
+          reason: 'Double-spend attempt blocked - payment already used for another order',
+        } as ReleaseEvent);
+        return;
+      }
+    }
+
     // Check order is still in BUYER_PAYED status (waiting for release)
     let currentOrder = this.orderManager.getOrder(orderNumber);
 
