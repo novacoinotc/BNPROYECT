@@ -520,6 +520,27 @@ export async function updateOrderBuyerName(
 }
 
 /**
+ * Get ALL open orders (PENDING or PAID) that need buyerRealName populated
+ * Used for third-party payment detection - we need to know ALL buyer names
+ * before we can determine if a payment sender is a known buyer
+ */
+export async function getAllOpenOrdersNeedingBuyerName(): Promise<Array<{ orderNumber: string }>> {
+  const db = getPool();
+
+  const result = await db.query(
+    `SELECT "orderNumber"
+     FROM "Order"
+     WHERE status IN ('PENDING', 'PAID')
+       AND "releasedAt" IS NULL
+       AND "buyerRealName" IS NULL
+     ORDER BY "binanceCreateTime" DESC
+     LIMIT 50`
+  );
+
+  return result.rows;
+}
+
+/**
  * Get payment by transaction ID
  */
 export async function getPaymentByTransactionId(transactionId: string) {

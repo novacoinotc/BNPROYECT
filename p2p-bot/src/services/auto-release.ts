@@ -494,6 +494,32 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // No immediate match found - check if sender is a KNOWN buyer (in any PENDING or PAID order)
     // If sender is known → keep as PENDING (waiting for order to be marked as paid or amount to match)
     // If sender is unknown → mark as THIRD_PARTY
+
+    // IMPORTANT: First populate buyer names for ALL open orders (not just matching amount)
+    // This ensures we don't incorrectly mark legitimate payments as THIRD_PARTY
+    try {
+      const allOrdersNeedingNames = await db.getAllOpenOrdersNeedingBuyerName();
+      if (allOrdersNeedingNames.length > 0) {
+        logger.info({
+          count: allOrdersNeedingNames.length,
+        }, '🔄 [THIRD_PARTY CHECK] Fetching buyer names for ALL open orders');
+
+        for (const order of allOrdersNeedingNames) {
+          try {
+            const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+            const buyerRealName = (orderDetail as any).buyerRealName;
+            if (buyerRealName) {
+              await db.updateOrderBuyerName(order.orderNumber, buyerRealName);
+            }
+          } catch (err) {
+            logger.warn({ orderNumber: order.orderNumber, error: err }, '⚠️ [THIRD_PARTY CHECK] Failed to fetch order detail');
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ error: err }, '⚠️ [THIRD_PARTY CHECK] Error populating buyer names');
+    }
+
     try {
       const knownBuyerCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
 
