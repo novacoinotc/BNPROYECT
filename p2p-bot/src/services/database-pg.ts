@@ -354,6 +354,128 @@ export async function findOrdersAwaitingPayment(
 }
 
 /**
+ * Find order by amount AND buyer name (smart matching)
+ * Prioritizes orders where the buyer's real name matches the payment sender
+ * Returns null if no confident match found
+ */
+export async function findOrderByAmountAndName(
+  amount: number,
+  senderName: string,
+  tolerancePercent: number = 1
+): Promise<{
+  orderNumber: string;
+  totalPrice: string;
+  buyerNickName: string;
+  buyerRealName: string | null;
+  createdAt: Date;
+  nameMatchScore: number;
+} | null> {
+  const db = getPool();
+  const tolerance = amount * (tolerancePercent / 100);
+  const minAmount = amount - tolerance;
+  const maxAmount = amount + tolerance;
+
+  // Normalize sender name for comparison
+  const normalizedSender = senderName
+    .toLowerCase()
+    .trim()
+    .replace(/[,\/\.\-\_\|]/g, ' ')
+    .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const senderWords = new Set(normalizedSender.split(/\s+/).filter(w => w.length > 2));
+
+  logger.info({
+    amount,
+    senderName,
+    normalizedSender,
+    senderWords: Array.from(senderWords),
+  }, '🔍 [SMART MATCH] Searching for order by amount AND name');
+
+  // Get all orders with matching amount
+  const result = await db.query(
+    `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", "createdAt"
+     FROM "Order"
+     WHERE status = 'PAID'::"OrderStatus"
+       AND "totalPrice"::numeric BETWEEN $1 AND $2
+       AND "releasedAt" IS NULL
+     ORDER BY "binanceCreateTime" DESC
+     LIMIT 20`,
+    [minAmount, maxAmount]
+  );
+
+  if (result.rows.length === 0) {
+    logger.info({ amount }, '🔍 [SMART MATCH] No orders found with matching amount');
+    return null;
+  }
+
+  // Score each order by name similarity
+  let bestMatch: typeof result.rows[0] | null = null;
+  let bestScore = 0;
+
+  for (const order of result.rows) {
+    const buyerName = order.buyerRealName || order.buyerNickName || '';
+
+    // Normalize buyer name
+    const normalizedBuyer = buyerName
+      .toLowerCase()
+      .trim()
+      .replace(/[,\/\.\-\_\|]/g, ' ')
+      .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const buyerWords = new Set(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
+
+    // Calculate word overlap score
+    let matches = 0;
+    for (const word of senderWords) {
+      if (buyerWords.has(word)) matches++;
+    }
+    const totalWords = Math.max(senderWords.size, buyerWords.size);
+    const score = totalWords > 0 ? matches / totalWords : 0;
+
+    logger.debug({
+      orderNumber: order.orderNumber,
+      buyerName,
+      normalizedBuyer,
+      score: score.toFixed(2),
+    }, '🔍 [SMART MATCH] Comparing with order');
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = order;
+    }
+  }
+
+  // Only return if we have a confident match (>30% name similarity)
+  if (bestMatch && bestScore > 0.3) {
+    logger.info({
+      orderNumber: bestMatch.orderNumber,
+      buyerRealName: bestMatch.buyerRealName,
+      buyerNickName: bestMatch.buyerNickName,
+      senderName,
+      matchScore: bestScore.toFixed(2),
+    }, '✅ [SMART MATCH] Found order with matching amount AND name');
+
+    return {
+      ...bestMatch,
+      nameMatchScore: bestScore,
+    };
+  }
+
+  logger.info({
+    amount,
+    senderName,
+    ordersChecked: result.rows.length,
+    bestScore: bestScore.toFixed(2),
+  }, '⚠️ [SMART MATCH] No order found with confident name match - payment will wait');
+
+  return null;
+}
+
+/**
  * Get payment by transaction ID
  */
 export async function getPaymentByTransactionId(transactionId: string) {

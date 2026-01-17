@@ -325,7 +325,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
   /**
    * Handle bank payment webhook
-   * Implements bidirectional matching: searches for orders awaiting this payment
+   * Implements SMART MATCHING: First finds orders with matching amount AND name
+   * Only matches if confident - prevents "bouncing" between orders with same amount
    */
   private async handleBankPayment(event: WebhookEvent): Promise<void> {
     const payment = event.payload;
@@ -336,160 +337,134 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       sender: payment.senderName,
     }, '💰 Processing bank payment webhook');
 
-    // First try in-memory match (for orders already being tracked)
-    const match = this.orderManager.matchBankPayment(payment);
-
-    if (match) {
-      const order = this.orderManager.getOrder(match.orderNumber);
-      if (order) {
-        logger.info({
-          orderNumber: match.orderNumber,
-          transactionId: payment.transactionId,
-        }, '✅ Bank payment matched (in-memory)');
-
-        await db.matchPaymentToOrder(payment.transactionId, match.orderNumber, 'BANK_WEBHOOK');
-        await this.handlePaymentMatch(order, match);
-        return;
-      }
-    }
-
-    // BIDIRECTIONAL MATCH: Search database for orders awaiting payment
+    // SMART MATCH: Find order with matching amount AND buyer name
+    // This prevents payment from "bouncing" between orders with same amount
     try {
-      const awaitingOrders = await db.findOrdersAwaitingPayment(payment.amount, 1); // 1% tolerance
+      const smartMatch = await db.findOrderByAmountAndName(
+        payment.amount,
+        payment.senderName,
+        1 // 1% tolerance
+      );
 
-      if (awaitingOrders.length > 0) {
+      if (smartMatch) {
         logger.info({
+          orderNumber: smartMatch.orderNumber,
           transactionId: payment.transactionId,
-          foundOrders: awaitingOrders.length,
-          orderNumbers: awaitingOrders.map(o => o.orderNumber),
-        }, '🔍 Found orders awaiting this payment amount');
+          buyerRealName: smartMatch.buyerRealName,
+          nameMatchScore: smartMatch.nameMatchScore,
+        }, '✅ [SMART MATCH] Payment matched to order by amount AND name');
 
-        // Try to match with best candidate
-        for (const dbOrder of awaitingOrders) {
-          // Use real name if available (matches bank sender name better than nickname)
-          const buyerNameToCompare = dbOrder.buyerRealName || dbOrder.buyerNickName;
-          const nameMatch = this.compareNames(payment.senderName, buyerNameToCompare);
-
-          logger.info({
-            orderNumber: dbOrder.orderNumber,
-            paymentSender: payment.senderName,
-            orderBuyerNick: dbOrder.buyerNickName,
-            orderBuyerReal: dbOrder.buyerRealName,
-            comparingWith: buyerNameToCompare,
-            nameMatch,
-          }, 'Comparing payment sender with order buyer');
-
-          // Match if: name similarity > 30%, OR only one order matches the amount, OR we have real name
-          if (nameMatch > 0.3 || awaitingOrders.length === 1 || dbOrder.buyerRealName) {
-            // Found a match!
-            logger.info({
-              orderNumber: dbOrder.orderNumber,
-              transactionId: payment.transactionId,
-            }, '✅ Bank payment matched to order (order was marked paid first)');
-
-            // Track: payment received and matched
-            await db.addVerificationStep(
-              dbOrder.orderNumber,
-              VerificationStatus.BANK_PAYMENT_RECEIVED,
-              `Pago bancario recibido de ${payment.senderName}`,
-              {
-                transactionId: payment.transactionId,
-                receivedAmount: payment.amount,
-                senderName: payment.senderName,
-              }
-            );
-
-            await db.addVerificationStep(
-              dbOrder.orderNumber,
-              VerificationStatus.PAYMENT_MATCHED,
-              `Pago vinculado a orden (orden marcada primero)`,
-              {
-                transactionId: payment.transactionId,
-                receivedAmount: payment.amount,
-                expectedAmount: dbOrder.totalPrice,
-                nameMatch: nameMatch.toFixed(2),
-                matchType: 'order_marked_first',
-              }
-            );
-
-            // Update DB
-            await db.matchPaymentToOrder(payment.transactionId, dbOrder.orderNumber, 'BANK_WEBHOOK');
-
-            // Create order match data
-            const orderMatch: OrderMatch = {
-              orderNumber: dbOrder.orderNumber,
-              bankTransactionId: payment.transactionId,
-              receivedAmount: payment.amount,
-              expectedAmount: parseFloat(dbOrder.totalPrice),
-              senderName: payment.senderName,
-              verified: true,
-              matchedAt: new Date(),
-            };
-
-            // Get full order from order manager
-            const order = this.orderManager.getOrder(dbOrder.orderNumber);
-
-            if (order) {
-              await this.handlePaymentMatch(order, orderMatch);
-            } else {
-              // Order not in memory - create minimal order for auto-release check
-              logger.info({
-                orderNumber: dbOrder.orderNumber,
-                amount: dbOrder.totalPrice,
-              }, '📦 Order not in memory - processing from DB for auto-release');
-
-              // Create a minimal order object from DB data for auto-release
-              const minimalOrder: OrderData = {
-                orderNumber: dbOrder.orderNumber,
-                orderStatus: 'BUYER_PAYED',
-                totalPrice: dbOrder.totalPrice,
-                unitPrice: '0',
-                amount: '0',
-                asset: 'USDT',
-                fiat: 'MXN',
-                fiatSymbol: 'Mex$',
-                counterPartNickName: dbOrder.buyerNickName,
-                tradeType: TradeType.SELL,
-                createTime: dbOrder.createdAt?.getTime() || Date.now(),
-                payMethodName: 'BANK',
-                commission: '0',
-                advNo: '',
-              };
-
-              // Process for auto-release even if order isn't in memory
-              await this.handlePaymentMatch(minimalOrder, orderMatch);
-
-              // Also create alert for visibility
-              await db.createAlert({
-                type: 'payment_matched',
-                severity: 'info',
-                title: 'Bank payment matched (auto-release triggered)',
-                message: `Payment ${payment.transactionId} matched to order ${dbOrder.orderNumber} - checking auto-release`,
-                orderNumber: dbOrder.orderNumber,
-                metadata: { transactionId: payment.transactionId, amount: payment.amount },
-              });
-            }
-
-            return;
+        // Track: payment received and matched
+        await db.addVerificationStep(
+          smartMatch.orderNumber,
+          VerificationStatus.BANK_PAYMENT_RECEIVED,
+          `Pago bancario recibido de ${payment.senderName}`,
+          {
+            transactionId: payment.transactionId,
+            receivedAmount: payment.amount,
+            senderName: payment.senderName,
           }
+        );
+
+        await db.addVerificationStep(
+          smartMatch.orderNumber,
+          VerificationStatus.PAYMENT_MATCHED,
+          `✅ Pago vinculado por monto Y nombre (${(smartMatch.nameMatchScore * 100).toFixed(0)}% similitud)`,
+          {
+            transactionId: payment.transactionId,
+            receivedAmount: payment.amount,
+            expectedAmount: smartMatch.totalPrice,
+            nameMatch: smartMatch.nameMatchScore.toFixed(2),
+            matchType: 'smart_match',
+          }
+        );
+
+        // Update DB - match payment to order
+        const matchSuccess = await db.matchPaymentToOrder(
+          payment.transactionId,
+          smartMatch.orderNumber,
+          'BANK_WEBHOOK'
+        );
+
+        if (!matchSuccess) {
+          logger.warn({
+            transactionId: payment.transactionId,
+            orderNumber: smartMatch.orderNumber,
+          }, '⚠️ Payment could not be matched (may already be released)');
+          return;
         }
 
-        // No name match found
+        // Create order match data
+        const orderMatch: OrderMatch = {
+          orderNumber: smartMatch.orderNumber,
+          bankTransactionId: payment.transactionId,
+          receivedAmount: payment.amount,
+          expectedAmount: parseFloat(smartMatch.totalPrice),
+          senderName: payment.senderName,
+          verified: true,
+          matchedAt: new Date(),
+        };
+
+        // Get full order from order manager or create minimal
+        let order = this.orderManager.getOrder(smartMatch.orderNumber);
+
+        if (!order) {
+          // Order not in memory - create minimal order
+          order = {
+            orderNumber: smartMatch.orderNumber,
+            orderStatus: 'BUYER_PAYED',
+            totalPrice: smartMatch.totalPrice,
+            unitPrice: '0',
+            amount: '0',
+            asset: 'USDT',
+            fiat: 'MXN',
+            fiatSymbol: 'Mex$',
+            counterPartNickName: smartMatch.buyerNickName,
+            buyerRealName: smartMatch.buyerRealName,
+            tradeType: TradeType.SELL,
+            createTime: smartMatch.createdAt?.getTime() || Date.now(),
+            payMethodName: 'BANK',
+            commission: '0',
+            advNo: '',
+          } as OrderData;
+
+          logger.info({
+            orderNumber: smartMatch.orderNumber,
+            amount: smartMatch.totalPrice,
+          }, '📦 Order not in memory - created minimal order for auto-release');
+        }
+
+        // Process the payment match
+        await this.handlePaymentMatch(order, orderMatch);
+        return;
+      }
+
+      // No confident match found - check if there are orders with matching amount (for logging)
+      const ordersWithAmount = await db.findOrdersAwaitingPayment(payment.amount, 1);
+      if (ordersWithAmount.length > 0) {
         logger.warn({
           transactionId: payment.transactionId,
           amount: payment.amount,
           sender: payment.senderName,
-        }, '⚠️ Payment amount matches orders but names do not match');
+          ordersWithSameAmount: ordersWithAmount.length,
+          orderBuyers: ordersWithAmount.map(o => ({
+            orderNumber: o.orderNumber,
+            buyerRealName: o.buyerRealName,
+            buyerNickName: o.buyerNickName,
+          })),
+        }, '⚠️ [SMART MATCH] Payment NOT matched - amount matches but NO buyer name matches sender');
       }
+
     } catch (error) {
-      logger.error({ error }, 'Error searching for matching orders');
+      logger.error({ error }, 'Error during smart payment matching');
     }
 
     // No match found - payment is saved in DB by webhook-receiver for future matching
     logger.info({
       transactionId: payment.transactionId,
       amount: payment.amount,
-    }, '📝 Payment saved, waiting for order to be marked as paid');
+      sender: payment.senderName,
+    }, '📝 Payment saved, waiting for matching order (by amount AND name)');
   }
 
   /**
@@ -604,71 +579,107 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           orderNumber: order.orderNumber,
           foundPayments: existingPayments.length,
           amounts: existingPayments.map(p => p.amount),
+          senders: existingPayments.map(p => p.senderName),
         }, '🔍 Found existing bank payment(s) for order');
 
-        // Try to match with the best candidate
+        // Get buyer's real name for comparison (need to fetch from order detail)
+        let buyerRealName = (order as any).buyerRealName || null;
+        if (!buyerRealName) {
+          try {
+            const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+            buyerRealName = (orderDetail as any).buyerRealName || null;
+          } catch (err) {
+            logger.warn({ orderNumber: order.orderNumber }, '⚠️ Could not fetch buyer real name');
+          }
+        }
+
+        const buyerNameToCompare = buyerRealName || order.counterPartNickName || order.buyer?.nickName || '';
+
+        // SMART MATCH: Find payment with matching name (not just first one with matching amount)
+        let bestPayment: typeof existingPayments[0] | null = null;
+        let bestScore = 0;
+
         for (const payment of existingPayments) {
-          const nameMatch = this.compareNames(
-            payment.senderName,
-            order.counterPartNickName || order.buyer?.nickName || ''
-          );
+          const nameMatch = this.compareNames(payment.senderName, buyerNameToCompare);
+
+          logger.debug({
+            orderNumber: order.orderNumber,
+            paymentSender: payment.senderName,
+            buyerName: buyerNameToCompare,
+            nameMatch: nameMatch.toFixed(2),
+          }, 'Comparing payment sender with order buyer');
+
+          if (nameMatch > bestScore) {
+            bestScore = nameMatch;
+            bestPayment = payment;
+          }
+        }
+
+        // Only match if name similarity > 30%
+        if (bestPayment && bestScore > 0.3) {
+          const match: OrderMatch = {
+            orderNumber: order.orderNumber,
+            bankTransactionId: bestPayment.transactionId,
+            receivedAmount: bestPayment.amount,
+            expectedAmount: expectedAmount,
+            senderName: bestPayment.senderName,
+            verified: true,
+            matchedAt: new Date(),
+          };
 
           logger.info({
             orderNumber: order.orderNumber,
-            paymentSender: payment.senderName,
-            orderBuyer: order.counterPartNickName,
-            nameMatch,
-          }, 'Comparing payment sender with order buyer');
+            transactionId: bestPayment.transactionId,
+            amount: bestPayment.amount,
+            senderName: bestPayment.senderName,
+            buyerName: buyerNameToCompare,
+            nameMatchScore: bestScore.toFixed(2),
+          }, '✅ [SMART MATCH] Bank payment matched to order (payment arrived first, name verified)');
 
-          // If amount matches (already filtered) and name is somewhat similar, consider it a match
-          if (nameMatch > 0.3 || existingPayments.length === 1) {
-            // Found a match!
-            const match: OrderMatch = {
-              orderNumber: order.orderNumber,
-              bankTransactionId: payment.transactionId,
-              receivedAmount: payment.amount,
-              expectedAmount: expectedAmount,
-              senderName: payment.senderName,
-              verified: true,
-              matchedAt: new Date(),
-            };
-
-            logger.info({
-              orderNumber: order.orderNumber,
-              transactionId: payment.transactionId,
-              amount: payment.amount,
-            }, '✅ Bank payment matched to order (payment arrived first)');
-
-            // Track: payment matched (non-blocking on DB errors)
-            try {
-              await db.addVerificationStep(
-                order.orderNumber,
-                VerificationStatus.PAYMENT_MATCHED,
-                `Pago bancario vinculado (pago llegó primero)`,
-                {
-                  transactionId: payment.transactionId,
-                  receivedAmount: payment.amount,
-                  senderName: payment.senderName,
-                  matchType: 'payment_arrived_first',
-                }
-              );
-            } catch (dbError) {
-              logger.warn({ orderNumber: order.orderNumber, error: dbError },
-                '⚠️ [DB] Failed to add PAYMENT_MATCHED step - continuing');
-            }
-
-            // Update DB (non-blocking on errors)
-            try {
-              await db.matchPaymentToOrder(payment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
-            } catch (dbError) {
-              logger.warn({ orderNumber: order.orderNumber, error: dbError },
-                '⚠️ [DB] Failed to update payment match - continuing');
-            }
-
-            // Handle the match - this MUST be called even if DB steps failed
-            await this.handlePaymentMatch(order, match);
-            break;
+          // Track: payment matched (non-blocking on DB errors)
+          try {
+            await db.addVerificationStep(
+              order.orderNumber,
+              VerificationStatus.PAYMENT_MATCHED,
+              `✅ Pago bancario vinculado por nombre (${(bestScore * 100).toFixed(0)}% similitud)`,
+              {
+                transactionId: bestPayment.transactionId,
+                receivedAmount: bestPayment.amount,
+                senderName: bestPayment.senderName,
+                buyerName: buyerNameToCompare,
+                nameMatchScore: bestScore,
+                matchType: 'smart_match_payment_first',
+              }
+            );
+          } catch (dbError) {
+            logger.warn({ orderNumber: order.orderNumber, error: dbError },
+              '⚠️ [DB] Failed to add PAYMENT_MATCHED step - continuing');
           }
+
+          // Update DB (non-blocking on errors)
+          try {
+            const matchSuccess = await db.matchPaymentToOrder(bestPayment.transactionId, order.orderNumber, 'BANK_WEBHOOK');
+            if (!matchSuccess) {
+              logger.warn({ orderNumber: order.orderNumber }, '⚠️ Payment could not be matched (may already be used)');
+            }
+          } catch (dbError) {
+            logger.warn({ orderNumber: order.orderNumber, error: dbError },
+              '⚠️ [DB] Failed to update payment match - continuing');
+          }
+
+          // Handle the match
+          await this.handlePaymentMatch(order, match);
+        } else if (existingPayments.length > 0) {
+          // Payments exist with matching amount but names don't match
+          logger.warn({
+            orderNumber: order.orderNumber,
+            buyerName: buyerNameToCompare,
+            availablePayments: existingPayments.map(p => ({
+              sender: p.senderName,
+              amount: p.amount,
+            })),
+            bestScore: bestScore.toFixed(2),
+          }, '⚠️ [SMART MATCH] Payments available but no name match - waiting for correct payment');
         }
       }
     } catch (error) {
