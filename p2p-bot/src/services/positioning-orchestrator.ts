@@ -5,6 +5,7 @@
 // =====================================================
 
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { SmartPositioning, createSmartPositioning } from './smart-positioning.js';
 import { FollowPositioning, createFollowPositioning } from './follow-positioning.js';
@@ -17,6 +18,93 @@ import {
   FollowModeConfig,
   PositioningAnalysis,
 } from '../types/binance.js';
+
+// ==================== AUTO-DETECT ACTIVE AD ====================
+
+function signQuery(query: string): string {
+  const secret = process.env.BINANCE_API_SECRET || '';
+  return crypto.createHmac('sha256', secret).update(query).digest('hex');
+}
+
+interface AdInfo {
+  advNo: string;
+  tradeType: string;
+  asset: string;
+  fiatUnit: string;
+  price: string;
+  advStatus: number;
+}
+
+/**
+ * Auto-detect the active ad based on tradeType, asset, and fiat.
+ * Returns the advNo if found, or null if no matching active ad.
+ */
+export async function findActiveAdNo(
+  tradeType: TradeType,
+  asset: string = 'USDT',
+  fiat: string = 'MXN'
+): Promise<string | null> {
+  const apiKey = process.env.BINANCE_API_KEY || '';
+
+  try {
+    const ts = Date.now();
+    const query = `timestamp=${ts}`;
+
+    const res = await fetch(
+      `https://api.binance.com/sapi/v1/c2c/ads/list?${query}&signature=${signQuery(query)}`,
+      {
+        method: 'GET',
+        headers: { 'X-MBX-APIKEY': apiKey },
+      }
+    );
+
+    const text = await res.text();
+    if (!text) {
+      logger.warn('Empty response from ads/list endpoint');
+      return null;
+    }
+
+    const data = JSON.parse(text);
+    const allAds: AdInfo[] = [];
+
+    if (data.data?.sellList) allAds.push(...data.data.sellList);
+    if (data.data?.buyList) allAds.push(...data.data.buyList);
+
+    // Find the active ad matching our criteria
+    // Note: tradeType here is the AD type (SELL/BUY), not the search type
+    const adTradeType = tradeType === TradeType.BUY ? 'SELL' : 'BUY';
+
+    const activeAd = allAds.find(ad =>
+      ad.tradeType === adTradeType &&
+      ad.asset === asset &&
+      ad.fiatUnit === fiat &&
+      ad.advStatus === 1 // 1 = online
+    );
+
+    if (activeAd) {
+      logger.info({
+        advNo: activeAd.advNo,
+        tradeType: activeAd.tradeType,
+        asset: activeAd.asset,
+        fiat: activeAd.fiatUnit,
+        price: activeAd.price,
+      }, '🎯 [AUTO-DETECT] Found active ad');
+      return activeAd.advNo;
+    }
+
+    logger.warn({
+      searchType: adTradeType,
+      asset,
+      fiat,
+      totalAds: allAds.length,
+    }, '⚠️ [AUTO-DETECT] No active ad found matching criteria');
+    return null;
+
+  } catch (error: any) {
+    logger.error({ error: error.message }, '❌ [AUTO-DETECT] Failed to find active ad');
+    return null;
+  }
+}
 
 export type PositioningMode = 'smart' | 'follow' | 'manual' | 'off';
 
@@ -75,29 +163,44 @@ export class PositioningOrchestrator extends EventEmitter {
 
   /**
    * Start automatic positioning updates
+   * @param advNo - Ad number (optional - will auto-detect if not provided)
    * @param intervalMs - Override interval in milliseconds (default: 5000 = 5 seconds)
    */
-  start(
-    advNo: string,
+  async start(
+    advNo: string | null = null,
     asset: string = 'USDT',
     fiat: string = 'MXN',
     tradeType: TradeType = TradeType.BUY, // BUY = search sellers (for USDT sale ads)
     intervalMs: number = 5000 // Default 5 seconds for fast market checks
-  ): void {
+  ): Promise<void> {
     if (this.mode === 'off') {
       return; // Silent - no warning
     }
 
-    this.advNo = advNo;
     this.asset = asset;
     this.fiat = fiat;
     this.tradeType = tradeType;
+
+    // Auto-detect advNo if not provided
+    if (!advNo) {
+      logger.info({ asset, fiat, tradeType }, '🔍 [POSITIONING] Auto-detecting active ad...');
+      const detectedAdvNo = await findActiveAdNo(tradeType, asset, fiat);
+
+      if (!detectedAdvNo) {
+        logger.error('❌ [POSITIONING] Cannot start - no active ad found. Please activate an ad first.');
+        return;
+      }
+
+      this.advNo = detectedAdvNo;
+    } else {
+      this.advNo = advNo;
+    }
 
     // Stop any existing interval
     this.stop();
 
     // Log only once when starting (not every check)
-    logger.info({ mode: this.mode, intervalMs }, '🎯 [POSITIONING] Started');
+    logger.info({ mode: this.mode, advNo: this.advNo, intervalMs }, '🎯 [POSITIONING] Started');
 
     // Initial update
     this.runUpdate();
@@ -298,7 +401,8 @@ export class PositioningOrchestrator extends EventEmitter {
     // If running, restart with new interval
     if (this.updateInterval) {
       this.stop();
-      this.start(this.advNo, this.asset, this.fiat, this.tradeType);
+      // Use existing advNo when restarting (don't re-detect)
+      this.start(this.advNo || null, this.asset, this.fiat, this.tradeType);
     }
   }
 

@@ -298,15 +298,14 @@ async function checkPositioningStatus(): Promise<void> {
       }
 
       // Start with 5 second interval (silent checks, only logs on price change)
-      if (BOT_CONFIG.advNo) {
-        positioningOrchestrator.start(
-          BOT_CONFIG.advNo,
-          BOT_CONFIG.asset,
-          BOT_CONFIG.fiat,
-          BOT_CONFIG.tradeType,
-          5000 // 5 seconds
-        );
-      }
+      // advNo is optional - will auto-detect the active ad if not provided
+      await positioningOrchestrator.start(
+        BOT_CONFIG.advNo || null, // null triggers auto-detection
+        BOT_CONFIG.asset,
+        BOT_CONFIG.fiat,
+        BOT_CONFIG.tradeType,
+        5000 // 5 seconds
+      );
 
       lastPositioningConfig = { mode, target };
     } else if (enabled && positioningOrchestrator) {
