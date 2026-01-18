@@ -15,18 +15,22 @@ import { createAutoReleaseOrchestrator } from './services/auto-release.js';
 import { createTOTPService, TOTPService } from './services/totp-service.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from './services/database-pg.js';
 import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
+import { MultiAdPositioningManager, createMultiAdPositioningManager } from './services/multi-ad-positioning.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
 
 const BOT_CONFIG = {
-  // Trading pair
+  // Trading pair (for legacy single-ad mode)
   asset: process.env.TRADING_ASSET || 'USDT',
   fiat: process.env.TRADING_FIAT || 'MXN',
-  tradeType: (process.env.TRADE_TYPE as TradeType) || TradeType.BUY, // BUY = search sellers (for USDT sale ads)
+  tradeType: (process.env.TRADE_TYPE as TradeType) || TradeType.BUY,
 
-  // Advertisement
+  // Advertisement (optional - multi-ad mode auto-detects)
   advNo: process.env.BINANCE_ADV_NO || '',
+
+  // Multi-ad mode: manages ALL active ads automatically
+  enableMultiAd: process.env.ENABLE_MULTI_AD !== 'false', // Default: true
 
   // Features
   enablePricing: process.env.ENABLE_PRICING !== 'false',
@@ -47,6 +51,7 @@ let autoRelease: ReturnType<typeof createAutoReleaseOrchestrator>;
 let totpService: TOTPService;
 let positioningOrchestrator: PositioningOrchestrator | null = null;
 let positioningCheckInterval: NodeJS.Timeout | null = null;
+let multiAdManager: MultiAdPositioningManager | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -273,7 +278,9 @@ let lastPositioningConfig: { mode: string; target: string | null } = { mode: 'of
 /**
  * Check if positioning bot should be started/stopped based on database config.
  * This runs every 30 seconds to check if user enabled/disabled via dashboard.
- * Also updates config if user changes mode or target while running.
+ *
+ * MULTI-AD MODE: When enableMultiAd is true, manages ALL active ads automatically.
+ * SINGLE-AD MODE: When enableMultiAd is false, uses the legacy single-ad orchestrator.
  */
 async function checkPositioningStatus(): Promise<void> {
   try {
@@ -282,6 +289,33 @@ async function checkPositioningStatus(): Promise<void> {
     const mode = (config.positioningMode || 'smart') as PositioningMode;
     const target = config.followTargetNickName || null;
 
+    // ========== MULTI-AD MODE ==========
+    if (BOT_CONFIG.enableMultiAd) {
+      if (enabled && !multiAdManager) {
+        // Start multi-ad manager - handles ALL active ads
+        logger.info('🚀 [MULTI-AD] Starting multi-ad positioning manager');
+        multiAdManager = createMultiAdPositioningManager();
+
+        // Start with 5 second interval
+        await multiAdManager.start(BOT_CONFIG.fiat, 5000);
+
+        const status = multiAdManager.getStatus();
+        logger.info({
+          activeAds: status.managedAds.length,
+          ads: status.managedAds.map(a => `${a.tradeType} ${a.asset}`),
+        }, '🎯 [MULTI-AD] Now managing all active ads');
+
+      } else if (!enabled && multiAdManager) {
+        // Stop multi-ad manager
+        logger.info('🛑 [MULTI-AD] Stopping multi-ad positioning manager');
+        multiAdManager.stop();
+        multiAdManager = null;
+      }
+      // Multi-ad mode doesn't need config change tracking - it auto-discovers ads
+      return;
+    }
+
+    // ========== LEGACY SINGLE-AD MODE ==========
     if (enabled && !positioningOrchestrator) {
       // User enabled positioning - start it
       logger.info({ mode, target }, '🎯 [POSITIONING] Starting orchestrator');
@@ -350,6 +384,10 @@ async function shutdown(): Promise<void> {
   if (positioningOrchestrator) {
     positioningOrchestrator.stop();
     positioningOrchestrator = null;
+  }
+  if (multiAdManager) {
+    multiAdManager.stop();
+    multiAdManager = null;
   }
 
   // Stop services
