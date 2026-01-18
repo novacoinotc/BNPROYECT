@@ -211,12 +211,15 @@ export class MultiAdPositioningManager extends EventEmitter {
       this.lastConfigCheck = new Date();
 
       // Update follow positioning config
+      // Use very wide margins for follow mode to allow tracking target price closely
       this.followPositioning.updateConfig({
         enabled: this.currentMode === 'follow',
         targetNickName: this.followTarget || '',
         undercutAmount: this.undercutCents,
         followStrategy: 'undercut',
         fallbackToSmart: true,
+        minMargin: -5, // Allow 5% below reference price
+        maxMargin: 10, // Allow 10% above reference price
       });
 
       // Update smart positioning config from DB
@@ -330,10 +333,10 @@ export class MultiAdPositioningManager extends EventEmitter {
    * Update a single ad's price based on current mode
    */
   private async updateSingleAd(ad: ManagedAd): Promise<void> {
-    // Determine search type (inverse of ad type)
-    // SELL ad → search BUY (other sellers competing with us)
-    // BUY ad → search SELL (other buyers competing with us)
-    const searchType = ad.tradeType === 'SELL' ? TradeType.BUY : TradeType.SELL;
+    // Search for the SAME type of ads as ours (our competitors)
+    // SELL ad → search SELL (other sellers competing with us)
+    // BUY ad → search BUY (other buyers competing with us)
+    const searchType = ad.tradeType === 'SELL' ? TradeType.SELL : TradeType.BUY;
 
     let analysis: PositioningAnalysis | null = null;
 
@@ -396,7 +399,8 @@ export class MultiAdPositioningManager extends EventEmitter {
     }
 
     if (!analysis) {
-      return; // No recommendation available
+      logger.warn({ asset: ad.asset, mode: ad.mode }, '❌ [MULTI-AD] No analysis returned');
+      return;
     }
 
     ad.targetPrice = analysis.targetPrice;
@@ -404,6 +408,21 @@ export class MultiAdPositioningManager extends EventEmitter {
     // Check if price should be updated (more than 1 centavo difference)
     const priceDiff = Math.abs(ad.currentPrice - analysis.targetPrice);
     const shouldUpdate = priceDiff >= this.PRICE_UPDATE_THRESHOLD;
+
+    // ALWAYS log the price comparison for debugging
+    logger.info({
+      asset: ad.asset,
+      mode: ad.mode,
+      currentPrice: ad.currentPrice,
+      targetPrice: analysis.targetPrice,
+      priceDiff: priceDiff.toFixed(4),
+      shouldUpdate,
+      followTarget: ad.followTarget,
+      targetInfo: analysis.targetInfo ? {
+        nickName: analysis.targetInfo.nickName,
+        price: analysis.targetInfo.price,
+      } : null,
+    }, '📊 [MULTI-AD] Price comparison');
 
     if (shouldUpdate) {
       const success = await updateAdPrice(ad.advNo, analysis.targetPrice);

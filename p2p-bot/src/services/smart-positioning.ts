@@ -238,18 +238,18 @@ export class SmartPositioning {
     let targetPrice: number;
 
     // Apply undercut strategy
-    // IMPORTANT: tradeType here is the SEARCH type, not the AD type:
-    // - tradeType=BUY means we're searching for sellers → our ad is SELL → we want LOWER price
-    // - tradeType=SELL means we're searching for buyers → our ad is BUY → we want HIGHER price
+    // tradeType is now the AD type (same as search type):
+    // - tradeType=SELL → our ad is SELL → we want LOWER price
+    // - tradeType=BUY → our ad is BUY → we want HIGHER price
     if (this.config.undercutAmount > 0) {
       // Undercut by fixed amount (centavos)
       const undercutValue = this.config.undercutAmount / 100; // Convert centavos to pesos
-      targetPrice = tradeType === TradeType.BUY
+      targetPrice = tradeType === TradeType.SELL
         ? bestQualifiedPrice - undercutValue  // SELL ad - go lower
         : bestQualifiedPrice + undercutValue; // BUY ad - go higher
     } else if (this.config.undercutPercent > 0) {
       // Undercut by percentage
-      targetPrice = tradeType === TradeType.BUY
+      targetPrice = tradeType === TradeType.SELL
         ? bestQualifiedPrice * (1 - this.config.undercutPercent / 100)  // SELL ad - go lower
         : bestQualifiedPrice * (1 + this.config.undercutPercent / 100); // BUY ad - go higher
     } else {

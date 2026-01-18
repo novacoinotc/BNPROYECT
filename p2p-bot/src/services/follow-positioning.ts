@@ -125,9 +125,9 @@ export class FollowPositioning {
   /**
    * Calculate target price based on target's price
    *
-   * IMPORTANT: tradeType here is the SEARCH type, not the AD type:
-   * - tradeType=BUY means we're searching for sellers → our ad is SELL → we want LOWER price
-   * - tradeType=SELL means we're searching for buyers → our ad is BUY → we want HIGHER price
+   * tradeType is now the AD type (same as search type):
+   * - tradeType=SELL → our ad is SELL → we want LOWER price to beat competition
+   * - tradeType=BUY → our ad is BUY → we want HIGHER price to beat competition
    */
   calculateTargetPrice(
     targetPrice: number,
@@ -143,9 +143,9 @@ export class FollowPositioning {
       // Undercut by specified amount
       const undercutValue = this.config.undercutAmount / 100; // Convert centavos to pesos
 
-      // tradeType=BUY (search sellers) → our ad is SELL → we want LOWER price to beat competition
-      // tradeType=SELL (search buyers) → our ad is BUY → we want HIGHER price to beat competition
-      if (tradeType === TradeType.BUY) {
+      // tradeType=SELL → our ad is SELL → we want LOWER price to beat competition
+      // tradeType=BUY → our ad is BUY → we want HIGHER price to beat competition
+      if (tradeType === TradeType.SELL) {
         // We're a SELL ad - go LOWER than target to attract buyers
         calculatedPrice = targetPrice - undercutValue;
       } else {
