@@ -449,15 +449,11 @@ export class BinanceC2CClient {
    * POST /sapi/v1/c2c/ads/update
    */
   async updateAd(request: UpdateAdRequest): Promise<boolean> {
-    // Log the exact request for debugging
-    logger.info({
-      advNo: request.advNo,
-      asset: request.asset,
-      fiatUnit: request.fiatUnit,
-      tradeType: request.tradeType,
-      price: request.price,
-      priceType: request.priceType,
-    }, '📝 [UPDATE AD] Sending request');
+    // Log the exact request for debugging (use string interpolation for visibility)
+    logger.info(
+      `📝 [UPDATE AD] Sending request: advNo=${request.advNo} asset=${request.asset} ` +
+      `fiat=${request.fiatUnit} tradeType=${request.tradeType} price=${request.price} priceType=${request.priceType}`
+    );
 
     try {
       await this.signedPost<void>(
@@ -469,15 +465,17 @@ export class BinanceC2CClient {
     } catch (error: any) {
       // Extract detailed error info from Binance API response
       const errorData = error.response?.data;
-      logger.error({
-        advNo: request.advNo,
-        requestBody: JSON.stringify(request),
-        httpStatus: error.response?.status,
-        binanceCode: errorData?.code,
-        binanceMessage: errorData?.message || errorData?.msg,
-        binanceData: JSON.stringify(errorData),
-        errorMessage: error.message,
-      }, '❌ [UPDATE AD] Failed');
+      const httpStatus = error.response?.status;
+      const binanceCode = errorData?.code;
+      const binanceMsg = errorData?.message || errorData?.msg;
+
+      // Use string interpolation so details are visible in logs
+      logger.error(
+        `❌ [UPDATE AD] Failed advNo=${request.advNo} ` +
+        `HTTP=${httpStatus} code=${binanceCode} msg=${binanceMsg} ` +
+        `request=${JSON.stringify(request)} ` +
+        `response=${JSON.stringify(errorData)}`
+      );
       throw error;
     }
   }
