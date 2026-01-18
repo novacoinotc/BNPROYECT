@@ -333,10 +333,14 @@ export class MultiAdPositioningManager extends EventEmitter {
    * Update a single ad's price based on current mode
    */
   private async updateSingleAd(ad: ManagedAd): Promise<void> {
-    // Search for the SAME type of ads as ours (our competitors)
-    // SELL ad → search SELL (other sellers competing with us)
-    // BUY ad → search BUY (other buyers competing with us)
-    const searchType = ad.tradeType === 'SELL' ? TradeType.SELL : TradeType.BUY;
+    // Binance API uses CLIENT perspective for tradeType:
+    // - tradeType: BUY in request → returns SELL ads (merchants who SELL)
+    // - tradeType: SELL in request → returns BUY ads (merchants who BUY)
+    //
+    // So to find competitors:
+    // - Our SELL ad → search with BUY → finds other sellers
+    // - Our BUY ad → search with SELL → finds other buyers
+    const searchType = ad.tradeType === 'SELL' ? TradeType.BUY : TradeType.SELL;
 
     let analysis: PositioningAnalysis | null = null;
 

@@ -60,7 +60,7 @@ export default function SettingsPage() {
   // Sellers list state
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loadingSellers, setLoadingSellers] = useState(false);
-  const [adType, setAdType] = useState<'SELL' | 'BUY'>('SELL'); // SELL = merchants sell USDT, BUY = merchants buy USDT
+  const [adType, setAdType] = useState<'SELL' | 'BUY'>('BUY'); // API: BUY returns sellers, SELL returns buyers
 
   const fetchSellers = useCallback(async (type: 'SELL' | 'BUY' = adType) => {
     setLoadingSellers(true);
@@ -418,19 +418,8 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            {/* Ad Type Tabs - SELL vs BUY */}
+            {/* Ad Type Tabs - BUY returns sellers, SELL returns buyers (Binance API uses client perspective) */}
             <div className="flex gap-2">
-              <button
-                onClick={() => { setAdType('SELL'); fetchSellers('SELL'); }}
-                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                  adType === 'SELL'
-                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                    : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
-                }`}
-              >
-                Venden USDT
-                <span className="block text-[10px] opacity-70">Anuncios de venta</span>
-              </button>
               <button
                 onClick={() => { setAdType('BUY'); fetchSellers('BUY'); }}
                 className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
@@ -439,8 +428,19 @@ export default function SettingsPage() {
                     : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
                 }`}
               >
+                Venden USDT
+                <span className="block text-[10px] opacity-70">Comerciantes que venden</span>
+              </button>
+              <button
+                onClick={() => { setAdType('SELL'); fetchSellers('SELL'); }}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  adType === 'SELL'
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                    : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
+                }`}
+              >
                 Compran USDT
-                <span className="block text-[10px] opacity-70">Anuncios de compra</span>
+                <span className="block text-[10px] opacity-70">Comerciantes que compran</span>
               </button>
             </div>
 
