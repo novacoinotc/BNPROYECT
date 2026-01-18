@@ -1595,6 +1595,7 @@ export async function incrementTrustedBuyerStats(
 
 // Per-asset positioning configuration
 export interface AssetPositioningConfig {
+  enabled: boolean;  // Enable/disable positioning for this asset
   mode: 'smart' | 'follow';
   followTarget: string | null;
 }
@@ -1740,17 +1741,24 @@ export function getPositioningConfigForAd(
   // Check per-asset config first (e.g., "SELL:USDT")
   const key = `${tradeType}:${asset}`;
   if (config.positioningConfigs[key]) {
-    return config.positioningConfigs[key];
+    const assetConfig = config.positioningConfigs[key];
+    return {
+      enabled: assetConfig.enabled !== false, // Default to true
+      mode: assetConfig.mode || 'smart',
+      followTarget: assetConfig.followTarget || null,
+    };
   }
 
-  // Fallback to trade type defaults
+  // Fallback to trade type defaults (enabled by default)
   if (tradeType === 'SELL') {
     return {
+      enabled: true,
       mode: (config.sellMode as 'smart' | 'follow') || 'smart',
       followTarget: config.sellFollowTarget,
     };
   } else {
     return {
+      enabled: true,
       mode: (config.buyMode as 'smart' | 'follow') || 'smart',
       followTarget: config.buyFollowTarget,
     };

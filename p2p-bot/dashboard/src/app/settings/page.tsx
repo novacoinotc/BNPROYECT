@@ -13,6 +13,7 @@ interface Seller {
 }
 
 interface AssetPositioningConfig {
+  enabled: boolean;  // Enable/disable positioning for this asset
   mode: 'smart' | 'follow';
   followTarget: string | null;
 }
@@ -57,7 +58,7 @@ export default function SettingsPage() {
 
   const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
     const key = `${tradeType}:${asset}`;
-    return positioningConfigs[key] || { mode: 'smart', followTarget: null };
+    return positioningConfigs[key] || { enabled: true, mode: 'smart', followTarget: null };
   };
 
   const updateAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY', updates: Partial<AssetPositioningConfig>) => {
@@ -177,6 +178,7 @@ export default function SettingsPage() {
     const sellers = sellersCache[key] || [];
     const isLoading = loadingSellers[key] || false;
     const isSell = tradeType === 'SELL';
+    const isEnabled = cfg.enabled !== false; // Default to true
 
     const handleModeChange = (mode: 'smart' | 'follow') => {
       updateAssetConfig(asset, tradeType, { mode, followTarget: mode === 'smart' ? null : cfg.followTarget });
@@ -185,12 +187,43 @@ export default function SettingsPage() {
       }
     };
 
-    return (
-      <div className={`p-4 rounded-lg border-2 ${isSell ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-orange-500/50 bg-orange-500/5'}`}>
-        <h3 className={`text-lg font-bold mb-3 ${isSell ? 'text-emerald-400' : 'text-orange-400'}`}>
-          {isSell ? '💰 Nosotros Vendemos' : '🛒 Nosotros Compramos'}
-        </h3>
+    const toggleEnabled = () => {
+      updateAssetConfig(asset, tradeType, { enabled: !isEnabled });
+    };
 
+    return (
+      <div className={`p-4 rounded-lg border-2 ${
+        !isEnabled
+          ? 'border-gray-600/50 bg-gray-800/50 opacity-60'
+          : isSell
+            ? 'border-emerald-500/50 bg-emerald-500/5'
+            : 'border-orange-500/50 bg-orange-500/5'
+      }`}>
+        {/* Header with toggle */}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className={`text-lg font-bold ${isSell ? 'text-emerald-400' : 'text-orange-400'}`}>
+            {isSell ? '💰 Nosotros Vendemos' : '🛒 Nosotros Compramos'}
+          </h3>
+          <button
+            onClick={toggleEnabled}
+            className={`px-3 py-1 rounded-lg font-bold text-sm transition ${
+              isEnabled
+                ? 'bg-emerald-600 text-white'
+                : 'bg-gray-600 text-gray-300'
+            }`}
+          >
+            {isEnabled ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        {!isEnabled && (
+          <div className="text-center py-4 text-gray-500">
+            Bot desactivado para {isSell ? 'venta' : 'compra'} de {asset}
+          </div>
+        )}
+
+        {isEnabled && (
+          <>
         {/* Mode Toggle */}
         <div className="flex gap-2 mb-4">
           <button
@@ -288,6 +321,8 @@ export default function SettingsPage() {
             Busca automaticamente el mejor precio basado en volumen y ordenes completadas
           </div>
         )}
+          </>
+        )}
       </div>
     );
   };
@@ -350,21 +385,29 @@ export default function SettingsPage() {
           {ASSETS.map(asset => {
             const sellCfg = getAssetConfig(asset, 'SELL');
             const buyCfg = getAssetConfig(asset, 'BUY');
-            const hasConfig = sellCfg.followTarget || buyCfg.followTarget || sellCfg.mode === 'follow' || buyCfg.mode === 'follow';
+            const sellEnabled = sellCfg.enabled !== false;
+            const buyEnabled = buyCfg.enabled !== false;
+            const anyEnabled = sellEnabled || buyEnabled;
 
             return (
               <button
                 key={asset}
                 onClick={() => setSelectedAsset(asset)}
-                className={`px-5 py-3 rounded-lg font-bold text-lg transition ${
+                className={`px-4 py-3 rounded-lg font-bold text-lg transition relative ${
                   selectedAsset === asset
                     ? 'bg-primary-600 text-white'
-                    : hasConfig
-                    ? 'bg-gray-700 text-white border-2 border-primary-500/50'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    : anyEnabled
+                    ? 'bg-gray-700 text-white hover:bg-gray-600'
+                    : 'bg-gray-800 text-gray-500 hover:bg-gray-700'
                 }`}
               >
-                {asset}
+                <div className="flex items-center gap-2">
+                  {asset}
+                  <div className="flex gap-0.5">
+                    <span className={`w-2 h-2 rounded-full ${sellEnabled ? 'bg-emerald-500' : 'bg-gray-600'}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${buyEnabled ? 'bg-orange-500' : 'bg-gray-600'}`}></span>
+                  </div>
+                </div>
               </button>
             );
           })}

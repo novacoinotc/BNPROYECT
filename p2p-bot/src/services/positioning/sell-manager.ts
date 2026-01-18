@@ -220,13 +220,18 @@ export class SellAdManager extends EventEmitter {
   }
 
   private async updateAd(ad: SellAd): Promise<void> {
-    let targetPrice: number | null = null;
-    let logInfo = '';
-
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'SELL', ad.asset)
-      : { mode: this.config.mode, followTarget: this.config.followTarget };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget };
+
+    // Skip if this asset is disabled
+    if (assetConfig.enabled === false) {
+      return;
+    }
+
+    let targetPrice: number | null = null;
+    let logInfo = '';
 
     // Try follow mode first
     if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
