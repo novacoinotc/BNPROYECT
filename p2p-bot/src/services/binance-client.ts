@@ -192,17 +192,17 @@ export class BinanceC2CClient {
           'Origin': 'https://p2p.binance.com',
           'Referer': 'https://p2p.binance.com/',
         },
-        body: JSON.stringify({
-          asset: request.asset,
-          fiat: request.fiat,
-          tradeType: request.tradeType,
-          page: request.page || 1,
-          rows: request.rows || 10,
-          // Only include optional params if they have valid values (null causes "illegal parameter" error)
-          ...(request.payTypes && request.payTypes.length > 0 ? { payTypes: request.payTypes } : {}),
-          ...(request.publisherType ? { publisherType: request.publisherType } : {}),
-          ...(request.transAmount ? { transAmount: request.transAmount } : {}),
-        }),
+        body: (() => {
+          const body = {
+            asset: request.asset,
+            fiat: request.fiat,
+            tradeType: request.tradeType,
+            page: request.page || 1,
+            rows: request.rows || 10,
+          };
+          logger.info(`🔍 [SEARCH ADS] Sending body: ${JSON.stringify(body)}`);
+          return JSON.stringify(body);
+        })(),
       });
 
       const rawData = await response.json() as {
