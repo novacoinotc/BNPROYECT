@@ -223,7 +223,7 @@ export class BuyAdManager extends EventEmitter {
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
-      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents };
 
     // Skip if this asset is disabled
     if (assetConfig.enabled === false) {
@@ -235,11 +235,11 @@ export class BuyAdManager extends EventEmitter {
 
     // Try follow mode first
     if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
-      // Update follow engine with per-asset target
+      // Update follow engine with per-asset config (including per-asset price strategy)
       this.followEngine.updateConfig({
         targetNickName: assetConfig.followTarget,
-        undercutCents: this.config.undercutCents,
-        matchPrice: this.config.matchPrice,
+        undercutCents: assetConfig.undercutCents,
+        matchPrice: assetConfig.matchPrice,
       });
       const result = await this.followEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
@@ -250,6 +250,11 @@ export class BuyAdManager extends EventEmitter {
 
     // Fallback to smart mode
     if (targetPrice === null) {
+      // Update smart engine with per-asset price strategy
+      this.smartEngine.updateConfig({
+        undercutCents: assetConfig.undercutCents,
+        matchPrice: assetConfig.matchPrice,
+      });
       const result = await this.smartEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
         targetPrice = result.targetPrice;

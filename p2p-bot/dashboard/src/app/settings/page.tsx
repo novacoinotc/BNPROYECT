@@ -16,6 +16,9 @@ interface AssetPositioningConfig {
   enabled: boolean;  // Enable/disable positioning for this asset
   mode: 'smart' | 'follow';
   followTarget: string | null;
+  // Per-asset price strategy
+  matchPrice: boolean;
+  undercutCents: number;
 }
 
 type PositioningConfigsMap = Record<string, AssetPositioningConfig>;
@@ -52,13 +55,9 @@ export default function SettingsPage() {
   const [minOrderCount, setMinOrderCount] = useState(10);
   const [minSurplus, setMinSurplus] = useState(100);
 
-  // Strategy
-  const [undercutCents, setUndercutCents] = useState(1);
-  const [matchPrice, setMatchPrice] = useState(false);
-
   const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
     const key = `${tradeType}:${asset}`;
-    return positioningConfigs[key] || { enabled: true, mode: 'smart', followTarget: null };
+    return positioningConfigs[key] || { enabled: true, mode: 'smart', followTarget: null, matchPrice: false, undercutCents: 1 };
   };
 
   const updateAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY', updates: Partial<AssetPositioningConfig>) => {
@@ -96,8 +95,6 @@ export default function SettingsPage() {
         setPositioningConfigs(data.config.positioningConfigs || {});
         setMinOrderCount(data.config.smartMinOrderCount ?? 10);
         setMinSurplus(data.config.smartMinSurplus ?? 100);
-        setUndercutCents(data.config.undercutCents ?? 1);
-        setMatchPrice(data.config.matchPrice ?? false);
       }
     } catch (err) {
       console.error(err);
@@ -151,8 +148,6 @@ export default function SettingsPage() {
       positioningConfigs,
       smartMinOrderCount: minOrderCount,
       smartMinSurplus: minSurplus,
-      undercutCents,
-      matchPrice,
     });
   };
 
@@ -321,6 +316,45 @@ export default function SettingsPage() {
             Busca automaticamente el mejor precio basado en volumen y ordenes completadas
           </div>
         )}
+
+        {/* Price Strategy - Per Asset */}
+        <div className="mt-4 pt-4 border-t border-gray-700">
+          <div className="text-xs text-gray-500 mb-2">Estrategia de Precio:</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => updateAssetConfig(asset, tradeType, { matchPrice: true })}
+              className={`p-2 rounded-lg border text-left transition text-sm ${
+                cfg.matchPrice ? 'border-primary-500 bg-primary-500/10' : 'border-gray-600 hover:border-gray-500'
+              }`}
+            >
+              <div className="font-medium text-white">🎯 Igualar</div>
+              <div className="text-xs text-gray-400">Mismo precio</div>
+            </button>
+            <button
+              onClick={() => updateAssetConfig(asset, tradeType, { matchPrice: false })}
+              className={`p-2 rounded-lg border text-left transition text-sm ${
+                !cfg.matchPrice ? 'border-primary-500 bg-primary-500/10' : 'border-gray-600 hover:border-gray-500'
+              }`}
+            >
+              <div className="font-medium text-white">📉 Bajar</div>
+              <div className="text-xs text-gray-400">-${cfg.undercutCents} MXN</div>
+            </button>
+          </div>
+
+          {!cfg.matchPrice && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-400">Centavos:</span>
+              <input
+                type="number"
+                value={cfg.undercutCents}
+                onChange={(e) => updateAssetConfig(asset, tradeType, { undercutCents: parseFloat(e.target.value) || 1 })}
+                className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                min="0"
+                step="0.5"
+              />
+            </div>
+          )}
+        </div>
           </>
         )}
       </div>
@@ -445,45 +479,6 @@ export default function SettingsPage() {
             />
           </div>
         </div>
-      </div>
-
-      {/* Price Strategy */}
-      <div className="card p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Estrategia de Precio</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button
-            onClick={() => setMatchPrice(true)}
-            className={`p-4 rounded-lg border-2 text-left transition ${
-              matchPrice ? 'border-primary-500 bg-primary-500/10' : 'border-gray-600 hover:border-gray-500'
-            }`}
-          >
-            <div className="font-bold text-white mb-1">🎯 Igualar Precio</div>
-            <div className="text-sm text-gray-400">Mismo precio que el competidor</div>
-          </button>
-          <button
-            onClick={() => setMatchPrice(false)}
-            className={`p-4 rounded-lg border-2 text-left transition ${
-              !matchPrice ? 'border-primary-500 bg-primary-500/10' : 'border-gray-600 hover:border-gray-500'
-            }`}
-          >
-            <div className="font-bold text-white mb-1">📉 Bajar Centavos</div>
-            <div className="text-sm text-gray-400">Competidor - ${undercutCents} MXN</div>
-          </button>
-        </div>
-
-        {!matchPrice && (
-          <div className="mt-4">
-            <label className="block text-sm text-gray-400 mb-2">Centavos a bajar:</label>
-            <input
-              type="number"
-              value={undercutCents}
-              onChange={(e) => setUndercutCents(parseFloat(e.target.value) || 0)}
-              className="w-32 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
-              min="0"
-              step="0.5"
-            />
-          </div>
-        )}
       </div>
 
       {/* Save */}

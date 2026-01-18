@@ -1598,6 +1598,9 @@ export interface AssetPositioningConfig {
   enabled: boolean;  // Enable/disable positioning for this asset
   mode: 'smart' | 'follow';
   followTarget: string | null;
+  // Per-asset price strategy
+  matchPrice: boolean;      // true = exact match, false = undercut by cents
+  undercutCents: number;    // Cents to undercut competitor
 }
 
 // Map of "TRADE_TYPE:ASSET" -> config (e.g., "SELL:USDT", "BUY:BTC")
@@ -1746,6 +1749,9 @@ export function getPositioningConfigForAd(
       enabled: assetConfig.enabled !== false, // Default to true
       mode: assetConfig.mode || 'smart',
       followTarget: assetConfig.followTarget || null,
+      // Per-asset price strategy (fallback to global defaults)
+      matchPrice: assetConfig.matchPrice ?? config.matchPrice ?? false,
+      undercutCents: assetConfig.undercutCents ?? config.undercutCents ?? 1,
     };
   }
 
@@ -1755,12 +1761,16 @@ export function getPositioningConfigForAd(
       enabled: true,
       mode: (config.sellMode as 'smart' | 'follow') || 'smart',
       followTarget: config.sellFollowTarget,
+      matchPrice: config.matchPrice ?? false,
+      undercutCents: config.undercutCents ?? 1,
     };
   } else {
     return {
       enabled: true,
       mode: (config.buyMode as 'smart' | 'follow') || 'smart',
       followTarget: config.buyFollowTarget,
+      matchPrice: config.matchPrice ?? false,
+      undercutCents: config.undercutCents ?? 1,
     };
   }
 }
