@@ -164,18 +164,7 @@ export class MultiAdPositioningManager extends EventEmitter {
 
     this.isRunning = true;
 
-    logger.info({
-      adCount: this.managedAds.size,
-      mode: this.currentMode,
-      followTarget: this.followTarget,
-      undercutCents: this.undercutCents,
-      ads: Array.from(this.managedAds.values()).map(a => ({
-        advNo: a.advNo.slice(-6),
-        type: a.tradeType,
-        asset: a.asset,
-        price: a.currentPrice,
-      })),
-    }, '🚀 [MULTI-AD] Started positioning');
+    logger.info(`🚀 Positioning: ${this.managedAds.size} ads, modo ${this.currentMode}${this.followTarget ? ` → ${this.followTarget}` : ''}`);
 
     // Run initial update
     await this.runUpdateCycle();
@@ -234,11 +223,12 @@ export class MultiAdPositioningManager extends EventEmitter {
         undercutAmount: config.undercutCents,
       });
 
-      // Only log if config changed
-      if (oldMode !== this.currentMode || oldTarget !== this.followTarget) {
-        logger.info(
-          `📋 [CONFIG] Mode: ${this.currentMode}, Target: ${this.followTarget || 'none'}, Undercut: ${this.undercutCents}¢`
-        );
+      // Silent config updates - only log on significant changes
+      if (oldMode !== this.currentMode) {
+        logger.info(`📋 Modo cambiado: ${oldMode} → ${this.currentMode}`);
+      }
+      if (oldTarget !== this.followTarget && this.currentMode === 'follow') {
+        logger.info(`📋 Siguiendo: ${this.followTarget || 'ninguno'}`);
       }
     } catch (error: any) {
       logger.error({ error: error.message }, '[MULTI-AD] Failed to load config');
@@ -309,12 +299,9 @@ export class MultiAdPositioningManager extends EventEmitter {
         await this.updateSingleAd(ad);
       } catch (error: any) {
         ad.errorCount++;
-        if (ad.errorCount % 10 === 1) {
-          logger.error({
-            advNo: advNo.slice(-6),
-            asset: ad.asset,
-            error: error.message,
-          }, '❌ [MULTI-AD] Update error');
+        // Only log every 50 errors to reduce noise
+        if (ad.errorCount % 50 === 1) {
+          logger.error(`❌ Error updating ${ad.asset}: ${error.message}`);
         }
       }
 
@@ -350,13 +337,8 @@ export class MultiAdPositioningManager extends EventEmitter {
         searchType
       );
 
-      // If target not found, fallback to smart
+      // If target not found, fallback to smart (silent)
       if (!analysis) {
-        logger.warn({
-          target: this.followTarget,
-          asset: ad.asset,
-        }, '⚠️ [FOLLOW] Target NOT FOUND - using SMART mode');
-
         analysis = await this.smartPositioning.getRecommendedPrice(
           ad.asset,
           ad.fiat,
@@ -377,7 +359,6 @@ export class MultiAdPositioningManager extends EventEmitter {
     }
 
     if (!analysis) {
-      logger.warn({ asset: ad.asset, mode: ad.mode }, '❌ [MULTI-AD] No analysis returned');
       return;
     }
 
@@ -386,21 +367,6 @@ export class MultiAdPositioningManager extends EventEmitter {
     // Check if price should be updated (more than 1 centavo difference)
     const priceDiff = Math.abs(ad.currentPrice - analysis.targetPrice);
     const shouldUpdate = priceDiff >= this.PRICE_UPDATE_THRESHOLD;
-
-    // Log price status - show mode and key info
-    if (ad.mode === 'follow' && analysis.targetInfo) {
-      logger.info(
-        `🎯 [FOLLOW] ${analysis.targetInfo.nickName}@${analysis.targetInfo.price} → ` +
-        `Tu precio: ${ad.currentPrice} → Target: ${analysis.targetPrice.toFixed(2)} ` +
-        `(diff: ${priceDiff.toFixed(2)}, update: ${shouldUpdate})`
-      );
-    } else {
-      logger.info(
-        `🧠 [SMART] Best: ${analysis.bestQualifiedPrice} → ` +
-        `Tu precio: ${ad.currentPrice} → Target: ${analysis.targetPrice.toFixed(2)} ` +
-        `(diff: ${priceDiff.toFixed(2)}, update: ${shouldUpdate})`
-      );
-    }
 
     if (shouldUpdate) {
       const success = await updateAdPrice(ad.advNo, analysis.targetPrice);
@@ -411,16 +377,11 @@ export class MultiAdPositioningManager extends EventEmitter {
         ad.lastUpdate = new Date();
         ad.updateCount++;
 
-        // Log price change with mode info
-        logger.info({
-          asset: ad.asset,
-          type: ad.tradeType,
-          mode: ad.mode,
-          target: ad.followTarget,
-          oldPrice: oldPrice.toFixed(2),
-          newPrice: analysis.targetPrice.toFixed(2),
-          diff: (analysis.targetPrice - oldPrice).toFixed(2),
-        }, '💰 [MULTI-AD] Price updated');
+        // Single clean log for price change
+        const modeInfo = ad.mode === 'follow' && analysis.targetInfo
+          ? `siguiendo ${analysis.targetInfo.nickName}@${analysis.targetInfo.price}`
+          : 'modo smart';
+        logger.info(`💰 ${ad.asset} ${oldPrice.toFixed(2)} → ${analysis.targetPrice.toFixed(2)} (${modeInfo})`);
 
         this.emit('priceUpdated', {
           advNo: ad.advNo,

@@ -293,26 +293,12 @@ async function checkPositioningStatus(): Promise<void> {
     if (BOT_CONFIG.enableMultiAd) {
       if (enabled && !multiAdManager) {
         // Start multi-ad manager - handles ALL active ads
-        logger.info('🚀 [MULTI-AD] Starting multi-ad positioning manager');
         multiAdManager = createMultiAdPositioningManager();
-
-        // Connect to webhook receiver for API access
         webhookReceiver.setMultiAdManager(multiAdManager);
-
-        // Start with 5 second interval
         await multiAdManager.start(BOT_CONFIG.fiat, 5000);
-
-        const status = multiAdManager.getStatus();
-        logger.info({
-          activeAds: status.managedAds.length,
-          mode: status.mode,
-          followTarget: status.followTarget,
-          ads: status.managedAds.map(a => `${a.tradeType} ${a.asset}`),
-        }, '🎯 [MULTI-AD] Now managing all active ads');
-
       } else if (!enabled && multiAdManager) {
         // Stop multi-ad manager
-        logger.info('🛑 [MULTI-AD] Stopping multi-ad positioning manager');
+        logger.info('🛑 Positioning detenido');
         multiAdManager.stop();
         multiAdManager = null;
       }
