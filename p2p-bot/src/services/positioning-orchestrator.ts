@@ -265,12 +265,15 @@ export class PositioningOrchestrator extends EventEmitter {
     // SELL search = BUY ad (we're buying USDT, searching for other buyers)
     const adTradeType = this.tradeType === TradeType.BUY ? TradeType.SELL : TradeType.BUY;
 
+    // Round price to 2 decimal places (Binance P2P requirement for fiat)
+    const roundedPrice = Math.round(price * 100) / 100;
+
     await this.client.updateAd({
       advNo: this.advNo,
       asset: this.asset,
       fiatUnit: this.fiat,
       tradeType: adTradeType,
-      price,
+      price: roundedPrice,
       priceType: PriceType.FIXED,
     });
   }
