@@ -193,12 +193,20 @@ export class BinanceC2CClient {
           'Referer': 'https://p2p.binance.com/',
         },
         body: (() => {
+          // Use exact format from Binance P2P web interface (without null values)
           const body = {
-            asset: request.asset,
             fiat: request.fiat,
-            tradeType: request.tradeType,
             page: request.page || 1,
-            rows: request.rows || 10,
+            rows: request.rows || 20,
+            tradeType: request.tradeType,
+            asset: request.asset,
+            countries: [],
+            proMerchantAds: false,
+            shieldMerchantAds: false,
+            filterType: 'all',
+            periods: [],
+            additionalKycVerifyFilter: 0,
+            payTypes: [],
           };
           logger.info(`🔍 [SEARCH ADS] Sending body: ${JSON.stringify(body)}`);
           return JSON.stringify(body);

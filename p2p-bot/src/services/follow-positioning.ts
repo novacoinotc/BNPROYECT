@@ -69,7 +69,7 @@ export class FollowPositioning {
       fiat,
       tradeType,
       page: 1,
-      rows: 50, // Fetch more to ensure we find our target
+      rows: 20, // Binance P2P API limit is 20 per page
     });
 
     // Search by userNo first (more stable), then by nickName
