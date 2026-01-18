@@ -784,23 +784,38 @@ export class BinanceC2CClient {
   /**
    * Send a chat message to an order
    * POST /sapi/v1/c2c/chat/sendMessage
+   *
+   * Note: Binance chat API parameter names may vary. Trying multiple formats.
    */
   async sendMessage(orderNo: string, message: string): Promise<boolean> {
-    try {
-      await this.signedPost<any>(
-        '/sapi/v1/c2c/chat/sendMessage',
-        {
-          orderNo,
-          message,
-          msgType: 'text',
+    // Try different parameter combinations - Binance API docs are inconsistent
+    const paramVariants = [
+      { orderNo, content: message, msgType: 'TEXT' },
+      { orderNumber: orderNo, content: message, msgType: 'TEXT' },
+      { orderNo, message, msgType: 'text' },
+      { adOrderNo: orderNo, content: message, type: 'TEXT' },
+    ];
+
+    for (const body of paramVariants) {
+      try {
+        const response = await this.signedPost<any>(
+          '/sapi/v1/c2c/chat/sendMessage',
+          body
+        );
+
+        // Check if response indicates success
+        if (response?.success === true || response?.code === '000000' || response?.data) {
+          logger.info({ orderNo, params: Object.keys(body) }, '💬 [CHAT] Message sent successfully');
+          return true;
         }
-      );
-      logger.info({ orderNo, messageLength: message.length }, '💬 [CHAT] Message sent');
-      return true;
-    } catch (error: any) {
-      logger.warn({ orderNo, error: error?.message }, '⚠️ [CHAT] Failed to send message');
-      return false;
+      } catch (error: any) {
+        // Continue to next variant
+        logger.debug({ orderNo, params: Object.keys(body), error: error?.message }, '[CHAT] Variant failed');
+      }
     }
+
+    logger.warn({ orderNo }, '⚠️ [CHAT] All sendMessage variants failed');
+    return false;
   }
 
   // ==================== UTILITY METHODS ====================
