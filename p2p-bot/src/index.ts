@@ -23,7 +23,7 @@ const BOT_CONFIG = {
   // Trading pair
   asset: process.env.TRADING_ASSET || 'USDT',
   fiat: process.env.TRADING_FIAT || 'MXN',
-  tradeType: (process.env.TRADE_TYPE as TradeType) || TradeType.SELL,
+  tradeType: (process.env.TRADE_TYPE as TradeType) || TradeType.BUY, // BUY = search sellers (for USDT sale ads)
 
   // Advertisement
   advNo: process.env.BINANCE_ADV_NO || '',
