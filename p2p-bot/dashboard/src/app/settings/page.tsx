@@ -61,11 +61,15 @@ export default function SettingsPage() {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loadingSellers, setLoadingSellers] = useState(false);
   const [adType, setAdType] = useState<'SELL' | 'BUY'>('BUY'); // API: BUY returns sellers, SELL returns buyers
+  const [selectedAsset, setSelectedAsset] = useState<string>('USDT');
 
-  const fetchSellers = useCallback(async (type: 'SELL' | 'BUY' = adType) => {
+  // Available crypto assets
+  const ASSETS = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB', 'FDUSD'];
+
+  const fetchSellers = useCallback(async (type: 'SELL' | 'BUY' = adType, asset: string = selectedAsset) => {
     setLoadingSellers(true);
     try {
-      const response = await fetch(`/api/sellers?asset=USDT&fiat=MXN&tradeType=${type}&rows=20`);
+      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${type}&rows=20`);
       const data = await response.json();
       if (data.success) {
         setSellers(data.sellers);
@@ -75,7 +79,7 @@ export default function SettingsPage() {
     } finally {
       setLoadingSellers(false);
     }
-  }, [adType]);
+  }, [adType, selectedAsset]);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -403,7 +407,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-gray-300">Vendedor a Seguir</h3>
               <button
-                onClick={() => fetchSellers(adType)}
+                onClick={() => fetchSellers(adType, selectedAsset)}
                 disabled={loadingSellers}
                 className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1"
               >
@@ -418,28 +422,48 @@ export default function SettingsPage() {
               </button>
             </div>
 
+            {/* Asset selector */}
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Moneda</label>
+              <div className="flex flex-wrap gap-1">
+                {ASSETS.map((asset) => (
+                  <button
+                    key={asset}
+                    onClick={() => { setSelectedAsset(asset); fetchSellers(adType, asset); }}
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                      selectedAsset === asset
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    }`}
+                  >
+                    {asset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Ad Type Tabs - BUY returns sellers, SELL returns buyers (Binance API uses client perspective) */}
             <div className="flex gap-2">
               <button
-                onClick={() => { setAdType('BUY'); fetchSellers('BUY'); }}
+                onClick={() => { setAdType('BUY'); fetchSellers('BUY', selectedAsset); }}
                 className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                   adType === 'BUY'
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
                 }`}
               >
-                Venden USDT
+                Venden {selectedAsset}
                 <span className="block text-[10px] opacity-70">Comerciantes que venden</span>
               </button>
               <button
-                onClick={() => { setAdType('SELL'); fetchSellers('SELL'); }}
+                onClick={() => { setAdType('SELL'); fetchSellers('SELL', selectedAsset); }}
                 className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                   adType === 'SELL'
                     ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                     : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
                 }`}
               >
-                Compran USDT
+                Compran {selectedAsset}
                 <span className="block text-[10px] opacity-70">Comerciantes que compran</span>
               </button>
             </div>
