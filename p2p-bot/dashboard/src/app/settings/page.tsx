@@ -30,13 +30,6 @@ type PositioningConfigsMap = Record<string, AssetPositioningConfig>;
 interface BotConfig {
   releaseEnabled: boolean;
   positioningEnabled: boolean;
-  // SELL config (defaults)
-  sellMode: string;
-  sellFollowTarget: string | null;
-  // BUY config (defaults)
-  buyMode: string;
-  buyFollowTarget: string | null;
-  // Per-asset configs (overrides)
   positioningConfigs: PositioningConfigsMap;
   // Smart filters (shared)
   smartMinUserGrade: number;
@@ -55,6 +48,8 @@ interface BotConfig {
   updatedBy: string | null;
 }
 
+const ASSETS = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB'];
+
 export default function SettingsPage() {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,17 +57,15 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // SELL config state
-  const [sellMode, setSellMode] = useState('smart');
-  const [sellFollowTarget, setSellFollowTarget] = useState('');
-  const [sellSellers, setSellSellers] = useState<Seller[]>([]);
-  const [loadingSellSellers, setLoadingSellSellers] = useState(false);
+  // Selected asset tab
+  const [selectedAsset, setSelectedAsset] = useState('USDT');
 
-  // BUY config state
-  const [buyMode, setBuyMode] = useState('smart');
-  const [buyFollowTarget, setBuyFollowTarget] = useState('');
-  const [buySellers, setBuySellers] = useState<Seller[]>([]);
-  const [loadingBuySellers, setLoadingBuySellers] = useState(false);
+  // Per-asset configs
+  const [positioningConfigs, setPositioningConfigs] = useState<PositioningConfigsMap>({});
+
+  // Sellers cache per search key
+  const [sellersCache, setSellersCache] = useState<Record<string, Seller[]>>({});
+  const [loadingSellers, setLoadingSellers] = useState<Record<string, boolean>>({});
 
   // Smart filters (shared)
   const [smartFilters, setSmartFilters] = useState({
@@ -88,42 +81,42 @@ export default function SettingsPage() {
   const [undercutCents, setUndercutCents] = useState(1);
   const [matchPrice, setMatchPrice] = useState(false);
 
-  // Per-asset configs (overrides)
-  const [positioningConfigs, setPositioningConfigs] = useState<PositioningConfigsMap>({});
-  const [newConfigKey, setNewConfigKey] = useState('');
-  const [newConfigMode, setNewConfigMode] = useState<'smart' | 'follow'>('follow');
-  const [newConfigTarget, setNewConfigTarget] = useState('');
+  // Get config for a specific asset and trade type
+  const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
+    const key = `${tradeType}:${asset}`;
+    return positioningConfigs[key] || { mode: 'smart', followTarget: null };
+  };
 
-  const ASSETS = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB', 'FDUSD'];
-  const TRADE_TYPES = ['SELL', 'BUY'];
+  // Update config for a specific asset and trade type
+  const updateAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY', updates: Partial<AssetPositioningConfig>) => {
+    const key = `${tradeType}:${asset}`;
+    setPositioningConfigs(prev => ({
+      ...prev,
+      [key]: {
+        ...getAssetConfig(asset, tradeType),
+        ...updates,
+      },
+    }));
+  };
 
-  // Fetch sellers for SELL ads (looking for other sellers to compete with)
-  const fetchSellSellers = useCallback(async () => {
-    setLoadingSellSellers(true);
+  // Fetch sellers for a specific asset and trade type
+  const fetchSellers = useCallback(async (asset: string, tradeType: 'SELL' | 'BUY') => {
+    // For SELL ads (we're selling), we search BUY to find other sellers
+    // For BUY ads (we're buying), we search SELL to find other buyers
+    const searchType = tradeType === 'SELL' ? 'BUY' : 'SELL';
+    const cacheKey = `${tradeType}:${asset}`;
+
+    setLoadingSellers(prev => ({ ...prev, [cacheKey]: true }));
     try {
-      // For SELL ads, we search with BUY to find other sellers
-      const response = await fetch(`/api/sellers?asset=USDT&fiat=MXN&tradeType=BUY&rows=20`);
+      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${searchType}&rows=15`);
       const data = await response.json();
-      if (data.success) setSellSellers(data.sellers);
+      if (data.success) {
+        setSellersCache(prev => ({ ...prev, [cacheKey]: data.sellers }));
+      }
     } catch (err) {
-      console.error('Error fetching sell sellers:', err);
+      console.error(`Error fetching sellers for ${cacheKey}:`, err);
     } finally {
-      setLoadingSellSellers(false);
-    }
-  }, []);
-
-  // Fetch sellers for BUY ads (looking for other buyers to compete with)
-  const fetchBuySellers = useCallback(async () => {
-    setLoadingBuySellers(true);
-    try {
-      // For BUY ads, we search with SELL to find other buyers
-      const response = await fetch(`/api/sellers?asset=USDT&fiat=MXN&tradeType=SELL&rows=20`);
-      const data = await response.json();
-      if (data.success) setBuySellers(data.sellers);
-    } catch (err) {
-      console.error('Error fetching buy sellers:', err);
-    } finally {
-      setLoadingBuySellers(false);
+      setLoadingSellers(prev => ({ ...prev, [cacheKey]: false }));
     }
   }, []);
 
@@ -134,15 +127,7 @@ export default function SettingsPage() {
 
       if (data.success) {
         setConfig(data.config);
-        // SELL config (defaults)
-        setSellMode(data.config.sellMode || 'smart');
-        setSellFollowTarget(data.config.sellFollowTarget || '');
-        // BUY config (defaults)
-        setBuyMode(data.config.buyMode || 'smart');
-        setBuyFollowTarget(data.config.buyFollowTarget || '');
-        // Per-asset configs
         setPositioningConfigs(data.config.positioningConfigs || {});
-        // Smart filters
         setSmartFilters({
           minUserGrade: data.config.smartMinUserGrade ?? 2,
           minFinishRate: Math.round((data.config.smartMinFinishRate ?? 0.90) * 100),
@@ -169,15 +154,6 @@ export default function SettingsPage() {
     const interval = setInterval(fetchConfig, 30000);
     return () => clearInterval(interval);
   }, [fetchConfig]);
-
-  // Fetch sellers when follow mode is selected
-  useEffect(() => {
-    if (sellMode === 'follow') fetchSellSellers();
-  }, [sellMode, fetchSellSellers]);
-
-  useEffect(() => {
-    if (buyMode === 'follow') fetchBuySellers();
-  }, [buyMode, fetchBuySellers]);
 
   const updateConfig = async (updates: Partial<BotConfig>) => {
     setSaving(true);
@@ -214,12 +190,8 @@ export default function SettingsPage() {
     updateConfig({ positioningEnabled: !config.positioningEnabled });
   };
 
-  const savePositioningConfig = () => {
+  const saveAllConfig = () => {
     updateConfig({
-      sellMode,
-      sellFollowTarget: sellMode === 'follow' ? sellFollowTarget : null,
-      buyMode,
-      buyFollowTarget: buyMode === 'follow' ? buyFollowTarget : null,
       positioningConfigs,
       smartMinUserGrade: smartFilters.minUserGrade,
       smartMinFinishRate: smartFilters.minFinishRate / 100,
@@ -230,30 +202,6 @@ export default function SettingsPage() {
       undercutCents,
       matchPrice,
     } as Partial<BotConfig>);
-  };
-
-  // Add per-asset config
-  const addAssetConfig = () => {
-    if (!newConfigKey) return;
-    const key = newConfigKey.toUpperCase();
-    setPositioningConfigs(prev => ({
-      ...prev,
-      [key]: {
-        mode: newConfigMode,
-        followTarget: newConfigMode === 'follow' ? newConfigTarget : null,
-      },
-    }));
-    setNewConfigKey('');
-    setNewConfigTarget('');
-  };
-
-  // Remove per-asset config
-  const removeAssetConfig = (key: string) => {
-    setPositioningConfigs(prev => {
-      const newConfigs = { ...prev };
-      delete newConfigs[key];
-      return newConfigs;
-    });
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -286,60 +234,122 @@ export default function SettingsPage() {
     );
   }
 
-  // Reusable seller list component
-  const SellerList = ({
-    sellers,
-    loading,
-    selectedTarget,
-    onSelect,
-    onRefresh,
-  }: {
-    sellers: Seller[];
-    loading: boolean;
-    selectedTarget: string;
-    onSelect: (nick: string) => void;
-    onRefresh: () => void;
-  }) => (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-gray-300">Seleccionar del mercado</h4>
-        <button onClick={onRefresh} disabled={loading} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
-          {loading ? <span className="animate-spin">&#8635;</span> : <span>&#8635;</span>} Actualizar
-        </button>
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <div className="animate-spin h-5 w-5 border-2 border-primary-500 border-t-transparent rounded-full"></div>
+  // Asset Config Card Component
+  const AssetTradeConfig = ({ asset, tradeType }: { asset: string; tradeType: 'SELL' | 'BUY' }) => {
+    const key = `${tradeType}:${asset}`;
+    const cfg = getAssetConfig(asset, tradeType);
+    const sellers = sellersCache[key] || [];
+    const isLoading = loadingSellers[key] || false;
+    const isSell = tradeType === 'SELL';
+
+    return (
+      <div className={`p-4 rounded-lg border ${isSell ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className={`font-semibold ${isSell ? 'text-emerald-400' : 'text-red-400'}`}>
+            {isSell ? 'Nosotros Vender' : 'Nosotros Comprar'}
+          </h3>
+          <span className={`text-xs px-2 py-1 rounded ${isSell ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>
+            {isSell ? 'SELL' : 'BUY'}
+          </span>
         </div>
-      ) : sellers.length > 0 ? (
-        <div className="max-h-48 overflow-y-auto space-y-1.5 pr-2">
-          {sellers.map((seller, index) => (
-            <button
-              key={seller.userNo}
-              onClick={() => onSelect(seller.nickName)}
-              className={`w-full text-left p-2 rounded-lg border transition-all text-sm ${
-                selectedTarget === seller.nickName
-                  ? 'bg-primary-500/20 border-primary-500/50'
-                  : 'bg-gray-700/50 border-gray-600 hover:border-gray-500'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 text-xs w-4">#{index + 1}</span>
-                  <span className="text-white font-medium">{seller.nickName}</span>
-                  {seller.proMerchant && <span className="px-1 py-0.5 bg-amber-500/20 text-amber-400 text-[9px] rounded">PRO</span>}
-                  {seller.isOnline && <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>}
-                </div>
-                <span className="text-white font-bold">${parseFloat(seller.price).toLocaleString()}</span>
+
+        {/* Mode Selection */}
+        <div className="flex gap-4 mb-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              checked={cfg.mode === 'smart'}
+              onChange={() => updateAssetConfig(asset, tradeType, { mode: 'smart', followTarget: null })}
+              className="w-4 h-4"
+            />
+            <span className="text-sm text-white">Smart</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              checked={cfg.mode === 'follow'}
+              onChange={() => updateAssetConfig(asset, tradeType, { mode: 'follow' })}
+              className="w-4 h-4"
+            />
+            <span className="text-sm text-white">Follow</span>
+          </label>
+        </div>
+
+        {/* Follow Mode Config */}
+        {cfg.mode === 'follow' && (
+          <div className="space-y-2">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Siguiendo a:</label>
+              <input
+                type="text"
+                value={cfg.followTarget || ''}
+                onChange={(e) => updateAssetConfig(asset, tradeType, { followTarget: e.target.value })}
+                placeholder="NickName"
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+              />
+            </div>
+
+            {/* Seller List */}
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-gray-400">Seleccionar del mercado</span>
+                <button
+                  onClick={() => fetchSellers(asset, tradeType)}
+                  disabled={isLoading}
+                  className="text-xs text-primary-400 hover:text-primary-300"
+                >
+                  {isLoading ? '...' : '↻ Actualizar'}
+                </button>
               </div>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-3 text-gray-500 text-sm">No se encontraron vendedores</div>
-      )}
-    </div>
-  );
+
+              {isLoading ? (
+                <div className="flex justify-center py-3">
+                  <div className="animate-spin h-4 w-4 border-2 border-primary-500 border-t-transparent rounded-full"></div>
+                </div>
+              ) : sellers.length > 0 ? (
+                <div className="max-h-32 overflow-y-auto space-y-1">
+                  {sellers.map((seller, idx) => (
+                    <button
+                      key={seller.userNo}
+                      onClick={() => updateAssetConfig(asset, tradeType, { followTarget: seller.nickName })}
+                      className={`w-full text-left p-2 rounded text-xs transition ${
+                        cfg.followTarget === seller.nickName
+                          ? 'bg-primary-500/30 border border-primary-500/50'
+                          : 'bg-gray-700/50 hover:bg-gray-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-500">#{idx + 1}</span>
+                          <span className="text-white">{seller.nickName}</span>
+                          {seller.proMerchant && <span className="px-1 bg-amber-500/20 text-amber-400 text-[9px] rounded">PRO</span>}
+                          {seller.isOnline && <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>}
+                        </div>
+                        <span className="text-white font-medium">${parseFloat(seller.price).toLocaleString()}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  onClick={() => fetchSellers(asset, tradeType)}
+                  className="w-full py-2 text-xs text-gray-500 hover:text-gray-400"
+                >
+                  Clic para cargar vendedores
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {cfg.mode === 'smart' && (
+          <div className="p-2 bg-gray-800/50 rounded text-xs text-gray-400">
+            Usa filtros inteligentes compartidos
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -347,7 +357,7 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Configuracion del Bot</h1>
-          <p className="text-gray-400 text-sm mt-1">Kill switches y posicionamiento por VENTA/COMPRA y moneda</p>
+          <p className="text-gray-400 text-sm mt-1">Configura cada moneda independientemente</p>
         </div>
         {successMessage && (
           <div className="px-4 py-2 bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-emerald-400 text-sm">
@@ -381,11 +391,6 @@ export default function SettingsPage() {
               }`} />
             </button>
           </div>
-          <div className={`mt-4 p-3 rounded-lg border ${
-            config?.releaseEnabled ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
-          }`}>
-            <span className="font-medium">{config?.releaseEnabled ? '&#10003; ACTIVO' : '&#10007; DETENIDO'}</span>
-          </div>
         </div>
 
         {/* Positioning Bot */}
@@ -411,218 +416,69 @@ export default function SettingsPage() {
               }`} />
             </button>
           </div>
-          <div className={`mt-4 p-3 rounded-lg border ${
-            config?.positioningEnabled ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
-          }`}>
-            <span className="font-medium">{config?.positioningEnabled ? '&#10003; ACTIVO' : '&#10007; DETENIDO'}</span>
-          </div>
         </div>
       </div>
 
-      {/* Positioning Configuration - Split SELL/BUY (Defaults) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* SELL Ads Configuration */}
-        <div className="card p-6 border-l-4 border-l-emerald-500">
-          <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-            <span className="text-emerald-400">VENTA</span>
-            <span className="text-gray-400 text-sm font-normal">(Default)</span>
-          </h2>
-          <p className="text-gray-500 text-xs mb-4">Aplica a todas las monedas sin config especifica</p>
-
-          {/* Mode Selection */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-300 mb-2">Modo</label>
-            <div className="flex gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="sellMode" value="smart" checked={sellMode === 'smart'} onChange={(e) => setSellMode(e.target.value)} className="w-4 h-4 text-primary-600" />
-                <span className="text-white text-sm">Smart</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="sellMode" value="follow" checked={sellMode === 'follow'} onChange={(e) => setSellMode(e.target.value)} className="w-4 h-4 text-primary-600" />
-                <span className="text-white text-sm">Follow</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Follow Mode Config */}
-          {sellMode === 'follow' && (
-            <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Siguiendo a:</label>
-                <input
-                  type="text"
-                  value={sellFollowTarget}
-                  onChange={(e) => setSellFollowTarget(e.target.value)}
-                  placeholder="NickName del vendedor"
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                />
-              </div>
-              <SellerList
-                sellers={sellSellers}
-                loading={loadingSellSellers}
-                selectedTarget={sellFollowTarget}
-                onSelect={setSellFollowTarget}
-                onRefresh={fetchSellSellers}
-              />
-            </div>
-          )}
-
-          {sellMode === 'smart' && (
-            <div className="p-3 bg-gray-800/50 rounded-lg text-sm text-gray-400">
-              Usa filtros inteligentes para encontrar el mejor precio (config compartida abajo)
-            </div>
-          )}
-        </div>
-
-        {/* BUY Ads Configuration */}
-        <div className="card p-6 border-l-4 border-l-red-500">
-          <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-            <span className="text-red-400">COMPRA</span>
-            <span className="text-gray-400 text-sm font-normal">(Default)</span>
-          </h2>
-          <p className="text-gray-500 text-xs mb-4">Aplica a todas las monedas sin config especifica</p>
-
-          {/* Mode Selection */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-300 mb-2">Modo</label>
-            <div className="flex gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="buyMode" value="smart" checked={buyMode === 'smart'} onChange={(e) => setBuyMode(e.target.value)} className="w-4 h-4 text-primary-600" />
-                <span className="text-white text-sm">Smart</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="buyMode" value="follow" checked={buyMode === 'follow'} onChange={(e) => setBuyMode(e.target.value)} className="w-4 h-4 text-primary-600" />
-                <span className="text-white text-sm">Follow</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Follow Mode Config */}
-          {buyMode === 'follow' && (
-            <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Siguiendo a:</label>
-                <input
-                  type="text"
-                  value={buyFollowTarget}
-                  onChange={(e) => setBuyFollowTarget(e.target.value)}
-                  placeholder="NickName del comprador"
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                />
-              </div>
-              <SellerList
-                sellers={buySellers}
-                loading={loadingBuySellers}
-                selectedTarget={buyFollowTarget}
-                onSelect={setBuyFollowTarget}
-                onRefresh={fetchBuySellers}
-              />
-            </div>
-          )}
-
-          {buyMode === 'smart' && (
-            <div className="p-3 bg-gray-800/50 rounded-lg text-sm text-gray-400">
-              Usa filtros inteligentes para encontrar el mejor precio (config compartida abajo)
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Per-Asset Configuration */}
+      {/* Asset Tabs */}
       <div className="card p-6">
-        <h2 className="text-lg font-semibold text-white mb-2">Configuracion por Moneda</h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Configura diferentes estrategias por tipo de anuncio y moneda. Estas configuraciones tienen prioridad sobre los defaults de arriba.
-        </p>
+        <h2 className="text-lg font-semibold text-white mb-4">Configuracion por Moneda</h2>
 
-        {/* Existing per-asset configs */}
-        {Object.keys(positioningConfigs).length > 0 && (
-          <div className="space-y-2 mb-4">
-            {Object.entries(positioningConfigs).map(([key, cfg]) => (
-              <div key={key} className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                <div className="flex items-center gap-3">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${
-                    key.startsWith('SELL') ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                  }`}>
-                    {key}
-                  </span>
-                  <span className="text-gray-300">
-                    {cfg.mode === 'follow' ? (
-                      <>Follow: <span className="text-white font-medium">{cfg.followTarget || 'No target'}</span></>
-                    ) : (
-                      <span className="text-amber-400">Smart Mode</span>
-                    )}
-                  </span>
-                </div>
-                <button
-                  onClick={() => removeAssetConfig(key)}
-                  className="text-red-400 hover:text-red-300 text-sm px-2 py-1"
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+          {ASSETS.map(asset => (
+            <button
+              key={asset}
+              onClick={() => setSelectedAsset(asset)}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition whitespace-nowrap ${
+                selectedAsset === asset
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {asset}
+            </button>
+          ))}
+        </div>
+
+        {/* Selected Asset Config */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <AssetTradeConfig asset={selectedAsset} tradeType="SELL" />
+          <AssetTradeConfig asset={selectedAsset} tradeType="BUY" />
+        </div>
+
+        {/* Quick Summary of All Configs */}
+        <div className="mt-6 pt-4 border-t border-gray-700">
+          <h4 className="text-sm font-medium text-gray-400 mb-3">Resumen de Configuraciones</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
+            {ASSETS.map(asset => {
+              const sellCfg = getAssetConfig(asset, 'SELL');
+              const buyCfg = getAssetConfig(asset, 'BUY');
+              return (
+                <div
+                  key={asset}
+                  onClick={() => setSelectedAsset(asset)}
+                  className={`p-2 rounded border cursor-pointer transition ${
+                    selectedAsset === asset ? 'border-primary-500 bg-primary-500/10' : 'border-gray-700 hover:border-gray-600'
+                  }`}
                 >
-                  Eliminar
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Add new per-asset config */}
-        <div className="p-4 bg-gray-800/30 rounded-lg border border-gray-700">
-          <h4 className="text-sm font-medium text-gray-300 mb-3">Agregar configuracion</h4>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Tipo:Moneda</label>
-              <select
-                value={newConfigKey}
-                onChange={(e) => setNewConfigKey(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-              >
-                <option value="">Seleccionar...</option>
-                {TRADE_TYPES.map(tt =>
-                  ASSETS.map(asset => {
-                    const key = `${tt}:${asset}`;
-                    // Don't show if already configured
-                    if (positioningConfigs[key]) return null;
-                    return (
-                      <option key={key} value={key}>
-                        {tt === 'SELL' ? 'VENTA' : 'COMPRA'} - {asset}
-                      </option>
-                    );
-                  })
-                )}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Modo</label>
-              <select
-                value={newConfigMode}
-                onChange={(e) => setNewConfigMode(e.target.value as 'smart' | 'follow')}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-              >
-                <option value="smart">Smart</option>
-                <option value="follow">Follow</option>
-              </select>
-            </div>
-            {newConfigMode === 'follow' && (
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Seguir a</label>
-                <input
-                  type="text"
-                  value={newConfigTarget}
-                  onChange={(e) => setNewConfigTarget(e.target.value)}
-                  placeholder="NickName"
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                />
-              </div>
-            )}
-            <div className="flex items-end">
-              <button
-                onClick={addAssetConfig}
-                disabled={!newConfigKey || (newConfigMode === 'follow' && !newConfigTarget)}
-                className="w-full px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 transition disabled:opacity-50 text-sm"
-              >
-                Agregar
-              </button>
-            </div>
+                  <div className="font-medium text-white text-sm mb-1">{asset}</div>
+                  <div className="text-xs space-y-0.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-emerald-400">V:</span>
+                      <span className="text-gray-400 truncate">
+                        {sellCfg.mode === 'follow' ? sellCfg.followTarget || '?' : 'Smart'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-red-400">C:</span>
+                      <span className="text-gray-400 truncate">
+                        {buyCfg.mode === 'follow' ? buyCfg.followTarget || '?' : 'Smart'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -630,6 +486,7 @@ export default function SettingsPage() {
       {/* Smart Filters (Shared) */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-white mb-4">Filtros Smart (Compartidos)</h2>
+        <p className="text-gray-400 text-sm mb-4">Estos filtros aplican a todas las monedas en modo Smart</p>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Grade Minimo</label>
@@ -692,7 +549,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Save Button */}
-      <button onClick={savePositioningConfig} disabled={saving} className="w-full px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 font-medium">
+      <button onClick={saveAllConfig} disabled={saving} className="w-full px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 font-medium">
         {saving ? 'Guardando...' : 'Guardar Configuracion'}
       </button>
 
