@@ -1,19 +1,16 @@
 // =====================================================
 // SMART ENGINE - Independent module for smart positioning
+// Simplified to only use: minOrderCount and minSurplus
 // =====================================================
 
 import { getBinanceClient, BinanceC2CClient } from '../binance-client.js';
 import { AdData, TradeType } from '../../types/binance.js';
 
 export interface SmartConfig {
-  minUserGrade: number;
-  minMonthFinishRate: number;
-  minMonthOrderCount: number;
-  minPositiveRate: number;
-  requireOnline: boolean;
-  minSurplusAmount: number;
+  minMonthOrderCount: number;  // Minimum completed orders
+  minSurplusAmount: number;    // Minimum available volume
   undercutCents: number;
-  matchPrice: boolean; // true = exact match, false = undercut
+  matchPrice: boolean;         // true = exact match, false = undercut
 }
 
 export interface SmartResult {
@@ -24,11 +21,7 @@ export interface SmartResult {
 }
 
 const DEFAULT_CONFIG: SmartConfig = {
-  minUserGrade: 2,
-  minMonthFinishRate: 0.90,
   minMonthOrderCount: 10,
-  minPositiveRate: 0.95,
-  requireOnline: true,
   minSurplusAmount: 100,
   undercutCents: 1,
   matchPrice: false,
@@ -50,16 +43,13 @@ export class SmartEngine {
   }
 
   /**
-   * Check if an ad passes all quality filters
+   * Check if an ad passes filters (simplified to only 2 criteria)
    */
   private passesFilters(ad: AdData): boolean {
     const adv = ad.advertiser;
 
-    if (adv.userGrade < this.config.minUserGrade) return false;
-    if (adv.monthFinishRate < this.config.minMonthFinishRate) return false;
+    // Only check: orders completed and available volume
     if (adv.monthOrderCount < this.config.minMonthOrderCount) return false;
-    if (adv.positiveRate < this.config.minPositiveRate) return false;
-    if (this.config.requireOnline && !adv.isOnline) return false;
     if (parseFloat(ad.surplusAmount) < this.config.minSurplusAmount) return false;
 
     return true;

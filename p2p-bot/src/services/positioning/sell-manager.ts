@@ -166,11 +166,7 @@ export class SellAdManager extends EventEmitter {
 
       // Update smart engine shared config
       this.smartEngine.updateConfig({
-        minUserGrade: dbConfig.smartMinUserGrade,
-        minMonthFinishRate: dbConfig.smartMinFinishRate,
         minMonthOrderCount: dbConfig.smartMinOrderCount,
-        minPositiveRate: dbConfig.smartMinPositiveRate,
-        requireOnline: dbConfig.smartRequireOnline,
         minSurplusAmount: dbConfig.smartMinSurplus,
         undercutCents: dbConfig.undercutCents,
         matchPrice: this.config.matchPrice,
