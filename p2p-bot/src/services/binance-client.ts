@@ -252,11 +252,20 @@ export class BinanceC2CClient {
         }>;
       };
 
-      // Debug level to reduce noise
-      logger.debug(
-        { status: response.status, code: rawData.code, count: rawData.data?.length ?? 0 },
-        '[SEARCH ADS] Response'
-      );
+      // Log response details for debugging
+      if (rawData.code !== '000000' || !rawData.data || rawData.data.length === 0) {
+        logger.warn({
+          httpStatus: response.status,
+          apiCode: rawData.code,
+          message: rawData.message,
+          messageDetail: rawData.messageDetail,
+          hasData: !!rawData.data,
+          dataLength: rawData.data?.length ?? 0,
+          asset: request.asset,
+          fiat: request.fiat,
+          tradeType: request.tradeType,
+        }, '[SEARCH ADS] API returned error or empty');
+      }
 
       // Transform public API response to AdData format
       if (rawData.code === '000000' && rawData.data && rawData.data.length > 0) {
@@ -290,15 +299,8 @@ export class BinanceC2CClient {
         }));
       }
 
-      logger.warn({
-        code: rawData.code,
-        hasData: !!rawData.data,
-        dataLength: rawData.data?.length ?? 0,
-        asset: request.asset,
-        fiat: request.fiat,
-        tradeType: request.tradeType,
-        publisherType: request.publisherType,
-      }, 'Search ads returned no data');
+      // Log already printed above with full details
+      logger.info(`[SEARCH ADS] No data: ${request.asset}/${request.fiat}/${request.tradeType} code=${rawData.code}`);
       return [];
     } catch (error: any) {
       logger.error({

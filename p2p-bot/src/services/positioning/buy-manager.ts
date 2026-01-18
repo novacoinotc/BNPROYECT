@@ -227,8 +227,18 @@ export class BuyAdManager extends EventEmitter {
 
     // Skip if this asset is disabled
     if (assetConfig.enabled === false) {
+      logger.debug(`[BUY] ${ad.asset} - Bot desactivado para este asset`);
       return;
     }
+
+    // Log which config is being used for this asset
+    logger.debug({
+      asset: ad.asset,
+      mode: assetConfig.mode,
+      followTarget: assetConfig.followTarget,
+      matchPrice: assetConfig.matchPrice,
+      undercutCents: assetConfig.undercutCents,
+    }, `[BUY] ${ad.asset} usando config por asset`);
 
     let targetPrice: number | null = null;
     let logInfo = '';
