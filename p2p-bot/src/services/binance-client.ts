@@ -231,7 +231,8 @@ export class BinanceC2CClient {
       };
 
       // Transform public API response to AdData format
-      if (rawData.code === '000000' && rawData.data) {
+      if (rawData.code === '000000' && rawData.data && rawData.data.length > 0) {
+        logger.debug({ count: rawData.data.length, asset: request.asset, fiat: request.fiat }, 'Search ads found results');
         return rawData.data.map(item => ({
           advNo: item.adv.advNo,
           tradeType: item.adv.tradeType as TradeType,
@@ -261,7 +262,15 @@ export class BinanceC2CClient {
         }));
       }
 
-      logger.warn({ response: rawData }, 'Search ads returned no data');
+      logger.warn({
+        code: rawData.code,
+        hasData: !!rawData.data,
+        dataLength: rawData.data?.length ?? 0,
+        asset: request.asset,
+        fiat: request.fiat,
+        tradeType: request.tradeType,
+        publisherType: request.publisherType,
+      }, 'Search ads returned no data');
       return [];
     } catch (error) {
       logger.warn({ error }, 'Failed to search competitor ads');
