@@ -198,9 +198,10 @@ export class BinanceC2CClient {
           tradeType: request.tradeType,
           page: request.page || 1,
           rows: request.rows || 10,
-          payTypes: request.payTypes || [],
-          publisherType: request.publisherType || null,
-          transAmount: request.transAmount || null,
+          // Only include optional params if they have valid values (null causes "illegal parameter" error)
+          ...(request.payTypes && request.payTypes.length > 0 ? { payTypes: request.payTypes } : {}),
+          ...(request.publisherType ? { publisherType: request.publisherType } : {}),
+          ...(request.transAmount ? { transAmount: request.transAmount } : {}),
         }),
       });
 
