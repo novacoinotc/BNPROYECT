@@ -21,6 +21,7 @@ interface SellManagerConfig {
   mode: 'follow' | 'smart';
   followTarget: string | null;
   undercutCents: number;
+  matchPrice: boolean;
   smartConfig: Partial<SmartConfig>;
 }
 
@@ -113,11 +114,13 @@ export class SellAdManager extends EventEmitter {
       mode: 'smart',
       followTarget: null,
       undercutCents: 1,
+      matchPrice: false,
       smartConfig: {},
     };
     this.followEngine = new FollowEngine('SELL', {
       targetNickName: '',
       undercutCents: 1,
+      matchPrice: false,
     });
     this.smartEngine = new SmartEngine('SELL');
   }
@@ -156,11 +159,13 @@ export class SellAdManager extends EventEmitter {
       this.config.mode = (dbConfig.positioningMode as 'follow' | 'smart') || 'smart';
       this.config.followTarget = dbConfig.followTargetNickName || null;
       this.config.undercutCents = dbConfig.undercutCents || 1;
+      this.config.matchPrice = dbConfig.matchPrice ?? false;
 
       // Update engines
       this.followEngine.updateConfig({
         targetNickName: this.config.followTarget || '',
         undercutCents: this.config.undercutCents,
+        matchPrice: this.config.matchPrice,
       });
 
       this.smartEngine.updateConfig({
@@ -171,6 +176,7 @@ export class SellAdManager extends EventEmitter {
         requireOnline: dbConfig.smartRequireOnline,
         minSurplusAmount: dbConfig.smartMinSurplus,
         undercutCents: dbConfig.undercutCents,
+        matchPrice: this.config.matchPrice,
       });
 
       if (oldMode !== this.config.mode) {

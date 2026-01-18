@@ -8,6 +8,7 @@ import { AdData, TradeType } from '../../types/binance.js';
 export interface FollowConfig {
   targetNickName: string;
   undercutCents: number;
+  matchPrice: boolean; // true = exact match, false = undercut
 }
 
 export interface FollowResult {
@@ -76,14 +77,20 @@ export class FollowEngine {
     }
 
     const targetPrice = parseFloat(targetAd.price);
-    const undercutValue = this.config.undercutCents / 100;
 
-    // Calculate our price based on ad type:
-    // SELL ad → go LOWER to attract buyers
-    // BUY ad → go HIGHER to attract sellers
-    const ourPrice = this.adType === 'SELL'
-      ? targetPrice - undercutValue
-      : targetPrice + undercutValue;
+    // If matchPrice is true, use exact same price
+    // Otherwise, undercut by the configured cents
+    let ourPrice: number;
+    if (this.config.matchPrice) {
+      ourPrice = targetPrice;
+    } else {
+      const undercutValue = this.config.undercutCents / 100;
+      // SELL ad → go LOWER to attract buyers
+      // BUY ad → go HIGHER to attract sellers
+      ourPrice = this.adType === 'SELL'
+        ? targetPrice - undercutValue
+        : targetPrice + undercutValue;
+    }
 
     return {
       success: true,

@@ -50,6 +50,7 @@ export async function GET() {
 
         // Strategy
         undercutCents: config.undercutCents ?? 1,
+        matchPrice: config.matchPrice ?? false,
 
         // Auto-message
         autoMessageEnabled: config.autoMessageEnabled ?? false,
@@ -136,6 +137,10 @@ export async function POST(request: NextRequest) {
       updates.push(`"undercutCents" = $${paramIndex++}`);
       values.push(body.undercutCents);
     }
+    if (typeof body.matchPrice === 'boolean') {
+      updates.push(`"matchPrice" = $${paramIndex++}`);
+      values.push(body.matchPrice);
+    }
 
     // Auto-message
     if (typeof body.autoMessageEnabled === 'boolean') {
@@ -196,6 +201,7 @@ export async function POST(request: NextRequest) {
         smartRequireOnline: config.smartRequireOnline,
         smartMinSurplus: config.smartMinSurplus,
         undercutCents: config.undercutCents,
+        matchPrice: config.matchPrice,
         autoMessageEnabled: config.autoMessageEnabled,
         autoMessageText: config.autoMessageText,
         updatedAt: config.updatedAt,

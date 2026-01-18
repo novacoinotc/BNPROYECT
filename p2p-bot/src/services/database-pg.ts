@@ -1608,6 +1608,7 @@ export interface BotConfig {
   smartMinSurplus: number;
   // Strategy
   undercutCents: number;
+  matchPrice: boolean; // true = exact match, false = undercut by cents
   // Auto-message
   autoMessageEnabled: boolean;
   autoMessageText: string | null;
@@ -1654,6 +1655,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       smartMinSurplus: row?.smartMinSurplus ?? 100,
       // Strategy
       undercutCents: row?.undercutCents ?? 1,
+      matchPrice: row?.matchPrice ?? false,
       // Auto-message
       autoMessageEnabled: row?.autoMessageEnabled ?? false,
       autoMessageText: row?.autoMessageText ?? null,
@@ -1673,6 +1675,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       smartRequireOnline: true,
       smartMinSurplus: 100,
       undercutCents: 1,
+      matchPrice: false,
       autoMessageEnabled: false,
       autoMessageText: null,
     };

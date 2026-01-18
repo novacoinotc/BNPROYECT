@@ -13,6 +13,7 @@ export interface SmartConfig {
   requireOnline: boolean;
   minSurplusAmount: number;
   undercutCents: number;
+  matchPrice: boolean; // true = exact match, false = undercut
 }
 
 export interface SmartResult {
@@ -30,6 +31,7 @@ const DEFAULT_CONFIG: SmartConfig = {
   requireOnline: true,
   minSurplusAmount: 100,
   undercutCents: 1,
+  matchPrice: false,
 };
 
 export class SmartEngine {
@@ -106,14 +108,20 @@ export class SmartEngine {
     });
 
     const bestPrice = parseFloat(qualifiedAds[0].price);
-    const undercutValue = this.config.undercutCents / 100;
 
-    // Calculate our price based on ad type:
-    // SELL ad → go LOWER to attract buyers
-    // BUY ad → go HIGHER to attract sellers
-    const ourPrice = this.adType === 'SELL'
-      ? bestPrice - undercutValue
-      : bestPrice + undercutValue;
+    // If matchPrice is true, use exact same price
+    // Otherwise, undercut by the configured cents
+    let ourPrice: number;
+    if (this.config.matchPrice) {
+      ourPrice = bestPrice;
+    } else {
+      const undercutValue = this.config.undercutCents / 100;
+      // SELL ad → go LOWER to attract buyers
+      // BUY ad → go HIGHER to attract sellers
+      ourPrice = this.adType === 'SELL'
+        ? bestPrice - undercutValue
+        : bestPrice + undercutValue;
+    }
 
     return {
       success: true,

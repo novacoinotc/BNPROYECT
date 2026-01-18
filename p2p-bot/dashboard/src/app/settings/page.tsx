@@ -31,6 +31,7 @@ interface BotConfig {
   smartRequireOnline: boolean;
   smartMinSurplus: number;
   undercutCents: number;
+  matchPrice: boolean;
   releaseLastActive: string | null;
   positioningLastActive: string | null;
   updatedAt: string;
@@ -56,6 +57,7 @@ export default function SettingsPage() {
     minSurplus: 100,
   });
   const [undercutCents, setUndercutCents] = useState(1);
+  const [matchPrice, setMatchPrice] = useState(false);
 
   // Sellers list state
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -99,6 +101,7 @@ export default function SettingsPage() {
           minSurplus: data.config.smartMinSurplus ?? 100,
         });
         setUndercutCents(data.config.undercutCents ?? 1);
+        setMatchPrice(data.config.matchPrice ?? false);
         setError(null);
       } else {
         setError(data.error || 'Error loading configuration');
@@ -169,6 +172,7 @@ export default function SettingsPage() {
       smartRequireOnline: smartFilters.requireOnline,
       smartMinSurplus: smartFilters.minSurplus,
       undercutCents,
+      matchPrice,
     });
   };
 
@@ -559,22 +563,60 @@ export default function SettingsPage() {
         {/* Undercut Strategy */}
         <div className="mt-4 p-4 bg-gray-800/50 rounded-lg">
           <h3 className="text-sm font-medium text-gray-300 mb-3">Estrategia de Precio</h3>
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <label className="block text-xs text-gray-400 mb-1">Centavos a bajar del mejor competidor</label>
+
+          {/* Match Price Toggle */}
+          <div className="flex gap-4 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
               <input
-                type="number"
-                value={undercutCents}
-                onChange={(e) => setUndercutCents(parseFloat(e.target.value) || 0)}
-                className="w-32 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                min="0"
-                step="0.5"
+                type="radio"
+                name="priceStrategy"
+                checked={matchPrice}
+                onChange={() => setMatchPrice(true)}
+                className="w-4 h-4 text-primary-600"
               />
-            </div>
-            <div className="text-sm text-gray-400">
-              Tu precio = Mejor competidor - ${undercutCents.toFixed(2)} MXN
-            </div>
+              <span className="text-white">Igualar precio</span>
+              <span className="text-xs text-gray-500">(mismo precio que competidor)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="priceStrategy"
+                checked={!matchPrice}
+                onChange={() => setMatchPrice(false)}
+                className="w-4 h-4 text-primary-600"
+              />
+              <span className="text-white">Bajar centavos</span>
+              <span className="text-xs text-gray-500">(competir por precio)</span>
+            </label>
           </div>
+
+          {/* Undercut cents (only show when not matching price) */}
+          {!matchPrice && (
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-400 mb-1">Centavos a bajar del mejor competidor</label>
+                <input
+                  type="number"
+                  value={undercutCents}
+                  onChange={(e) => setUndercutCents(parseFloat(e.target.value) || 0)}
+                  className="w-32 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                  min="0"
+                  step="0.5"
+                />
+              </div>
+              <div className="text-sm text-gray-400">
+                Tu precio = Mejor competidor - ${undercutCents.toFixed(2)} MXN
+              </div>
+            </div>
+          )}
+
+          {matchPrice && (
+            <div className="p-3 bg-primary-500/10 border border-primary-500/30 rounded-lg">
+              <div className="text-sm text-primary-400">
+                Tu precio = Mismo precio que el competidor/target
+              </div>
+            </div>
+          )}
         </div>
 
         <button
