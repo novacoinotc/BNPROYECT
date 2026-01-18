@@ -479,48 +479,29 @@ export class BinanceC2CClient {
       logger.warn(`Could not fetch ad details: ${err.message}`);
     }
 
-    // Convert price to string with 2 decimals (Binance requirement)
-    const priceStr = typeof request.price === 'number'
-      ? request.price.toFixed(2)
-      : String(request.price);
+    // Round price to 2 decimals as NUMBER (not string)
+    const priceNum = typeof request.price === 'number'
+      ? Math.round(request.price * 100) / 100
+      : parseFloat(String(request.price));
 
-    // Build request body - include tradeMethods from ad detail if available
+    // Build minimal request body - only required fields
     const body: Record<string, any> = {
       advNo: request.advNo,
-      asset: request.asset,
-      fiatUnit: request.fiatUnit,
-      tradeType: request.tradeType,
-      price: priceStr,
-      priceType: request.priceType,
+      price: priceNum,
     };
 
-    // Include tradeMethods if we have them from the ad detail
+    // Include tradeMethods with payId if we have them from the ad detail
     if (adDetail?.tradeMethods && adDetail.tradeMethods.length > 0) {
       body.tradeMethods = adDetail.tradeMethods.map((tm: any) => ({
         identifier: tm.identifier || tm.tradeMethodIdentifier,
-        payId: tm.payId || tm.id,
+        payId: tm.payId || tm.id || 0,
       }));
-    }
-
-    // Include min/max amounts if available from ad detail
-    if (adDetail) {
-      if (adDetail.minSingleTransAmount) {
-        body.minSingleTransAmount = parseFloat(adDetail.minSingleTransAmount);
-      }
-      if (adDetail.maxSingleTransAmount) {
-        body.maxSingleTransAmount = parseFloat(adDetail.maxSingleTransAmount);
-      }
-      // Include initAmount (total amount) if available
-      if (adDetail.initAmount) {
-        body.initAmount = parseFloat(adDetail.initAmount);
-      }
     }
 
     // Log the exact request for debugging (use string interpolation for visibility)
     logger.info(
-      `📝 [UPDATE AD] Sending request: advNo=${body.advNo} asset=${body.asset} ` +
-      `fiat=${body.fiatUnit} tradeType=${body.tradeType} price=${body.price} ` +
-      `priceType=${body.priceType} tradeMethods=${body.tradeMethods?.length || 0}`
+      `📝 [UPDATE AD] Sending request: advNo=${body.advNo} price=${body.price} ` +
+      `tradeMethods=${body.tradeMethods?.length || 0} body=${JSON.stringify(body)}`
     );
 
     try {
