@@ -256,13 +256,20 @@ export class PositioningOrchestrator extends EventEmitter {
 
   /**
    * Update the ad price via Binance API
+   * Note: this.tradeType is the SEARCH type (BUY = search sellers)
+   * The AD type is inverted: if we search BUY, our ad is SELL
    */
   private async updateAdPrice(price: number): Promise<void> {
+    // Invert the search type to get the actual ad type
+    // BUY search = SELL ad (we're selling USDT, searching for other sellers)
+    // SELL search = BUY ad (we're buying USDT, searching for other buyers)
+    const adTradeType = this.tradeType === TradeType.BUY ? TradeType.SELL : TradeType.BUY;
+
     await this.client.updateAd({
       advNo: this.advNo,
       asset: this.asset,
       fiatUnit: this.fiat,
-      tradeType: this.tradeType,
+      tradeType: adTradeType,
       price,
       priceType: PriceType.FIXED,
     });

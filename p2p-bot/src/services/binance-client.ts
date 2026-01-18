@@ -449,11 +449,37 @@ export class BinanceC2CClient {
    * POST /sapi/v1/c2c/ads/update
    */
   async updateAd(request: UpdateAdRequest): Promise<boolean> {
-    await this.signedPost<void>(
-      '/sapi/v1/c2c/ads/update',
-      request
-    );
-    return true;
+    // Log the exact request for debugging
+    logger.info({
+      advNo: request.advNo,
+      asset: request.asset,
+      fiatUnit: request.fiatUnit,
+      tradeType: request.tradeType,
+      price: request.price,
+      priceType: request.priceType,
+    }, '📝 [UPDATE AD] Sending request');
+
+    try {
+      await this.signedPost<void>(
+        '/sapi/v1/c2c/ads/update',
+        request
+      );
+      logger.info({ advNo: request.advNo, price: request.price }, '✅ [UPDATE AD] Success');
+      return true;
+    } catch (error: any) {
+      // Extract detailed error info from Binance API response
+      const errorData = error.response?.data;
+      logger.error({
+        advNo: request.advNo,
+        requestBody: JSON.stringify(request),
+        httpStatus: error.response?.status,
+        binanceCode: errorData?.code,
+        binanceMessage: errorData?.message || errorData?.msg,
+        binanceData: JSON.stringify(errorData),
+        errorMessage: error.message,
+      }, '❌ [UPDATE AD] Failed');
+      throw error;
+    }
   }
 
   /**
