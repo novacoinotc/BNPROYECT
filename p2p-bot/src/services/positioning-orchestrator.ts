@@ -55,7 +55,7 @@ export class PositioningOrchestrator extends EventEmitter {
   private advNo: string = '';
   private asset: string = 'USDT';
   private fiat: string = 'MXN';
-  private tradeType: TradeType = TradeType.SELL;
+  private tradeType: TradeType = TradeType.BUY; // BUY = search sellers (for USDT sale ads)
 
   // Threshold for price updates (0.01% = $0.01 on $100)
   private readonly PRICE_UPDATE_THRESHOLD = 0.0001;
@@ -81,7 +81,7 @@ export class PositioningOrchestrator extends EventEmitter {
     advNo: string,
     asset: string = 'USDT',
     fiat: string = 'MXN',
-    tradeType: TradeType = TradeType.SELL,
+    tradeType: TradeType = TradeType.BUY, // BUY = search sellers (for USDT sale ads)
     intervalMs: number = 5000 // Default 5 seconds for fast market checks
   ): void {
     if (this.mode === 'off') {
