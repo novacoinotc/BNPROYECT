@@ -15,7 +15,7 @@ import { createAutoReleaseOrchestrator } from './services/auto-release.js';
 import { createTOTPService, TOTPService } from './services/totp-service.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from './services/database-pg.js';
 import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
-import { MultiAdPositioningManager, createMultiAdPositioningManager } from './services/multi-ad-positioning.js';
+import { SellAdManager, createSellAdManager, BuyAdManager, createBuyAdManager } from './services/positioning/index.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -51,7 +51,9 @@ let autoRelease: ReturnType<typeof createAutoReleaseOrchestrator>;
 let totpService: TOTPService;
 let positioningOrchestrator: PositioningOrchestrator | null = null;
 let positioningCheckInterval: NodeJS.Timeout | null = null;
-let multiAdManager: MultiAdPositioningManager | null = null;
+// Separated managers for BUY and SELL ads
+let sellAdManager: SellAdManager | null = null;
+let buyAdManager: BuyAdManager | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -289,20 +291,30 @@ async function checkPositioningStatus(): Promise<void> {
     const mode = (config.positioningMode || 'smart') as PositioningMode;
     const target = config.followTargetNickName || null;
 
-    // ========== MULTI-AD MODE ==========
+    // ========== SEPARATED BUY/SELL MANAGERS ==========
     if (BOT_CONFIG.enableMultiAd) {
-      if (enabled && !multiAdManager) {
-        // Start multi-ad manager - handles ALL active ads
-        multiAdManager = createMultiAdPositioningManager();
-        webhookReceiver.setMultiAdManager(multiAdManager);
-        await multiAdManager.start(BOT_CONFIG.fiat, 5000);
-      } else if (!enabled && multiAdManager) {
-        // Stop multi-ad manager
+      if (enabled && !sellAdManager && !buyAdManager) {
+        // Start both managers independently
+        sellAdManager = createSellAdManager();
+        buyAdManager = createBuyAdManager();
+
+        // Start them in parallel
+        await Promise.all([
+          sellAdManager.start(5000),
+          buyAdManager.start(5000),
+        ]);
+      } else if (!enabled && (sellAdManager || buyAdManager)) {
+        // Stop both managers
         logger.info('🛑 Positioning detenido');
-        multiAdManager.stop();
-        multiAdManager = null;
+        if (sellAdManager) {
+          sellAdManager.stop();
+          sellAdManager = null;
+        }
+        if (buyAdManager) {
+          buyAdManager.stop();
+          buyAdManager = null;
+        }
       }
-      // Multi-ad mode doesn't need config change tracking - it auto-discovers ads
       return;
     }
 
@@ -376,9 +388,13 @@ async function shutdown(): Promise<void> {
     positioningOrchestrator.stop();
     positioningOrchestrator = null;
   }
-  if (multiAdManager) {
-    multiAdManager.stop();
-    multiAdManager = null;
+  if (sellAdManager) {
+    sellAdManager.stop();
+    sellAdManager = null;
+  }
+  if (buyAdManager) {
+    buyAdManager.stop();
+    buyAdManager = null;
   }
 
   // Stop services
@@ -421,5 +437,7 @@ export {
   ocrService,
   autoRelease,
   positioningOrchestrator,
+  sellAdManager,
+  buyAdManager,
   BOT_CONFIG,
 };
