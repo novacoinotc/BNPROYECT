@@ -31,8 +31,6 @@ interface BotConfig {
   smartRequireOnline: boolean;
   smartMinSurplus: number;
   undercutCents: number;
-  autoMessageEnabled: boolean;
-  autoMessageText: string | null;
   releaseLastActive: string | null;
   positioningLastActive: string | null;
   updatedAt: string;
@@ -59,20 +57,15 @@ export default function SettingsPage() {
   });
   const [undercutCents, setUndercutCents] = useState(1);
 
-  // Auto-message state
-  const [autoMessageEnabled, setAutoMessageEnabled] = useState(false);
-  const [autoMessageText, setAutoMessageText] = useState(
-    '¡Gracias por tu confianza! 🙏\n\nSi tu experiencia de compra fue positiva y el proceso fue rápido y confiable, agradeceríamos mucho un comentario positivo ⭐\n\nEstamos para servirte en tus futuras compras.\n\n¿Necesitas ayuda adicional? Escribe: AYUDA\n\n¡Hasta pronto!'
-  );
-
   // Sellers list state
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loadingSellers, setLoadingSellers] = useState(false);
+  const [adType, setAdType] = useState<'SELL' | 'BUY'>('SELL'); // SELL = merchants sell USDT, BUY = merchants buy USDT
 
-  const fetchSellers = useCallback(async () => {
+  const fetchSellers = useCallback(async (type: 'SELL' | 'BUY' = adType) => {
     setLoadingSellers(true);
     try {
-      const response = await fetch('/api/sellers?asset=USDT&fiat=MXN&tradeType=SELL&rows=20');
+      const response = await fetch(`/api/sellers?asset=USDT&fiat=MXN&tradeType=${type}&rows=20`);
       const data = await response.json();
       if (data.success) {
         setSellers(data.sellers);
@@ -82,7 +75,7 @@ export default function SettingsPage() {
     } finally {
       setLoadingSellers(false);
     }
-  }, []);
+  }, [adType]);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -102,10 +95,6 @@ export default function SettingsPage() {
           minSurplus: data.config.smartMinSurplus ?? 100,
         });
         setUndercutCents(data.config.undercutCents ?? 1);
-        setAutoMessageEnabled(data.config.autoMessageEnabled ?? false);
-        if (data.config.autoMessageText) {
-          setAutoMessageText(data.config.autoMessageText);
-        }
         setError(null);
       } else {
         setError(data.error || 'Error loading configuration');
@@ -176,13 +165,6 @@ export default function SettingsPage() {
       smartRequireOnline: smartFilters.requireOnline,
       smartMinSurplus: smartFilters.minSurplus,
       undercutCents,
-    });
-  };
-
-  const saveAutoMessage = () => {
-    updateConfig({
-      autoMessageEnabled,
-      autoMessageText,
     });
   };
 
@@ -421,7 +403,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-gray-300">Vendedor a Seguir</h3>
               <button
-                onClick={fetchSellers}
+                onClick={() => fetchSellers(adType)}
                 disabled={loadingSellers}
                 className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1"
               >
@@ -432,7 +414,33 @@ export default function SettingsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 )}
-                Actualizar lista
+                Actualizar
+              </button>
+            </div>
+
+            {/* Ad Type Tabs - SELL vs BUY */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setAdType('SELL'); fetchSellers('SELL'); }}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  adType === 'SELL'
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                    : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
+                }`}
+              >
+                Venden USDT
+                <span className="block text-[10px] opacity-70">Anuncios de venta</span>
+              </button>
+              <button
+                onClick={() => { setAdType('BUY'); fetchSellers('BUY'); }}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  adType === 'BUY'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-gray-700 text-gray-400 border border-gray-600 hover:border-gray-500'
+                }`}
+              >
+                Compran USDT
+                <span className="block text-[10px] opacity-70">Anuncios de compra</span>
               </button>
             </div>
 
@@ -551,61 +559,6 @@ export default function SettingsPage() {
           className="mt-4 px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
         >
           {saving ? 'Guardando...' : 'Guardar Configuración'}
-        </button>
-      </div>
-
-      {/* Auto-Message Configuration */}
-      <div className="card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">Mensaje Automático al Liberar</h2>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoMessageEnabled}
-              onChange={(e) => setAutoMessageEnabled(e.target.checked)}
-              className="w-4 h-4 text-primary-600 rounded"
-            />
-            <span className="text-sm text-gray-300">Activado</span>
-          </label>
-        </div>
-
-        {/* API Limitation Warning */}
-        <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-          <div className="flex items-start gap-2">
-            <span className="text-amber-500">⚠️</span>
-            <div className="text-sm">
-              <p className="text-amber-400 font-medium">Limitación de API de Binance</p>
-              <p className="text-amber-300/80 mt-1">
-                La API de Binance P2P no permite enviar mensajes de chat. El endpoint existe pero retorna vacío
-                sin enviar el mensaje. Los mensajes solo pueden enviarse manualmente desde la web de Binance.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <p className="text-gray-400 text-sm mb-4">
-          Este mensaje se enviaría automáticamente al chat después de liberar crypto, pero actualmente
-          no funciona debido a limitaciones de la API de Binance.
-        </p>
-
-        <textarea
-          value={autoMessageText}
-          onChange={(e) => setAutoMessageText(e.target.value)}
-          rows={6}
-          className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm resize-none"
-          placeholder="Escribe el mensaje de agradecimiento..."
-        />
-
-        <div className="mt-2 text-xs text-gray-500">
-          Puedes usar emojis. El mensaje se enviará tal cual lo escribas.
-        </div>
-
-        <button
-          onClick={saveAutoMessage}
-          disabled={saving}
-          className="mt-4 px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
-        >
-          {saving ? 'Guardando...' : 'Guardar Mensaje'}
         </button>
       </div>
 
