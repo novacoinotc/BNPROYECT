@@ -238,16 +238,11 @@ export class BinanceC2CClient {
         }>;
       };
 
-      // Log the raw response for debugging
-      logger.info({
-        httpStatus: response.status,
-        code: rawData.code,
-        message: rawData.message,
-        messageDetail: rawData.messageDetail,
-        hasData: !!rawData.data,
-        dataLength: rawData.data?.length ?? 0,
-        request: { asset: request.asset, fiat: request.fiat, tradeType: request.tradeType },
-      }, '🔍 [SEARCH ADS] Raw API response');
+      // Log the raw response for debugging - use string interpolation for visibility
+      logger.info(
+        `🔍 [SEARCH ADS] HTTP=${response.status} code=${rawData.code} msg=${rawData.message || 'none'} ` +
+        `data=${rawData.data?.length ?? 0} items | request: ${request.asset}/${request.fiat}/${request.tradeType}`
+      );
 
       // Transform public API response to AdData format
       if (rawData.code === '000000' && rawData.data && rawData.data.length > 0) {
