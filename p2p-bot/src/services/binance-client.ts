@@ -181,10 +181,16 @@ export class BinanceC2CClient {
   async searchAds(request: SearchAdsRequest): Promise<AdData[]> {
     try {
       // Try the public P2P API endpoint (no auth required)
+      // Adding browser-like headers to avoid blocking by Binance
       const response = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Origin': 'https://p2p.binance.com',
+          'Referer': 'https://p2p.binance.com/',
         },
         body: JSON.stringify({
           asset: request.asset,
