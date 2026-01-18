@@ -13,6 +13,7 @@
     "discover": "tsx src/discover-endpoints.ts",
     "discover:extended": "tsx src/discover-endpoints-extended.ts",
     "discover:prod": "node dist/discover-endpoints.js",
+    "test:chat": "tsx src/test-chat-send.ts",
     "dashboard": "cd dashboard && npm run dev",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",

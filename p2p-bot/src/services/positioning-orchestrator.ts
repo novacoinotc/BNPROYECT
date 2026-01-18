@@ -8,6 +8,7 @@ import { EventEmitter } from 'events';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { SmartPositioning, createSmartPositioning } from './smart-positioning.js';
 import { FollowPositioning, createFollowPositioning } from './follow-positioning.js';
+import { updateBotLastActive } from './database-pg.js';
 import { logger } from '../utils/logger.js';
 import {
   TradeType,
@@ -186,6 +187,9 @@ export class PositioningOrchestrator extends EventEmitter {
         const oldPrice = this.currentPrice;
         this.currentPrice = analysis.targetPrice;
         analysis.priceChanged = true;
+
+        // Update last active timestamp in database
+        updateBotLastActive('positioning').catch(() => {});
 
         // ONLY LOG WHEN PRICE ACTUALLY CHANGES
         logger.info({

@@ -10,27 +10,27 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          50: '#f5f3ff',
-          100: '#ede9fe',
-          200: '#ddd6fe',
-          300: '#c4b5fd',
-          400: '#a78bfa',
-          500: '#8b5cf6', // Violet - new primary
-          600: '#7c3aed',
-          700: '#6d28d9',
-          800: '#5b21b6',
-          900: '#4c1d95',
+          50: '#eff6ff',
+          100: '#dbeafe',
+          200: '#bfdbfe',
+          300: '#93c5fd',
+          400: '#60a5fa',
+          500: '#3b82f6', // Blue - new primary
+          600: '#2563eb',
+          700: '#1d4ed8',
+          800: '#1e40af',
+          900: '#1e3a8a',
         },
-        // Dark theme colors
+        // Dark theme colors - new navy blue theme
         dark: {
-          bg: '#0a0a0f',
-          card: '#13111c',
-          border: '#2d2640',
-          hover: '#1f1b2e',
+          bg: '#0a1018',
+          card: '#151d2e',
+          border: '#1e2a3e',
+          hover: '#1a2438',
         },
       },
       backgroundImage: {
-        'gradient-dark': 'linear-gradient(135deg, #0a0a0f 0%, #1a1025 50%, #0f0a15 100%)',
+        'gradient-dark': 'linear-gradient(180deg, #0a1018 0%, #0d1421 50%, #0a1018 100%)',
       },
     },
   },

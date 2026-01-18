@@ -4,17 +4,19 @@
 
 :root {
   --foreground-rgb: 255, 255, 255;
-  --background-dark: #0a0a0f;
-  --background-card: #13111c;
-  --border-color: #2d2640;
-  --hover-color: #1f1b2e;
-  --primary-color: #8b5cf6;
-  --primary-hover: #7c3aed;
+  --background-dark: #0d1421;
+  --background-card: #151d2e;
+  --border-color: #1e2a3e;
+  --hover-color: #1a2438;
+  --primary-color: #3b82f6;
+  --primary-hover: #2563eb;
+  --success-color: #10b981;
+  --danger-color: #ef4444;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(135deg, #0a0a0f 0%, #1a1025 50%, #0f0a15 100%);
+  background: linear-gradient(180deg, #0a1018 0%, #0d1421 50%, #0a1018 100%);
   min-height: 100vh;
 }
 
@@ -26,8 +28,8 @@ body {
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -35,8 +37,8 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3d3655;
-  border-radius: 4px;
+  background: #2a3a52;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -64,24 +66,112 @@ body {
   @apply bg-orange-500/20 text-orange-400;
 }
 
-/* Card styles */
+/* New Card styles */
 .card {
-  @apply bg-dark-card rounded-xl border border-dark-border shadow-lg;
+  @apply bg-[#151d2e] rounded-2xl border border-[#1e2a3e] shadow-xl;
 }
 
 .card-header {
-  @apply px-4 py-3 border-b border-dark-border;
+  @apply px-5 py-4 border-b border-[#1e2a3e];
 }
 
 .card-body {
-  @apply p-4;
+  @apply p-5;
+}
+
+/* Ad Card styles */
+.ad-card {
+  @apply bg-[#151d2e] rounded-2xl border border-[#1e2a3e] p-5 transition-all duration-200;
+}
+
+.ad-card:hover {
+  @apply border-[#2a3a52] shadow-lg;
+}
+
+.ad-card.active {
+  @apply border-emerald-500/40;
+}
+
+/* Badge styles */
+.badge-buy {
+  @apply bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-md text-xs font-semibold uppercase;
+}
+
+.badge-sell {
+  @apply bg-red-500/20 text-red-400 px-3 py-1 rounded-md text-xs font-semibold uppercase;
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-primary-500 hover:bg-primary-600 text-white px-4 py-2 rounded-xl font-medium transition-all duration-200;
+}
+
+.btn-secondary {
+  @apply bg-[#1e2a3e] hover:bg-[#2a3a52] text-gray-300 px-4 py-2 rounded-xl font-medium transition-all duration-200;
+}
+
+.btn-outline {
+  @apply border border-[#2a3a52] hover:bg-[#1e2a3e] text-gray-300 px-4 py-2 rounded-xl font-medium transition-all duration-200;
+}
+
+/* Tab styles */
+.tab {
+  @apply px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200;
+}
+
+.tab-active {
+  @apply bg-[#1e2a3e] text-white;
+}
+
+.tab-inactive {
+  @apply text-gray-500 hover:text-gray-300;
+}
+
+/* Bottom navigation */
+.bottom-nav {
+  @apply fixed bottom-0 left-0 right-0 bg-[#0f1520]/95 backdrop-blur-xl border-t border-[#1e2a3e] z-50;
+}
+
+.bottom-nav-item {
+  @apply flex flex-col items-center justify-center py-2 px-4 text-gray-500 transition-all duration-200;
+}
+
+.bottom-nav-item.active {
+  @apply text-primary-500;
+}
+
+.bottom-nav-item:hover {
+  @apply text-gray-300;
+}
+
+/* Progress bar */
+.progress-bar {
+  @apply h-1.5 bg-[#1e2a3e] rounded-full overflow-hidden;
+}
+
+.progress-bar-fill {
+  @apply h-full bg-gradient-to-r from-primary-500 to-primary-400 rounded-full transition-all duration-500;
 }
 
 /* Glow effects */
 .glow-primary {
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+  box-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .glow-success {
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.15);
+}
+
+/* Animate pulse slow */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
 }

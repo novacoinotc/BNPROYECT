@@ -285,9 +285,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   private async handleOrderEvent(event: OrderEvent): Promise<void> {
     switch (event.type) {
       case 'new':
-        // New order - watch chat and send auto-reply
+        // New order - watch chat for messages
         this.chatHandler.watchOrder(event.order.orderNumber);
-        await this.chatHandler.sendAutoReply(event.order.orderNumber);
         break;
 
       case 'paid':
@@ -1612,9 +1611,6 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         this.config.authType
       );
 
-      // Send confirmation message to buyer
-      await this.chatHandler.sendPaymentConfirmation(orderNumber);
-
       // Release crypto
       const success = await this.orderManager.releaseCrypto(
         orderNumber,
@@ -1655,9 +1651,6 @@ export class AutoReleaseOrchestrator extends EventEmitter {
             asset: pending.order.asset,
           },
         } as ReleaseEvent);
-
-        // Send auto-message if enabled
-        await this.sendAutoMessage(orderNumber);
 
         // Cleanup all maps for this order
         this.pendingReleases.delete(orderNumber);
@@ -1701,34 +1694,6 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           reason: 'Max release attempts exceeded',
         } as ReleaseEvent);
       }
-    }
-  }
-
-  // ==================== AUTO-MESSAGE ====================
-
-  /**
-   * Send automatic thank you message after successful release
-   */
-  private async sendAutoMessage(orderNumber: string): Promise<void> {
-    try {
-      // Get config from database
-      const config = await db.getBotConfig();
-
-      if (!config.autoMessageEnabled || !config.autoMessageText) {
-        return; // Auto-message disabled or no message configured
-      }
-
-      // Send message via chat handler
-      const success = await this.chatHandler.sendMessage(orderNumber, config.autoMessageText);
-
-      if (success) {
-        logger.info({ orderNumber }, '💬 [AUTO-MESSAGE] Thank you message sent');
-      } else {
-        logger.warn({ orderNumber }, '⚠️ [AUTO-MESSAGE] Failed to send message');
-      }
-    } catch (error) {
-      // Don't fail the release if message fails
-      logger.warn({ orderNumber, error }, '⚠️ [AUTO-MESSAGE] Error sending message');
     }
   }
 

@@ -687,50 +687,6 @@ export class BinanceC2CClient {
   }
 
   /**
-   * Send chat message
-   * POST /sapi/v1/c2c/chat/sendMessage
-   */
-  async sendChatMessage(orderNo: string, content: string): Promise<boolean> {
-    try {
-      const signedParams = this.buildSignedParams({});
-      const response = await this.client.post(
-        `/sapi/v1/c2c/chat/sendMessage?${signedParams}`,
-        { orderNo, content, type: 'text' }
-      );
-
-      // Log the FULL response for debugging using template string
-      const responseStr = JSON.stringify(response.data);
-      logger.info(
-        `💬 [CHAT API] sendMessage response for ${orderNo}: status=${response.status}, response=${responseStr}`
-      );
-
-      // Binance API typically returns { code: "000000", message: null, data: ... } on success
-      // Or it might just return empty/null on success
-      const data = response.data;
-
-      // If we got here without an error, and status is 200, consider it success
-      if (response.status === 200) {
-        // Check for explicit error codes
-        if (data?.code && data.code !== '000000') {
-          logger.warn(
-            `⚠️ [CHAT API] API error for ${orderNo}: code=${data.code}, message=${data.message}`
-          );
-          return false;
-        }
-        return true;
-      }
-
-      return false;
-    } catch (error: any) {
-      const errorData = error?.response?.data;
-      logger.error(
-        `❌ [CHAT API] sendMessage failed for ${orderNo}: status=${error?.response?.status}, error=${JSON.stringify(errorData || error?.message)}`
-      );
-      return false;
-    }
-  }
-
-  /**
    * Get pre-signed URL for uploading images to chat
    * POST /sapi/v1/c2c/chat/image/pre-signed-url
    */

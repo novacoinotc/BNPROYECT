@@ -2,6 +2,22 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+interface Seller {
+  position: number;
+  userNo: string;
+  nickName: string;
+  price: string;
+  surplusAmount: string;
+  minAmount: string;
+  maxAmount: string;
+  isOnline: boolean;
+  userGrade: number;
+  monthFinishRate: number;
+  monthOrderCount: number;
+  positiveRate: number;
+  proMerchant: boolean;
+}
+
 interface BotConfig {
   releaseEnabled: boolean;
   positioningEnabled: boolean;
@@ -49,6 +65,25 @@ export default function SettingsPage() {
     '¡Gracias por tu confianza! 🙏\n\nSi tu experiencia de compra fue positiva y el proceso fue rápido y confiable, agradeceríamos mucho un comentario positivo ⭐\n\nEstamos para servirte en tus futuras compras.\n\n¿Necesitas ayuda adicional? Escribe: AYUDA\n\n¡Hasta pronto!'
   );
 
+  // Sellers list state
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [loadingSellers, setLoadingSellers] = useState(false);
+
+  const fetchSellers = useCallback(async () => {
+    setLoadingSellers(true);
+    try {
+      const response = await fetch('/api/sellers?asset=USDT&fiat=MXN&tradeType=SELL&rows=20');
+      const data = await response.json();
+      if (data.success) {
+        setSellers(data.sellers);
+      }
+    } catch (err) {
+      console.error('Error fetching sellers:', err);
+    } finally {
+      setLoadingSellers(false);
+    }
+  }, []);
+
   const fetchConfig = useCallback(async () => {
     try {
       const response = await fetch('/api/bot-control');
@@ -87,6 +122,13 @@ export default function SettingsPage() {
     const interval = setInterval(fetchConfig, 30000);
     return () => clearInterval(interval);
   }, [fetchConfig]);
+
+  // Fetch sellers when Follow mode is selected
+  useEffect(() => {
+    if (positioningMode === 'follow') {
+      fetchSellers();
+    }
+  }, [positioningMode, fetchSellers]);
 
   const updateConfig = async (updates: Partial<BotConfig>) => {
     setSaving(true);
@@ -376,9 +418,47 @@ export default function SettingsPage() {
         {/* Follow Mode Config */}
         {positioningMode === 'follow' && (
           <div className="space-y-4 p-4 bg-gray-800/50 rounded-lg">
-            <h3 className="text-sm font-medium text-gray-300">Vendedor a Seguir</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-300">Vendedor a Seguir</h3>
+              <button
+                onClick={fetchSellers}
+                disabled={loadingSellers}
+                className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1"
+              >
+                {loadingSellers ? (
+                  <span className="animate-spin">⟳</span>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                Actualizar lista
+              </button>
+            </div>
+
+            {/* Current selection */}
+            {followTarget && (
+              <div className="p-2 bg-primary-500/20 border border-primary-500/30 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-primary-400">Siguiendo:</span>
+                    <span className="text-white font-medium">{followTarget}</span>
+                  </div>
+                  <button
+                    onClick={() => setFollowTarget('')}
+                    className="text-gray-400 hover:text-red-400"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Manual input */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1">NickName del vendedor</label>
+              <label className="block text-xs text-gray-400 mb-1">O escribe el NickName manualmente</label>
               <input
                 type="text"
                 value={followTarget}
@@ -387,6 +467,60 @@ export default function SettingsPage() {
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
               />
             </div>
+
+            {/* Sellers list */}
+            {loadingSellers ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin h-6 w-6 border-2 border-primary-500 border-t-transparent rounded-full"></div>
+              </div>
+            ) : sellers.length > 0 ? (
+              <div>
+                <label className="block text-xs text-gray-400 mb-2">Selecciona un vendedor del mercado</label>
+                <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
+                  {sellers.map((seller, index) => (
+                    <button
+                      key={seller.userNo}
+                      onClick={() => setFollowTarget(seller.nickName)}
+                      className={`w-full text-left p-3 rounded-lg border transition-all ${
+                        followTarget === seller.nickName
+                          ? 'bg-primary-500/20 border-primary-500/50'
+                          : 'bg-gray-700/50 border-gray-600 hover:border-gray-500'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-gray-500 text-xs w-5">#{index + 1}</span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-white font-medium">{seller.nickName}</span>
+                              {seller.proMerchant && (
+                                <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] rounded">PRO</span>
+                              )}
+                              {seller.isOnline && (
+                                <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                              <span>{(seller.monthFinishRate * 100).toFixed(0)}% finish</span>
+                              <span>{seller.monthOrderCount} órdenes</span>
+                              <span>Grade {seller.userGrade}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-white font-bold">${parseFloat(seller.price).toLocaleString()}</div>
+                          <div className="text-xs text-gray-500">{parseFloat(seller.surplusAmount).toLocaleString()} USDT</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-4 text-gray-500 text-sm">
+                No se encontraron vendedores
+              </div>
+            )}
           </div>
         )}
 
@@ -435,8 +569,23 @@ export default function SettingsPage() {
           </label>
         </div>
 
+        {/* API Limitation Warning */}
+        <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-500">⚠️</span>
+            <div className="text-sm">
+              <p className="text-amber-400 font-medium">Limitación de API de Binance</p>
+              <p className="text-amber-300/80 mt-1">
+                La API de Binance P2P no permite enviar mensajes de chat. El endpoint existe pero retorna vacío
+                sin enviar el mensaje. Los mensajes solo pueden enviarse manualmente desde la web de Binance.
+              </p>
+            </div>
+          </div>
+        </div>
+
         <p className="text-gray-400 text-sm mb-4">
-          Este mensaje se envía automáticamente al chat después de liberar crypto exitosamente.
+          Este mensaje se enviaría automáticamente al chat después de liberar crypto, pero actualmente
+          no funciona debido a limitaciones de la API de Binance.
         </p>
 
         <textarea

@@ -246,42 +246,6 @@ export class ChatHandler extends EventEmitter {
     }
   }
 
-  // ==================== MESSAGING ====================
-
-  /**
-   * Send text message
-   */
-  async sendMessage(orderNo: string, content: string): Promise<boolean> {
-    try {
-      await this.client.sendChatMessage(orderNo, content);
-      logger.debug({ orderNo, content }, 'Message sent');
-      return true;
-    } catch (error) {
-      logger.error({ orderNo, error }, 'Failed to send message');
-      return false;
-    }
-  }
-
-  /**
-   * Send auto-reply for new orders
-   */
-  async sendAutoReply(orderNo: string): Promise<void> {
-    const autoReplyMessage = process.env.BOT_AUTO_REPLY_MESSAGE ||
-      'Gracias por tu orden. Por favor realiza el pago y envía el comprobante por este chat.';
-
-    await this.sendMessage(orderNo, autoReplyMessage);
-  }
-
-  /**
-   * Send payment received confirmation
-   */
-  async sendPaymentConfirmation(orderNo: string): Promise<void> {
-    const message = process.env.BOT_PAYMENT_CONFIRMED_MESSAGE ||
-      'Pago recibido. Liberando crypto en breve...';
-
-    await this.sendMessage(orderNo, message);
-  }
-
   // ==================== HISTORY ====================
 
   /**

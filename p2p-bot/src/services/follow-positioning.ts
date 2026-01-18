@@ -262,7 +262,18 @@ export class FollowPositioning {
   setTarget(nickName?: string, userNo?: string): void {
     if (nickName) this.config.targetNickName = nickName;
     if (userNo) this.config.targetUserNo = userNo;
+    // Enable follow mode when a target is set
+    if (nickName || userNo) {
+      this.config.enabled = true;
+    }
     // Silent - no log
+  }
+
+  /**
+   * Enable or disable follow mode
+   */
+  setEnabled(enabled: boolean): void {
+    this.config.enabled = enabled;
   }
 }
 
