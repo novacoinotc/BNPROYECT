@@ -103,7 +103,11 @@ export class BinanceC2CClient {
       },
       (error) => {
         logger.error({
-          error: error.response?.data || error.message
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: JSON.stringify(error.response?.data),
+          message: error.message,
+          url: error.config?.url,
         }, 'API Error');
         throw error;
       }
