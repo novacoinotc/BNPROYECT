@@ -10,14 +10,45 @@ Bot automatizado para gestión de P2P en Binance con:
 
 ## 2026-01-18
 
-### ✅ Envío de Mensaje al Liberar (En Progreso)
-- **Objetivo**: Enviar "Gracias por tu confianza" automáticamente al liberar crypto
-- **Implementado**:
-  - Método `sendMessage()` en `binance-client.ts`
-  - Integración en `auto-release.ts` después de release exitoso
-- **Estado**: El API SAPI no acepta los parámetros probados
-  - Creado script `test-chat-api.ts` para probar múltiples combinaciones
-  - Pendiente: investigar API real desde browser de Binance
+### 🔬 Investigación: Chat API de Binance P2P (COMPLETADA)
+
+**Objetivo**: Enviar "Gracias por tu confianza" automáticamente al liberar crypto
+
+**Investigación Realizada**:
+1. SAPI Endpoints probados:
+   - `POST /sapi/v1/c2c/chat/sendMessage` → HTTP 200 pero respuesta vacía (no implementado)
+   - `GET /sapi/v1/c2c/chat/retrieveChatCredential` → "illegal parameter"
+   - `GET /sapi/v1/c2c/chat/retrieveChatMessagesWithPagination` → ✅ FUNCIONA (lectura)
+
+2. P2P BAPI Endpoints:
+   - `POST /bapi/c2c/v1/private/c2c/chat/sendMessage` → 401 "Please log in first"
+   - `POST /bapi/c2c/v1/friendly/binance-chat/common/token` → ✅ Retorna token
+   - El token obtenido NO es suficiente para enviar mensajes
+
+3. WebSocket:
+   - Se intentaron múltiples URLs de WebSocket → 403/404
+   - Binance P2P chat usa WebSocket pero requiere sesión de browser completa
+
+**Conclusión**:
+- ❌ **NO es posible enviar mensajes via API** - Binance no expone esta funcionalidad
+- ✅ **SÍ se pueden LEER mensajes** - `retrieveChatMessagesWithPagination` funciona
+
+**Solución Recomendada**:
+Usar la función **Auto-Reply nativa de Binance P2P**:
+1. Ir a Binance P2P → User Center → Settings
+2. Buscar "Auto Reply" o "Respuestas Automáticas"
+3. Configurar el mensaje de bienvenida/agradecimiento
+
+Esto ya está funcionando en tu cuenta (vimos el mensaje: "✨ ¡Hola! Gracias por elegir QuantumCash...")
+
+**Archivos de prueba creados** (pueden eliminarse):
+- `test-chat-api.ts` - Pruebas SAPI
+- `test-chat-p2p.ts` - Pruebas P2P BAPI
+- `test-chat-websocket.ts` - Pruebas WebSocket credentials
+- `test-chat-ws-connect.ts` - Pruebas WebSocket connection
+- `test-chat-with-token.ts` - Pruebas con token
+- `test-chat-all-methods.ts` - Pruebas exhaustivas
+- `capture-chat-request.ts` - Captura de requests con Puppeteer
 
 ### ✅ Limpieza de Logs Verbose
 - Reducidos logs de debugging a nivel `debug`:
@@ -145,7 +176,9 @@ p2p-bot/
 
 ### Chat
 - `GET /sapi/v1/c2c/chat/retrieveChatMessagesWithPagination` - Leer mensajes ✅
-- `POST /sapi/v1/c2c/chat/sendMessage` - Enviar mensaje ❌ (parámetros desconocidos)
+- `POST /sapi/v1/c2c/chat/sendMessage` - Enviar mensaje ❌ (API no implementada por Binance)
+- `POST /bapi/c2c/v1/friendly/binance-chat/common/token` - Obtener token de chat ✅
+  - Nota: Token no es suficiente para enviar mensajes (requiere sesión completa)
 
 ### Market
 - `POST https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search` - Buscar ads ✅
@@ -156,9 +189,9 @@ p2p-bot/
 ## Pendientes / TODO
 
 ### Alta Prioridad
-- [ ] Investigar API correcta para enviar mensajes de chat
-  - Probar capturando requests del browser de Binance
-  - Puede ser WebSocket en lugar de REST
+- [x] ~~Investigar API correcta para enviar mensajes de chat~~ → NO DISPONIBLE
+  - Binance P2P chat solo funciona via browser (sesión completa)
+  - Usar Auto-Reply nativo de Binance en su lugar
 
 ### Media Prioridad
 - [ ] Agregar más opciones de estrategia de precio

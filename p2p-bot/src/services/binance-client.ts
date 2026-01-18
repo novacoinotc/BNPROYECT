@@ -785,36 +785,44 @@ export class BinanceC2CClient {
    * Send a chat message to an order
    * POST /sapi/v1/c2c/chat/sendMessage
    *
-   * Note: Binance chat API parameter names may vary. Trying multiple formats.
+   * ⚠️ IMPORTANT: This method is NOT functional.
+   * Binance P2P chat API requires browser session authentication.
+   * The SAPI endpoint returns HTTP 200 but with empty body (not implemented).
+   *
+   * ALTERNATIVES:
+   * 1. Use Binance P2P's built-in Auto-Reply feature (recommended)
+   *    - Configure in Binance P2P → User Center → Settings
+   * 2. Use Puppeteer browser automation (complex, not recommended)
+   *
+   * This method is kept for documentation purposes.
+   * See CHANGELOG.md for full investigation details.
    */
   async sendMessage(orderNo: string, message: string): Promise<boolean> {
-    // Try different parameter combinations - Binance API docs are inconsistent
-    const paramVariants = [
-      { orderNo, content: message, msgType: 'TEXT' },
-      { orderNumber: orderNo, content: message, msgType: 'TEXT' },
-      { orderNo, message, msgType: 'text' },
-      { adOrderNo: orderNo, content: message, type: 'TEXT' },
-    ];
+    // NOTE: This API is not functional - Binance doesn't expose sendMessage via SAPI
+    // The endpoint returns HTTP 200 but empty body regardless of parameters
+    logger.warn(
+      { orderNo },
+      '⚠️ [CHAT] sendMessage is not supported by Binance API. ' +
+      'Use Binance Auto-Reply feature instead (P2P → Settings → Auto Reply)'
+    );
 
-    for (const body of paramVariants) {
-      try {
-        const response = await this.signedPost<any>(
-          '/sapi/v1/c2c/chat/sendMessage',
-          body
-        );
+    // Keep the attempt for debugging purposes
+    try {
+      const body = { orderNo, content: message, msgType: 'TEXT' };
+      const response = await this.signedPost<any>(
+        '/sapi/v1/c2c/chat/sendMessage',
+        body
+      );
 
-        // Check if response indicates success
-        if (response?.success === true || response?.code === '000000' || response?.data) {
-          logger.info({ orderNo, params: Object.keys(body) }, '💬 [CHAT] Message sent successfully');
-          return true;
-        }
-      } catch (error: any) {
-        // Continue to next variant
-        logger.debug({ orderNo, params: Object.keys(body), error: error?.message }, '[CHAT] Variant failed');
+      // This will always be false since API returns empty
+      if (response?.success === true || response?.code === '000000' || response?.data) {
+        logger.info({ orderNo }, '💬 [CHAT] Message sent successfully');
+        return true;
       }
+    } catch (error: any) {
+      logger.debug({ orderNo, error: error?.message }, '[CHAT] sendMessage failed (expected)');
     }
 
-    logger.warn({ orderNo }, '⚠️ [CHAT] All sendMessage variants failed');
     return false;
   }
 
