@@ -124,6 +124,10 @@ export class FollowPositioning {
 
   /**
    * Calculate target price based on target's price
+   *
+   * IMPORTANT: tradeType here is the SEARCH type, not the AD type:
+   * - tradeType=BUY means we're searching for sellers → our ad is SELL → we want LOWER price
+   * - tradeType=SELL means we're searching for buyers → our ad is BUY → we want HIGHER price
    */
   calculateTargetPrice(
     targetPrice: number,
@@ -133,29 +137,30 @@ export class FollowPositioning {
     let calculatedPrice: number;
 
     if (this.config.followStrategy === 'match') {
-      // Match target's price exactly (silent)
+      // Match target's price exactly
       calculatedPrice = targetPrice;
     } else {
-      // Undercut by specified amount (silent)
+      // Undercut by specified amount
       const undercutValue = this.config.undercutAmount / 100; // Convert centavos to pesos
-      if (tradeType === TradeType.SELL) {
+
+      // tradeType=BUY (search sellers) → our ad is SELL → we want LOWER price to beat competition
+      // tradeType=SELL (search buyers) → our ad is BUY → we want HIGHER price to beat competition
+      if (tradeType === TradeType.BUY) {
+        // We're a SELL ad - go LOWER than target to attract buyers
         calculatedPrice = targetPrice - undercutValue;
       } else {
+        // We're a BUY ad - go HIGHER than target to attract sellers
         calculatedPrice = targetPrice + undercutValue;
       }
     }
 
-    // Apply margin limits for safety
+    // Apply margin limits for safety (optional - can be disabled by setting wide margins)
     const minPrice = referencePrice * (1 + this.config.minMargin / 100);
     const maxPrice = referencePrice * (1 + this.config.maxMargin / 100);
 
-    if (tradeType === TradeType.SELL) {
-      calculatedPrice = Math.max(minPrice, Math.min(maxPrice, calculatedPrice));
-    } else {
-      calculatedPrice = Math.min(maxPrice, Math.max(minPrice, calculatedPrice));
-    }
+    // Clamp to margin limits
+    calculatedPrice = Math.max(minPrice, Math.min(maxPrice, calculatedPrice));
 
-    // Silent - price clamp logged by orchestrator only when changed
     return calculatedPrice;
   }
 

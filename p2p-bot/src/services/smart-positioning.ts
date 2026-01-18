@@ -238,34 +238,29 @@ export class SmartPositioning {
     let targetPrice: number;
 
     // Apply undercut strategy
+    // IMPORTANT: tradeType here is the SEARCH type, not the AD type:
+    // - tradeType=BUY means we're searching for sellers → our ad is SELL → we want LOWER price
+    // - tradeType=SELL means we're searching for buyers → our ad is BUY → we want HIGHER price
     if (this.config.undercutAmount > 0) {
       // Undercut by fixed amount (centavos)
       const undercutValue = this.config.undercutAmount / 100; // Convert centavos to pesos
-      targetPrice = tradeType === TradeType.SELL
-        ? bestQualifiedPrice - undercutValue
-        : bestQualifiedPrice + undercutValue;
+      targetPrice = tradeType === TradeType.BUY
+        ? bestQualifiedPrice - undercutValue  // SELL ad - go lower
+        : bestQualifiedPrice + undercutValue; // BUY ad - go higher
     } else if (this.config.undercutPercent > 0) {
       // Undercut by percentage
-      targetPrice = tradeType === TradeType.SELL
-        ? bestQualifiedPrice * (1 - this.config.undercutPercent / 100)
-        : bestQualifiedPrice * (1 + this.config.undercutPercent / 100);
+      targetPrice = tradeType === TradeType.BUY
+        ? bestQualifiedPrice * (1 - this.config.undercutPercent / 100)  // SELL ad - go lower
+        : bestQualifiedPrice * (1 + this.config.undercutPercent / 100); // BUY ad - go higher
     } else {
       // Match best price
       targetPrice = bestQualifiedPrice;
     }
 
-    // Apply margin limits
+    // Apply margin limits (clamp price between min and max)
     const minPrice = referencePrice * (1 + this.config.minMargin / 100);
     const maxPrice = referencePrice * (1 + this.config.maxMargin / 100);
-
-    if (tradeType === TradeType.SELL) {
-      targetPrice = Math.max(minPrice, Math.min(maxPrice, targetPrice));
-    } else {
-      // For BUY, the logic is inverted
-      targetPrice = Math.min(maxPrice, Math.max(minPrice, targetPrice));
-    }
-
-    // Silent - price calculation logged by orchestrator only when changed
+    targetPrice = Math.max(minPrice, Math.min(maxPrice, targetPrice));
 
     return targetPrice;
   }
