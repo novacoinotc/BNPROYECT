@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
         page: 1,
         rows,
         payTypes: [],
-        publisherType: null,
+        publisherType: 'merchant', // Only verified merchants
         transAmount: null,
       }),
     });

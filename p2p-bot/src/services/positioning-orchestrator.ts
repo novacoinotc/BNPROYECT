@@ -125,15 +125,23 @@ export class PositioningOrchestrator extends EventEmitter {
       let analysis: PositioningAnalysis | null = null;
 
       if (this.mode === 'follow') {
-        // Try follow mode first (silent)
+        const followConfig = this.followPositioning.getConfig();
+        logger.debug({
+          mode: 'follow',
+          enabled: followConfig.enabled,
+          target: followConfig.targetNickName,
+        }, '🎯 [POSITIONING] Running follow update');
+
+        // Try follow mode first
         analysis = await this.followPositioning.getRecommendedPrice(
           this.asset,
           this.fiat,
           this.tradeType
         );
 
-        // If target not found and fallback enabled, switch to smart (silent)
+        // If target not found and fallback enabled, switch to smart
         if (!analysis && this.followPositioning.shouldFallbackToSmart()) {
+          logger.info('🎯 [POSITIONING] Target not found, falling back to smart mode');
           this.emit('positioning', {
             type: 'fallback_activated',
             mode: 'smart',
@@ -149,7 +157,12 @@ export class PositioningOrchestrator extends EventEmitter {
             analysis.mode = 'smart'; // Mark as fallback
           }
         } else if (!analysis) {
-          // Target not found and no fallback (silent)
+          // Target not found and no fallback - log this!
+          const lastTarget = this.followPositioning.getLastTargetInfo();
+          logger.warn({
+            targetNickName: followConfig.targetNickName,
+            lastTargetInfo: lastTarget,
+          }, '🎯 [POSITIONING] Target not found in market');
           this.emit('positioning', {
             type: 'target_lost',
             mode: 'follow',

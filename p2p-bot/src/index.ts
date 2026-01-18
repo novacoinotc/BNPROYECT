@@ -267,21 +267,26 @@ async function startServices(): Promise<void> {
 
 // ==================== POSITIONING BOT ====================
 
+// Track last config to detect changes
+let lastPositioningConfig: { mode: string; target: string | null } = { mode: 'off', target: null };
+
 /**
  * Check if positioning bot should be started/stopped based on database config.
  * This runs every 30 seconds to check if user enabled/disabled via dashboard.
+ * Also updates config if user changes mode or target while running.
  */
 async function checkPositioningStatus(): Promise<void> {
   try {
     const enabled = await isPositioningEnabled();
     const config = await getBotConfig();
+    const mode = (config.positioningMode || 'smart') as PositioningMode;
+    const target = config.followTargetNickName || null;
 
     if (enabled && !positioningOrchestrator) {
       // User enabled positioning - start it
+      logger.info({ mode, target }, '🎯 [POSITIONING] Starting orchestrator');
       positioningOrchestrator = createPositioningOrchestrator();
 
-      // Determine mode from config
-      const mode = (config.positioningMode || 'smart') as PositioningMode;
       positioningOrchestrator.setMode(mode);
 
       // If follow mode, set target
@@ -302,10 +307,31 @@ async function checkPositioningStatus(): Promise<void> {
           5000 // 5 seconds
         );
       }
+
+      lastPositioningConfig = { mode, target };
+    } else if (enabled && positioningOrchestrator) {
+      // Check if config changed while running
+      if (mode !== lastPositioningConfig.mode) {
+        logger.info({ oldMode: lastPositioningConfig.mode, newMode: mode }, '🎯 [POSITIONING] Mode changed');
+        positioningOrchestrator.setMode(mode);
+        lastPositioningConfig.mode = mode;
+      }
+
+      // Update follow target if changed
+      if (mode === 'follow' && target !== lastPositioningConfig.target) {
+        logger.info({ oldTarget: lastPositioningConfig.target, newTarget: target }, '🎯 [POSITIONING] Target changed');
+        positioningOrchestrator.setFollowTarget(
+          config.followTargetNickName || undefined,
+          config.followTargetUserNo || undefined
+        );
+        lastPositioningConfig.target = target;
+      }
     } else if (!enabled && positioningOrchestrator) {
       // User disabled positioning - stop it
+      logger.info('🎯 [POSITIONING] Stopping orchestrator');
       positioningOrchestrator.stop();
       positioningOrchestrator = null;
+      lastPositioningConfig = { mode: 'off', target: null };
     }
   } catch (error) {
     // Silent error - don't spam logs if DB connection issue

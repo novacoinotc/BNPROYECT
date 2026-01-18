@@ -62,13 +62,14 @@ export class FollowPositioning {
     fiat: string,
     tradeType: TradeType
   ): Promise<TargetInfo> {
-    // Fetch competitor ads (silent)
+    // Fetch competitor ads (silent) - only verified merchants
     const ads = await this.client.searchAds({
       asset,
       fiat,
       tradeType,
       page: 1,
       rows: 50, // Fetch more to ensure we find our target
+      publisherType: 'merchant', // Only verified merchants
     });
 
     // Search by userNo first (more stable), then by nickName
