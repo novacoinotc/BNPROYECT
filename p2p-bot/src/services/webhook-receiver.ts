@@ -10,6 +10,7 @@ import { webhookLogger as logger } from '../utils/logger.js';
 import { BankWebhookPayload } from '../types/binance.js';
 import * as db from './database-pg.js';
 import { getBinanceClient } from './binance-client.js';
+import { MultiAdPositioningManager, MultiAdStatus } from './multi-ad-positioning.js';
 
 export interface WebhookConfig {
   port: number;
@@ -37,6 +38,9 @@ export class WebhookReceiver extends EventEmitter {
 
   // SSE clients for real-time updates
   private sseClients: Set<express.Response> = new Set();
+
+  // Reference to multi-ad positioning manager
+  private multiAdManager: MultiAdPositioningManager | null = null;
 
   constructor(config: WebhookConfig) {
     super();
@@ -140,6 +144,9 @@ export class WebhookReceiver extends EventEmitter {
 
     // Real-time updates via Server-Sent Events
     this.app.get('/api/events', this.handleSSE.bind(this));
+
+    // Multi-ad positioning status
+    this.app.get('/api/positioning/status', this.handlePositioningStatus.bind(this));
 
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
@@ -562,6 +569,42 @@ export class WebhookReceiver extends EventEmitter {
         this.sseClients.delete(client);
       }
     }
+  }
+
+  // ==================== MULTI-AD POSITIONING ====================
+
+  /**
+   * Set reference to multi-ad positioning manager
+   */
+  public setMultiAdManager(manager: MultiAdPositioningManager): void {
+    this.multiAdManager = manager;
+    logger.info('Multi-ad positioning manager connected to webhook receiver');
+  }
+
+  /**
+   * Handle positioning status request
+   */
+  private handlePositioningStatus(_req: Request, res: Response): void {
+    if (!this.multiAdManager) {
+      res.json({
+        success: true,
+        isRunning: false,
+        mode: 'off',
+        followTarget: null,
+        undercutCents: 1,
+        managedAds: [],
+        totalUpdates: 0,
+        totalErrors: 0,
+        lastConfigCheck: null,
+      });
+      return;
+    }
+
+    const status = this.multiAdManager.getStatus();
+    res.json({
+      success: true,
+      ...status,
+    });
   }
 
   // ==================== WEBHOOK HANDLERS ====================

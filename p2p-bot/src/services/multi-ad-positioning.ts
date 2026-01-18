@@ -1,6 +1,7 @@
 // =====================================================
 // MULTI-AD POSITIONING MANAGER
 // Handles positioning for ALL active ads simultaneously
+// Respects dashboard config (smart/follow mode)
 // =====================================================
 
 import crypto from 'crypto';
@@ -8,7 +9,9 @@ import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { getBinanceClient } from './binance-client.js';
 import { SmartPositioning, createSmartPositioning } from './smart-positioning.js';
-import { TradeType, PriceType, SmartPositioningConfig } from '../types/binance.js';
+import { FollowPositioning, createFollowPositioning } from './follow-positioning.js';
+import { getBotConfig, BotConfig } from './database-pg.js';
+import { TradeType, SmartPositioningConfig, FollowModeConfig, PositioningAnalysis } from '../types/binance.js';
 
 // ==================== TYPES ====================
 
@@ -18,26 +21,33 @@ interface AdInfo {
   asset: string;
   fiatUnit: string;
   price: string;
-  advStatus: number; // 1=online, 4=offline
+  advStatus: number; // 1=online, 3=paused, 4=offline
   surplusAmount: string;
 }
 
-interface ManagedAd {
+export interface ManagedAd {
   advNo: string;
   tradeType: 'BUY' | 'SELL';
   asset: string;
   fiat: string;
   currentPrice: number;
+  targetPrice: number | null;
   lastUpdate: Date | null;
   updateCount: number;
   errorCount: number;
+  mode: 'smart' | 'follow' | 'idle';
+  followTarget: string | null;
 }
 
 export interface MultiAdStatus {
   isRunning: boolean;
+  mode: string;
+  followTarget: string | null;
+  undercutCents: number;
   managedAds: ManagedAd[];
   totalUpdates: number;
   totalErrors: number;
+  lastConfigCheck: Date | null;
 }
 
 // ==================== API HELPERS ====================
@@ -53,7 +63,6 @@ async function fetchAllAds(): Promise<AdInfo[]> {
   const query = `timestamp=${ts}`;
 
   try {
-    // Use POST /listWithPagination which works correctly
     const res = await fetch(
       `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${query}&signature=${signQuery(query)}`,
       {
@@ -73,11 +82,11 @@ async function fetchAllAds(): Promise<AdInfo[]> {
     const allAds: AdInfo[] = [];
 
     // Handle different response formats
-    if (data.data?.sellList) {
+    if (Array.isArray(data.data)) {
+      allAds.push(...data.data);
+    } else if (data.data?.sellList) {
       allAds.push(...data.data.sellList);
       if (data.data.buyList) allAds.push(...data.data.buyList);
-    } else if (Array.isArray(data.data)) {
-      allAds.push(...data.data);
     }
 
     return allAds;
@@ -116,16 +125,24 @@ async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
 export class MultiAdPositioningManager extends EventEmitter {
   private managedAds: Map<string, ManagedAd> = new Map();
   private smartPositioning: SmartPositioning;
+  private followPositioning: FollowPositioning;
   private updateInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private fiat: string = 'MXN';
 
-  // Threshold for price updates (0.01% = $0.01 on $100)
-  private readonly PRICE_UPDATE_THRESHOLD = 0.0001;
+  // Current config from database
+  private currentMode: string = 'smart';
+  private followTarget: string | null = null;
+  private undercutCents: number = 1;
+  private lastConfigCheck: Date | null = null;
 
-  constructor(smartConfig?: Partial<SmartPositioningConfig>) {
+  // Threshold for price updates (0.01 MXN)
+  private readonly PRICE_UPDATE_THRESHOLD = 0.01;
+
+  constructor() {
     super();
-    this.smartPositioning = createSmartPositioning(smartConfig);
+    this.smartPositioning = createSmartPositioning();
+    this.followPositioning = createFollowPositioning();
   }
 
   /**
@@ -133,6 +150,9 @@ export class MultiAdPositioningManager extends EventEmitter {
    */
   async start(fiat: string = 'MXN', intervalMs: number = 5000): Promise<void> {
     this.fiat = fiat;
+
+    // Load config from database
+    await this.loadConfig();
 
     // Discover all active ads
     await this.discoverActiveAds();
@@ -146,13 +166,16 @@ export class MultiAdPositioningManager extends EventEmitter {
 
     logger.info({
       adCount: this.managedAds.size,
+      mode: this.currentMode,
+      followTarget: this.followTarget,
+      undercutCents: this.undercutCents,
       ads: Array.from(this.managedAds.values()).map(a => ({
         advNo: a.advNo.slice(-6),
         type: a.tradeType,
         asset: a.asset,
         price: a.currentPrice,
       })),
-    }, '🚀 [MULTI-AD] Started positioning for all active ads');
+    }, '🚀 [MULTI-AD] Started positioning');
 
     // Run initial update
     await this.runUpdateCycle();
@@ -174,43 +197,110 @@ export class MultiAdPositioningManager extends EventEmitter {
   }
 
   /**
+   * Load configuration from database
+   */
+  private async loadConfig(): Promise<void> {
+    try {
+      const config = await getBotConfig();
+      const oldMode = this.currentMode;
+      const oldTarget = this.followTarget;
+
+      this.currentMode = config.positioningMode || 'smart';
+      this.followTarget = config.followTargetNickName || null;
+      this.undercutCents = config.undercutCents || 1;
+      this.lastConfigCheck = new Date();
+
+      // Update follow positioning config
+      this.followPositioning.updateConfig({
+        enabled: this.currentMode === 'follow',
+        targetNickName: this.followTarget || '',
+        undercutAmount: this.undercutCents,
+        followStrategy: 'undercut',
+        fallbackToSmart: true,
+      });
+
+      // Update smart positioning config from DB
+      // Map BotConfig property names to SmartPositioningConfig names
+      this.smartPositioning.updateConfig({
+        minUserGrade: config.smartMinUserGrade,
+        minMonthFinishRate: config.smartMinFinishRate,
+        minMonthOrderCount: config.smartMinOrderCount,
+        minPositiveRate: config.smartMinPositiveRate,
+        requireOnline: config.smartRequireOnline,
+        minSurplusAmount: config.smartMinSurplus,
+        undercutAmount: config.undercutCents, // undercutCents is the same as undercutAmount
+      });
+
+      // Log if config changed
+      if (oldMode !== this.currentMode || oldTarget !== this.followTarget) {
+        logger.info({
+          mode: this.currentMode,
+          followTarget: this.followTarget,
+          undercutCents: this.undercutCents,
+        }, '📋 [MULTI-AD] Config updated from dashboard');
+      }
+    } catch (error: any) {
+      logger.debug({ error: error.message }, '[MULTI-AD] Failed to load config, using defaults');
+    }
+  }
+
+  /**
    * Discover and register all active ads
    */
   private async discoverActiveAds(): Promise<void> {
     const allAds = await fetchAllAds();
 
-    // Filter only online ads
+    // Filter only online ads (advStatus === 1)
     const activeAds = allAds.filter(ad => ad.advStatus === 1);
 
-    // Clear and repopulate managed ads
-    this.managedAds.clear();
+    // Update existing or add new, remove deactivated
+    const activeAdvNos = new Set(activeAds.map(ad => ad.advNo));
 
-    for (const ad of activeAds) {
-      this.managedAds.set(ad.advNo, {
-        advNo: ad.advNo,
-        tradeType: ad.tradeType as 'BUY' | 'SELL',
-        asset: ad.asset,
-        fiat: ad.fiatUnit,
-        currentPrice: parseFloat(ad.price),
-        lastUpdate: null,
-        updateCount: 0,
-        errorCount: 0,
-      });
+    // Remove ads that are no longer active
+    for (const advNo of this.managedAds.keys()) {
+      if (!activeAdvNos.has(advNo)) {
+        this.managedAds.delete(advNo);
+      }
     }
 
-    logger.info({
-      total: allAds.length,
-      active: activeAds.length,
-      assets: [...new Set(activeAds.map(a => a.asset))],
-    }, '🔍 [MULTI-AD] Discovered ads');
+    // Add or update active ads
+    for (const ad of activeAds) {
+      const existing = this.managedAds.get(ad.advNo);
+      if (existing) {
+        // Update current price if changed externally
+        existing.currentPrice = parseFloat(ad.price);
+      } else {
+        // New ad
+        this.managedAds.set(ad.advNo, {
+          advNo: ad.advNo,
+          tradeType: ad.tradeType as 'BUY' | 'SELL',
+          asset: ad.asset,
+          fiat: ad.fiatUnit,
+          currentPrice: parseFloat(ad.price),
+          targetPrice: null,
+          lastUpdate: null,
+          updateCount: 0,
+          errorCount: 0,
+          mode: 'idle',
+          followTarget: null,
+        });
+      }
+    }
   }
 
   /**
    * Run a single update cycle for all managed ads
    */
   private async runUpdateCycle(): Promise<void> {
-    // First, refresh the list of active ads (in case user activated/deactivated)
+    // Reload config from database each cycle
+    await this.loadConfig();
+
+    // Refresh the list of active ads
     await this.discoverActiveAds();
+
+    if (this.managedAds.size === 0) {
+      return;
+    }
 
     // Update each managed ad
     for (const [advNo, ad] of this.managedAds) {
@@ -233,29 +323,63 @@ export class MultiAdPositioningManager extends EventEmitter {
   }
 
   /**
-   * Update a single ad's price
+   * Update a single ad's price based on current mode
    */
   private async updateSingleAd(ad: ManagedAd): Promise<void> {
     // Determine search type (inverse of ad type)
-    // SELL ad → search BUY (other sellers)
-    // BUY ad → search SELL (other buyers)
+    // SELL ad → search BUY (other sellers competing with us)
+    // BUY ad → search SELL (other buyers competing with us)
     const searchType = ad.tradeType === 'SELL' ? TradeType.BUY : TradeType.SELL;
 
-    // Get recommended price from smart positioning
-    const analysis = await this.smartPositioning.getRecommendedPrice(
-      ad.asset,
-      ad.fiat,
-      searchType
-    );
+    let analysis: PositioningAnalysis | null = null;
+
+    // Use the mode from dashboard config
+    if (this.currentMode === 'follow' && this.followTarget) {
+      // Follow mode - track specific seller
+      ad.mode = 'follow';
+      ad.followTarget = this.followTarget;
+
+      analysis = await this.followPositioning.getRecommendedPrice(
+        ad.asset,
+        ad.fiat,
+        searchType
+      );
+
+      // If target not found, fallback to smart
+      if (!analysis) {
+        logger.debug({
+          target: this.followTarget,
+          asset: ad.asset,
+        }, '[MULTI-AD] Target not found, falling back to smart');
+
+        analysis = await this.smartPositioning.getRecommendedPrice(
+          ad.asset,
+          ad.fiat,
+          searchType
+        );
+        ad.mode = 'smart'; // Mark as fallback
+      }
+    } else {
+      // Smart mode - use algorithm
+      ad.mode = 'smart';
+      ad.followTarget = null;
+
+      analysis = await this.smartPositioning.getRecommendedPrice(
+        ad.asset,
+        ad.fiat,
+        searchType
+      );
+    }
 
     if (!analysis) {
       return; // No recommendation available
     }
 
-    // Check if price should be updated
+    ad.targetPrice = analysis.targetPrice;
+
+    // Check if price should be updated (more than 1 centavo difference)
     const priceDiff = Math.abs(ad.currentPrice - analysis.targetPrice);
-    const threshold = ad.currentPrice * this.PRICE_UPDATE_THRESHOLD;
-    const shouldUpdate = priceDiff > threshold || ad.currentPrice === 0;
+    const shouldUpdate = priceDiff >= this.PRICE_UPDATE_THRESHOLD;
 
     if (shouldUpdate) {
       const success = await updateAdPrice(ad.advNo, analysis.targetPrice);
@@ -266,19 +390,22 @@ export class MultiAdPositioningManager extends EventEmitter {
         ad.lastUpdate = new Date();
         ad.updateCount++;
 
-        // Only log when price actually changes
+        // Log price change with mode info
         logger.info({
           asset: ad.asset,
           type: ad.tradeType,
+          mode: ad.mode,
+          target: ad.followTarget,
           oldPrice: oldPrice.toFixed(2),
           newPrice: analysis.targetPrice.toFixed(2),
-          margin: `${analysis.marginPercent.toFixed(2)}%`,
+          diff: (analysis.targetPrice - oldPrice).toFixed(2),
         }, '💰 [MULTI-AD] Price updated');
 
         this.emit('priceUpdated', {
           advNo: ad.advNo,
           asset: ad.asset,
           tradeType: ad.tradeType,
+          mode: ad.mode,
           oldPrice,
           newPrice: analysis.targetPrice,
         });
@@ -292,6 +419,7 @@ export class MultiAdPositioningManager extends EventEmitter {
    * Force refresh of all ads
    */
   async refresh(): Promise<void> {
+    await this.loadConfig();
     await this.discoverActiveAds();
     await this.runUpdateCycle();
   }
@@ -303,9 +431,13 @@ export class MultiAdPositioningManager extends EventEmitter {
     const managedAds = Array.from(this.managedAds.values());
     return {
       isRunning: this.isRunning,
+      mode: this.currentMode,
+      followTarget: this.followTarget,
+      undercutCents: this.undercutCents,
       managedAds,
       totalUpdates: managedAds.reduce((sum, ad) => sum + ad.updateCount, 0),
       totalErrors: managedAds.reduce((sum, ad) => sum + ad.errorCount, 0),
+      lastConfigCheck: this.lastConfigCheck,
     };
   }
 
@@ -318,8 +450,6 @@ export class MultiAdPositioningManager extends EventEmitter {
 }
 
 // Factory function
-export function createMultiAdPositioningManager(
-  smartConfig?: Partial<SmartPositioningConfig>
-): MultiAdPositioningManager {
-  return new MultiAdPositioningManager(smartConfig);
+export function createMultiAdPositioningManager(): MultiAdPositioningManager {
+  return new MultiAdPositioningManager();
 }
