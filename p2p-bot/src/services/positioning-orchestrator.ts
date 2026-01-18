@@ -260,6 +260,9 @@ export class PositioningOrchestrator extends EventEmitter {
   private async updateAdPrice(price: number): Promise<void> {
     await this.client.updateAd({
       advNo: this.advNo,
+      asset: this.asset,
+      fiatUnit: this.fiat,
+      tradeType: this.tradeType,
       price,
       priceType: PriceType.FIXED,
     });

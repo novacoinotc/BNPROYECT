@@ -92,6 +92,9 @@ export interface SearchAdsRequest {
 
 export interface UpdateAdRequest {
   advNo: string;
+  asset?: string;
+  fiatUnit?: string;
+  tradeType?: TradeType;
   advStatus?: number;
   price?: number;
   priceType?: PriceType;
