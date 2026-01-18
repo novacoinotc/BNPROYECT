@@ -234,17 +234,11 @@ export class MultiAdPositioningManager extends EventEmitter {
         undercutAmount: config.undercutCents,
       });
 
-      // Log if config changed OR first time
+      // Only log if config changed
       if (oldMode !== this.currentMode || oldTarget !== this.followTarget) {
-        logger.info({
-          mode: this.currentMode,
-          followTarget: this.followTarget,
-          undercutCents: this.undercutCents,
-          dbRaw: {
-            positioningMode: config.positioningMode,
-            followTargetNickName: config.followTargetNickName,
-          },
-        }, '📋 [MULTI-AD] Config loaded from dashboard');
+        logger.info(
+          `📋 [CONFIG] Mode: ${this.currentMode}, Target: ${this.followTarget || 'none'}, Undercut: ${this.undercutCents}¢`
+        );
       }
     } catch (error: any) {
       logger.error({ error: error.message }, '[MULTI-AD] Failed to load config');
@@ -350,13 +344,6 @@ export class MultiAdPositioningManager extends EventEmitter {
       ad.mode = 'follow';
       ad.followTarget = this.followTarget;
 
-      logger.debug({
-        mode: 'follow',
-        target: this.followTarget,
-        asset: ad.asset,
-        searchType,
-      }, '🎯 [MULTI-AD] Using FOLLOW mode');
-
       analysis = await this.followPositioning.getRecommendedPrice(
         ad.asset,
         ad.fiat,
@@ -368,7 +355,7 @@ export class MultiAdPositioningManager extends EventEmitter {
         logger.warn({
           target: this.followTarget,
           asset: ad.asset,
-        }, '⚠️ [MULTI-AD] Target NOT FOUND, falling back to smart mode');
+        }, '⚠️ [FOLLOW] Target NOT FOUND - using SMART mode');
 
         analysis = await this.smartPositioning.getRecommendedPrice(
           ad.asset,
@@ -376,24 +363,11 @@ export class MultiAdPositioningManager extends EventEmitter {
           searchType
         );
         ad.mode = 'smart'; // Mark as fallback
-      } else {
-        logger.info({
-          target: this.followTarget,
-          targetPrice: analysis.targetInfo?.price,
-          ourPrice: analysis.targetPrice,
-          undercutCents: this.undercutCents,
-        }, '✅ [MULTI-AD] Following target');
       }
     } else {
       // Smart mode - use algorithm
       ad.mode = 'smart';
       ad.followTarget = null;
-
-      logger.debug({
-        mode: 'smart',
-        configMode: this.currentMode,
-        followTarget: this.followTarget,
-      }, '🧠 [MULTI-AD] Using SMART mode');
 
       analysis = await this.smartPositioning.getRecommendedPrice(
         ad.asset,
@@ -413,20 +387,20 @@ export class MultiAdPositioningManager extends EventEmitter {
     const priceDiff = Math.abs(ad.currentPrice - analysis.targetPrice);
     const shouldUpdate = priceDiff >= this.PRICE_UPDATE_THRESHOLD;
 
-    // ALWAYS log the price comparison for debugging
-    logger.info({
-      asset: ad.asset,
-      mode: ad.mode,
-      currentPrice: ad.currentPrice,
-      targetPrice: analysis.targetPrice,
-      priceDiff: priceDiff.toFixed(4),
-      shouldUpdate,
-      followTarget: ad.followTarget,
-      targetInfo: analysis.targetInfo ? {
-        nickName: analysis.targetInfo.nickName,
-        price: analysis.targetInfo.price,
-      } : null,
-    }, '📊 [MULTI-AD] Price comparison');
+    // Log price status - show mode and key info
+    if (ad.mode === 'follow' && analysis.targetInfo) {
+      logger.info(
+        `🎯 [FOLLOW] ${analysis.targetInfo.nickName}@${analysis.targetInfo.price} → ` +
+        `Tu precio: ${ad.currentPrice} → Target: ${analysis.targetPrice.toFixed(2)} ` +
+        `(diff: ${priceDiff.toFixed(2)}, update: ${shouldUpdate})`
+      );
+    } else {
+      logger.info(
+        `🧠 [SMART] Best: ${analysis.bestQualifiedPrice} → ` +
+        `Tu precio: ${ad.currentPrice} → Target: ${analysis.targetPrice.toFixed(2)} ` +
+        `(diff: ${priceDiff.toFixed(2)}, update: ${shouldUpdate})`
+      );
+    }
 
     if (shouldUpdate) {
       const success = await updateAdPrice(ad.advNo, analysis.targetPrice);

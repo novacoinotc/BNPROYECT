@@ -212,7 +212,8 @@ export class BinanceC2CClient {
             additionalKycVerifyFilter: 0,
             payTypes: [],
           };
-          logger.info(`🔍 [SEARCH ADS] Sending body: ${JSON.stringify(body)}`);
+          // Debug level to reduce noise
+          logger.debug({ body }, '[SEARCH ADS] Request');
           return JSON.stringify(body);
         })(),
       });
@@ -251,10 +252,10 @@ export class BinanceC2CClient {
         }>;
       };
 
-      // Log the raw response for debugging - use string interpolation for visibility
-      logger.info(
-        `🔍 [SEARCH ADS] HTTP=${response.status} code=${rawData.code} msg=${rawData.message || 'none'} ` +
-        `data=${rawData.data?.length ?? 0} items | request: ${request.asset}/${request.fiat}/${request.tradeType}`
+      // Debug level to reduce noise
+      logger.debug(
+        { status: response.status, code: rawData.code, count: rawData.data?.length ?? 0 },
+        '[SEARCH ADS] Response'
       );
 
       // Transform public API response to AdData format
@@ -358,7 +359,7 @@ export class BinanceC2CClient {
 
         if (prices.length > 0) {
           const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-          logger.info({ asset, fiat, avgPrice, count: prices.length }, 'Reference price from competitors');
+          logger.debug({ asset, fiat, avgPrice }, 'Reference price from competitors');
           return {
             price: avgPrice.toFixed(2),
             fiatUnit: fiat,

@@ -56,21 +56,37 @@ export class FollowPositioning {
 
   /**
    * Search for target seller in competitor ads
+   * Searches multiple pages to find the target
    */
   async findTarget(
     asset: string,
     fiat: string,
     tradeType: TradeType
   ): Promise<TargetInfo> {
-    // Fetch competitor ads (silent)
-    // Note: publisherType filter removed as it causes empty results from some regions
-    const ads = await this.client.searchAds({
-      asset,
-      fiat,
-      tradeType,
-      page: 1,
-      rows: 20, // Binance P2P API limit is 20 per page
-    });
+    // Search multiple pages to find target (up to 60 ads)
+    let allAds: any[] = [];
+
+    for (let page = 1; page <= 3; page++) {
+      const ads = await this.client.searchAds({
+        asset,
+        fiat,
+        tradeType,
+        page,
+        rows: 20,
+      });
+
+      if (ads.length === 0) break;
+      allAds.push(...ads);
+
+      // Check if we found the target in this page to avoid unnecessary requests
+      const found = ads.find(ad =>
+        (this.config.targetUserNo && ad.advertiser.userNo === this.config.targetUserNo) ||
+        (this.config.targetNickName && ad.advertiser.nickName.toLowerCase() === this.config.targetNickName.toLowerCase())
+      );
+      if (found) break;
+    }
+
+    const ads = allAds;
 
     // Search by userNo first (more stable), then by nickName
     let targetAd: AdData | undefined;
