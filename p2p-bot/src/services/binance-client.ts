@@ -445,27 +445,38 @@ export class BinanceC2CClient {
   }
 
   /**
+   * Get ad details by ad number
+   * POST /sapi/v1/c2c/ads/getDetailByNo
+   */
+  async getAdDetailByNo(adsNo: string): Promise<any> {
+    const response = await this.signedPost<any>(
+      '/sapi/v1/c2c/ads/getDetailByNo',
+      {},
+      { adsNo }  // adsNo goes in query params, not body
+    );
+    return response;
+  }
+
+  /**
    * Update ad price and settings
    * POST /sapi/v1/c2c/ads/update
    *
    * Note: Binance API requires tradeMethods array to be included
    */
   async updateAd(request: UpdateAdRequest): Promise<boolean> {
-    // First, fetch the current ad to get tradeMethods and other required fields
-    let currentAd: AdData | null = null;
+    // First, fetch the current ad details using getDetailByNo
+    let adDetail: any = null;
     try {
-      const myAds = await this.listMyAds();
-      const allAds = [...(myAds.sellList || []), ...(myAds.buyList || [])];
-      currentAd = allAds.find(ad => ad.advNo === request.advNo) || null;
-
-      if (currentAd) {
+      adDetail = await this.getAdDetailByNo(request.advNo);
+      if (adDetail) {
         logger.info(
-          `📋 [UPDATE AD] Found current ad: price=${currentAd.price} ` +
-          `methods=${currentAd.tradeMethods?.length || 0}`
+          `📋 [UPDATE AD] Found ad detail: price=${adDetail.price} ` +
+          `methods=${adDetail.tradeMethods?.length || 0} ` +
+          `min=${adDetail.minSingleTransAmount} max=${adDetail.maxSingleTransAmount}`
         );
       }
-    } catch (err) {
-      logger.warn('Could not fetch current ad details, proceeding without');
+    } catch (err: any) {
+      logger.warn(`Could not fetch ad details: ${err.message}`);
     }
 
     // Convert price to string with 2 decimals (Binance requirement)
@@ -473,7 +484,7 @@ export class BinanceC2CClient {
       ? request.price.toFixed(2)
       : String(request.price);
 
-    // Build request body - include tradeMethods from current ad if available
+    // Build request body - include tradeMethods from ad detail if available
     const body: Record<string, any> = {
       advNo: request.advNo,
       asset: request.asset,
@@ -483,21 +494,25 @@ export class BinanceC2CClient {
       priceType: request.priceType,
     };
 
-    // Include tradeMethods if we have them from the current ad
-    if (currentAd?.tradeMethods && currentAd.tradeMethods.length > 0) {
-      body.tradeMethods = currentAd.tradeMethods.map(tm => ({
-        identifier: tm.identifier,
-        payId: tm.payId,
+    // Include tradeMethods if we have them from the ad detail
+    if (adDetail?.tradeMethods && adDetail.tradeMethods.length > 0) {
+      body.tradeMethods = adDetail.tradeMethods.map((tm: any) => ({
+        identifier: tm.identifier || tm.tradeMethodIdentifier,
+        payId: tm.payId || tm.id,
       }));
     }
 
-    // Include min/max amounts if available from current ad
-    if (currentAd) {
-      if (currentAd.minSingleTransAmount) {
-        body.minSingleTransAmount = parseFloat(currentAd.minSingleTransAmount);
+    // Include min/max amounts if available from ad detail
+    if (adDetail) {
+      if (adDetail.minSingleTransAmount) {
+        body.minSingleTransAmount = parseFloat(adDetail.minSingleTransAmount);
       }
-      if (currentAd.maxSingleTransAmount) {
-        body.maxSingleTransAmount = parseFloat(currentAd.maxSingleTransAmount);
+      if (adDetail.maxSingleTransAmount) {
+        body.maxSingleTransAmount = parseFloat(adDetail.maxSingleTransAmount);
+      }
+      // Include initAmount (total amount) if available
+      if (adDetail.initAmount) {
+        body.initAmount = parseFloat(adDetail.initAmount);
       }
     }
 
