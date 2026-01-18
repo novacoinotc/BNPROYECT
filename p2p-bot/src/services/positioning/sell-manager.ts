@@ -232,13 +232,7 @@ export class SellAdManager extends EventEmitter {
     }
 
     // Log which config is being used for this asset
-    logger.debug({
-      asset: ad.asset,
-      mode: assetConfig.mode,
-      followTarget: assetConfig.followTarget,
-      matchPrice: assetConfig.matchPrice,
-      undercutCents: assetConfig.undercutCents,
-    }, `[SELL] ${ad.asset} usando config por asset`);
+    logger.info(`[SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';
