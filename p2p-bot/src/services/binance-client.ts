@@ -200,6 +200,8 @@ export class BinanceC2CClient {
 
       const rawData = await response.json() as {
         code?: string;
+        message?: string;
+        messageDetail?: string;
         data?: Array<{
           adv: {
             advNo: string;
@@ -229,6 +231,17 @@ export class BinanceC2CClient {
           };
         }>;
       };
+
+      // Log the raw response for debugging
+      logger.info({
+        httpStatus: response.status,
+        code: rawData.code,
+        message: rawData.message,
+        messageDetail: rawData.messageDetail,
+        hasData: !!rawData.data,
+        dataLength: rawData.data?.length ?? 0,
+        request: { asset: request.asset, fiat: request.fiat, tradeType: request.tradeType },
+      }, '🔍 [SEARCH ADS] Raw API response');
 
       // Transform public API response to AdData format
       if (rawData.code === '000000' && rawData.data && rawData.data.length > 0) {
@@ -272,8 +285,13 @@ export class BinanceC2CClient {
         publisherType: request.publisherType,
       }, 'Search ads returned no data');
       return [];
-    } catch (error) {
-      logger.warn({ error }, 'Failed to search competitor ads');
+    } catch (error: any) {
+      logger.error({
+        error: error?.message || error,
+        name: error?.name,
+        cause: error?.cause,
+        request: { asset: request.asset, fiat: request.fiat, tradeType: request.tradeType },
+      }, '❌ [SEARCH ADS] Failed to fetch');
       return [];
     }
   }
