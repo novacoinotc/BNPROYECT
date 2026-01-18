@@ -458,73 +458,56 @@ export class BinanceC2CClient {
   }
 
   /**
-   * Update ad price and settings
+   * Update ad price
    * POST /sapi/v1/c2c/ads/update
    *
-   * Note: Binance API requires tradeMethods array to be included
+   * WORKING FORMAT (tested 2026-01-18):
+   * - Body: { advNo: string, price: number }
+   * - Query: timestamp + signature
+   *
+   * NOTE: Make sure BINANCE_ADV_NO in .env matches your ACTIVE ad.
+   * Error 187022 = wrong advNo or ad is offline.
    */
   async updateAd(request: UpdateAdRequest): Promise<boolean> {
-    // First, fetch the current ad details using getDetailByNo
-    let adDetail: any = null;
-    try {
-      adDetail = await this.getAdDetailByNo(request.advNo);
-      if (adDetail) {
-        logger.info(
-          `📋 [UPDATE AD] Found ad detail: price=${adDetail.price} ` +
-          `methods=${adDetail.tradeMethods?.length || 0} ` +
-          `min=${adDetail.minSingleTransAmount} max=${adDetail.maxSingleTransAmount}`
-        );
-      }
-    } catch (err: any) {
-      logger.warn(`Could not fetch ad details: ${err.message}`);
-    }
-
-    // Round price to 2 decimals as NUMBER (not string)
+    // Round price to 2 decimals
     const priceNum = typeof request.price === 'number'
       ? Math.round(request.price * 100) / 100
       : parseFloat(String(request.price));
 
-    // Build minimal request body - only required fields
-    const body: Record<string, any> = {
+    // Simple body - this is the format that works
+    const body = {
       advNo: request.advNo,
       price: priceNum,
     };
 
-    // Include tradeMethods with payId if we have them from the ad detail
-    if (adDetail?.tradeMethods && adDetail.tradeMethods.length > 0) {
-      body.tradeMethods = adDetail.tradeMethods.map((tm: any) => ({
-        identifier: tm.identifier || tm.tradeMethodIdentifier,
-        payId: tm.payId || tm.id || 0,
-      }));
-    }
-
-    // Log the exact request for debugging (use string interpolation for visibility)
-    logger.info(
-      `📝 [UPDATE AD] Sending request: advNo=${body.advNo} price=${body.price} ` +
-      `tradeMethods=${body.tradeMethods?.length || 0} body=${JSON.stringify(body)}`
-    );
+    logger.info(`📝 [UPDATE AD] advNo=${body.advNo} price=${body.price}`);
 
     try {
-      await this.signedPost<void>(
+      const response = await this.signedPost<{ code: string; success: boolean }>(
         '/sapi/v1/c2c/ads/update',
         body
       );
+
+      // Check for success response
+      if ((response as any)?.success === true || (response as any)?.code === '000000') {
+        logger.info(`✅ [UPDATE AD] Success! Price updated to ${body.price}`);
+        return true;
+      }
+
       logger.info(`✅ [UPDATE AD] Success advNo=${body.advNo} price=${body.price}`);
       return true;
     } catch (error: any) {
-      // Extract detailed error info from Binance API response
       const errorData = error.response?.data;
       const httpStatus = error.response?.status;
-      const binanceCode = errorData?.code;
-      const binanceMsg = errorData?.message || errorData?.msg;
+      const binanceMsg = errorData?.msg || errorData?.message;
 
-      // Use string interpolation so details are visible in logs
-      logger.error(
-        `❌ [UPDATE AD] Failed advNo=${body.advNo} ` +
-        `HTTP=${httpStatus} code=${binanceCode} msg=${binanceMsg} ` +
-        `request=${JSON.stringify(body)} ` +
-        `response=${JSON.stringify(errorData)}`
-      );
+      if (binanceMsg === '187022') {
+        logger.error(
+          `❌ [UPDATE AD] Error 187022 - Check that advNo=${request.advNo} is correct and the ad is ONLINE`
+        );
+      } else {
+        logger.error(`❌ [UPDATE AD] Failed: HTTP=${httpStatus} msg=${binanceMsg}`);
+      }
       throw error;
     }
   }
