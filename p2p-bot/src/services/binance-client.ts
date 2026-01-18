@@ -252,24 +252,8 @@ export class BinanceC2CClient {
         }>;
       };
 
-      // Log response details for debugging
-      if (rawData.code !== '000000' || !rawData.data || rawData.data.length === 0) {
-        logger.warn({
-          httpStatus: response.status,
-          apiCode: rawData.code,
-          message: rawData.message,
-          messageDetail: rawData.messageDetail,
-          hasData: !!rawData.data,
-          dataLength: rawData.data?.length ?? 0,
-          asset: request.asset,
-          fiat: request.fiat,
-          tradeType: request.tradeType,
-        }, '[SEARCH ADS] API returned error or empty');
-      }
-
       // Transform public API response to AdData format
       if (rawData.code === '000000' && rawData.data && rawData.data.length > 0) {
-        logger.debug({ count: rawData.data.length, asset: request.asset, fiat: request.fiat }, 'Search ads found results');
         return rawData.data.map(item => ({
           advNo: item.adv.advNo,
           tradeType: item.adv.tradeType as TradeType,
@@ -299,8 +283,7 @@ export class BinanceC2CClient {
         }));
       }
 
-      // Log already printed above with full details
-      logger.info(`[SEARCH ADS] No data: ${request.asset}/${request.fiat}/${request.tradeType} code=${rawData.code}`);
+      logger.debug(`[SEARCH ADS] No data: ${request.asset}/${request.fiat}/${request.tradeType}`);
       return [];
     } catch (error: any) {
       logger.error({
@@ -796,6 +779,28 @@ export class BinanceC2CClient {
       { orderNo }
     );
     return response;
+  }
+
+  /**
+   * Send a chat message to an order
+   * POST /sapi/v1/c2c/chat/sendMessage
+   */
+  async sendMessage(orderNo: string, message: string): Promise<boolean> {
+    try {
+      await this.signedPost<any>(
+        '/sapi/v1/c2c/chat/sendMessage',
+        {
+          orderNo,
+          message,
+          msgType: 'text',
+        }
+      );
+      logger.info({ orderNo, messageLength: message.length }, '💬 [CHAT] Message sent');
+      return true;
+    } catch (error: any) {
+      logger.warn({ orderNo, error: error?.message }, '⚠️ [CHAT] Failed to send message');
+      return false;
+    }
   }
 
   // ==================== UTILITY METHODS ====================

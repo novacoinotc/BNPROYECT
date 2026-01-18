@@ -231,8 +231,8 @@ export class BuyAdManager extends EventEmitter {
       return;
     }
 
-    // Log which config is being used for this asset
-    logger.info(`[BUY] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
+    // Debug: config used for this asset
+    logger.debug(`[BUY] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';

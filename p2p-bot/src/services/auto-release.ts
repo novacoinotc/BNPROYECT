@@ -1625,6 +1625,16 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           asset: pending.order.asset,
         }, 'Crypto released successfully');
 
+        // Send thank you message to buyer
+        try {
+          await this.binanceClient.sendMessage(
+            orderNumber,
+            '¡Gracias por tu confianza! Quedamos al pendiente de futuras órdenes. 🙌'
+          );
+        } catch (msgError) {
+          logger.warn({ orderNumber, error: msgError }, '⚠️ Could not send thank you message');
+        }
+
         // Update trusted buyer stats if applicable
         const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
         const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
