@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
-import { getBotConfig } from '../database-pg.js';
+import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
 
 interface SellAd {
   advNo: string;
@@ -105,6 +105,7 @@ export class SellAdManager extends EventEmitter {
   private followEngine: FollowEngine;
   private smartEngine: SmartEngine;
   private config: SellManagerConfig;
+  private dbConfig: BotConfig | null = null;
   private interval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -153,21 +154,17 @@ export class SellAdManager extends EventEmitter {
   private async loadConfig(): Promise<void> {
     try {
       const dbConfig = await getBotConfig();
+      this.dbConfig = dbConfig;
       const oldMode = this.config.mode;
       const oldTarget = this.config.followTarget;
 
-      this.config.mode = (dbConfig.positioningMode as 'follow' | 'smart') || 'smart';
-      this.config.followTarget = dbConfig.followTargetNickName || null;
+      // Use SELL-specific config as defaults (sellMode, sellFollowTarget)
+      this.config.mode = (dbConfig.sellMode as 'follow' | 'smart') || 'smart';
+      this.config.followTarget = dbConfig.sellFollowTarget || null;
       this.config.undercutCents = dbConfig.undercutCents || 1;
       this.config.matchPrice = dbConfig.matchPrice ?? false;
 
-      // Update engines
-      this.followEngine.updateConfig({
-        targetNickName: this.config.followTarget || '',
-        undercutCents: this.config.undercutCents,
-        matchPrice: this.config.matchPrice,
-      });
-
+      // Update smart engine shared config
       this.smartEngine.updateConfig({
         minUserGrade: dbConfig.smartMinUserGrade,
         minMonthFinishRate: dbConfig.smartMinFinishRate,
@@ -180,10 +177,10 @@ export class SellAdManager extends EventEmitter {
       });
 
       if (oldMode !== this.config.mode) {
-        logger.info(`📋 [SELL] Modo: ${oldMode} → ${this.config.mode}`);
+        logger.info(`📋 [SELL] Modo default: ${oldMode} → ${this.config.mode}`);
       }
       if (oldTarget !== this.config.followTarget && this.config.mode === 'follow') {
-        logger.info(`📋 [SELL] Siguiendo: ${this.config.followTarget}`);
+        logger.info(`📋 [SELL] Siguiendo default: ${this.config.followTarget}`);
       }
     } catch (error: any) {
       // Silent error
@@ -230,8 +227,19 @@ export class SellAdManager extends EventEmitter {
     let targetPrice: number | null = null;
     let logInfo = '';
 
+    // Get per-asset config (or fallback to defaults)
+    const assetConfig = this.dbConfig
+      ? getPositioningConfigForAd(this.dbConfig, 'SELL', ad.asset)
+      : { mode: this.config.mode, followTarget: this.config.followTarget };
+
     // Try follow mode first
-    if (this.config.mode === 'follow' && this.config.followTarget) {
+    if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
+      // Update follow engine with per-asset target
+      this.followEngine.updateConfig({
+        targetNickName: assetConfig.followTarget,
+        undercutCents: this.config.undercutCents,
+        matchPrice: this.config.matchPrice,
+      });
       const result = await this.followEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
         targetPrice = result.targetPrice;

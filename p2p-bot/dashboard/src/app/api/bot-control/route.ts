@@ -28,6 +28,18 @@ export async function GET() {
 
     const config = result.rows[0];
 
+    // Parse positioningConfigs from JSONB
+    let positioningConfigs = {};
+    if (config.positioningConfigs) {
+      try {
+        positioningConfigs = typeof config.positioningConfigs === 'string'
+          ? JSON.parse(config.positioningConfigs)
+          : config.positioningConfigs;
+      } catch {
+        positioningConfigs = {};
+      }
+    }
+
     return NextResponse.json({
       success: true,
       config: {
@@ -36,9 +48,21 @@ export async function GET() {
         positioningEnabled: config.positioningEnabled,
         positioningMode: config.positioningMode,
 
-        // Follow mode
+        // Legacy follow mode (for backwards compatibility)
         followTargetNickName: config.followTargetNickName,
         followTargetUserNo: config.followTargetUserNo,
+
+        // SELL ads config (defaults)
+        sellMode: config.sellMode ?? config.positioningMode ?? 'smart',
+        sellFollowTarget: config.sellFollowTarget ?? config.followTargetNickName ?? null,
+
+        // BUY ads config (defaults)
+        buyMode: config.buyMode ?? config.positioningMode ?? 'smart',
+        buyFollowTarget: config.buyFollowTarget ?? config.followTargetNickName ?? null,
+
+        // Per-asset positioning configs (overrides above when set)
+        // Key format: "SELL:USDT", "BUY:BTC", etc.
+        positioningConfigs,
 
         // Smart mode filters
         smartMinUserGrade: config.smartMinUserGrade ?? 2,
@@ -96,7 +120,7 @@ export async function POST(request: NextRequest) {
       values.push(body.positioningMode);
     }
 
-    // Follow mode
+    // Legacy follow mode (for backwards compatibility)
     if (body.followTargetNickName !== undefined) {
       updates.push(`"followTargetNickName" = $${paramIndex++}`);
       values.push(body.followTargetNickName || null);
@@ -104,6 +128,32 @@ export async function POST(request: NextRequest) {
     if (body.followTargetUserNo !== undefined) {
       updates.push(`"followTargetUserNo" = $${paramIndex++}`);
       values.push(body.followTargetUserNo || null);
+    }
+
+    // SELL ads config
+    if (typeof body.sellMode === 'string') {
+      updates.push(`"sellMode" = $${paramIndex++}`);
+      values.push(body.sellMode);
+    }
+    if (body.sellFollowTarget !== undefined) {
+      updates.push(`"sellFollowTarget" = $${paramIndex++}`);
+      values.push(body.sellFollowTarget || null);
+    }
+
+    // BUY ads config
+    if (typeof body.buyMode === 'string') {
+      updates.push(`"buyMode" = $${paramIndex++}`);
+      values.push(body.buyMode);
+    }
+    if (body.buyFollowTarget !== undefined) {
+      updates.push(`"buyFollowTarget" = $${paramIndex++}`);
+      values.push(body.buyFollowTarget || null);
+    }
+
+    // Per-asset positioning configs (JSONB)
+    if (body.positioningConfigs !== undefined) {
+      updates.push(`"positioningConfigs" = $${paramIndex++}`);
+      values.push(JSON.stringify(body.positioningConfigs));
     }
 
     // Smart mode filters
@@ -185,6 +235,18 @@ export async function POST(request: NextRequest) {
       [logId, JSON.stringify(body)]
     );
 
+    // Parse positioningConfigs from JSONB
+    let positioningConfigs = {};
+    if (config.positioningConfigs) {
+      try {
+        positioningConfigs = typeof config.positioningConfigs === 'string'
+          ? JSON.parse(config.positioningConfigs)
+          : config.positioningConfigs;
+      } catch {
+        positioningConfigs = {};
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Bot configuration updated',
@@ -194,6 +256,11 @@ export async function POST(request: NextRequest) {
         positioningMode: config.positioningMode,
         followTargetNickName: config.followTargetNickName,
         followTargetUserNo: config.followTargetUserNo,
+        sellMode: config.sellMode,
+        sellFollowTarget: config.sellFollowTarget,
+        buyMode: config.buyMode,
+        buyFollowTarget: config.buyFollowTarget,
+        positioningConfigs,
         smartMinUserGrade: config.smartMinUserGrade,
         smartMinFinishRate: config.smartMinFinishRate,
         smartMinOrderCount: config.smartMinOrderCount,

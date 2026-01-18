@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
-import { getBotConfig } from '../database-pg.js';
+import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
 
 interface BuyAd {
   advNo: string;
@@ -105,6 +105,7 @@ export class BuyAdManager extends EventEmitter {
   private followEngine: FollowEngine;
   private smartEngine: SmartEngine;
   private config: BuyManagerConfig;
+  private dbConfig: BotConfig | null = null;
   private interval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -153,23 +154,17 @@ export class BuyAdManager extends EventEmitter {
   private async loadConfig(): Promise<void> {
     try {
       const dbConfig = await getBotConfig();
+      this.dbConfig = dbConfig;
       const oldMode = this.config.mode;
       const oldTarget = this.config.followTarget;
 
-      // BUY ads use separate config fields (can be added to DB later)
-      // For now, use same config as SELL
-      this.config.mode = (dbConfig.positioningMode as 'follow' | 'smart') || 'smart';
-      this.config.followTarget = dbConfig.followTargetNickName || null;
+      // Use BUY-specific config as defaults (buyMode, buyFollowTarget)
+      this.config.mode = (dbConfig.buyMode as 'follow' | 'smart') || 'smart';
+      this.config.followTarget = dbConfig.buyFollowTarget || null;
       this.config.undercutCents = dbConfig.undercutCents || 1;
       this.config.matchPrice = dbConfig.matchPrice ?? false;
 
-      // Update engines
-      this.followEngine.updateConfig({
-        targetNickName: this.config.followTarget || '',
-        undercutCents: this.config.undercutCents,
-        matchPrice: this.config.matchPrice,
-      });
-
+      // Update smart engine shared config
       this.smartEngine.updateConfig({
         minUserGrade: dbConfig.smartMinUserGrade,
         minMonthFinishRate: dbConfig.smartMinFinishRate,
@@ -182,10 +177,10 @@ export class BuyAdManager extends EventEmitter {
       });
 
       if (oldMode !== this.config.mode) {
-        logger.info(`📋 [BUY] Modo: ${oldMode} → ${this.config.mode}`);
+        logger.info(`📋 [BUY] Modo default: ${oldMode} → ${this.config.mode}`);
       }
       if (oldTarget !== this.config.followTarget && this.config.mode === 'follow') {
-        logger.info(`📋 [BUY] Siguiendo: ${this.config.followTarget}`);
+        logger.info(`📋 [BUY] Siguiendo default: ${this.config.followTarget}`);
       }
     } catch (error: any) {
       // Silent error
@@ -232,8 +227,19 @@ export class BuyAdManager extends EventEmitter {
     let targetPrice: number | null = null;
     let logInfo = '';
 
+    // Get per-asset config (or fallback to defaults)
+    const assetConfig = this.dbConfig
+      ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
+      : { mode: this.config.mode, followTarget: this.config.followTarget };
+
     // Try follow mode first
-    if (this.config.mode === 'follow' && this.config.followTarget) {
+    if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
+      // Update follow engine with per-asset target
+      this.followEngine.updateConfig({
+        targetNickName: assetConfig.followTarget,
+        undercutCents: this.config.undercutCents,
+        matchPrice: this.config.matchPrice,
+      });
       const result = await this.followEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
         targetPrice = result.targetPrice;

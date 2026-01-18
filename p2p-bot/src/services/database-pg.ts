@@ -1593,13 +1593,32 @@ export async function incrementTrustedBuyerStats(
 
 // ==================== BOT CONFIG ====================
 
+// Per-asset positioning configuration
+export interface AssetPositioningConfig {
+  mode: 'smart' | 'follow';
+  followTarget: string | null;
+}
+
+// Map of "TRADE_TYPE:ASSET" -> config (e.g., "SELL:USDT", "BUY:BTC")
+export type PositioningConfigsMap = Record<string, AssetPositioningConfig>;
+
 export interface BotConfig {
   releaseEnabled: boolean;
   positioningEnabled: boolean;
+  // Legacy fields (for backwards compatibility)
   positioningMode: string;
   followTargetNickName: string | null;
   followTargetUserNo: string | null;
-  // Smart mode filters
+  // SELL ad config - defaults (when I'm selling, I compete with other sellers)
+  sellMode: string; // 'smart' | 'follow'
+  sellFollowTarget: string | null;
+  // BUY ad config - defaults (when I'm buying, I compete with other buyers)
+  buyMode: string; // 'smart' | 'follow'
+  buyFollowTarget: string | null;
+  // Per-asset positioning configs (overrides sellMode/buyMode when set)
+  // Key format: "SELL:USDT", "BUY:BTC", etc.
+  positioningConfigs: PositioningConfigsMap;
+  // Smart mode filters (shared)
   smartMinUserGrade: number;
   smartMinFinishRate: number;
   smartMinOrderCount: number;
@@ -1640,12 +1659,34 @@ export async function getBotConfig(): Promise<BotConfig> {
     }
 
     const row = result.rows[0];
+
+    // Parse positioningConfigs from JSON
+    let positioningConfigs: PositioningConfigsMap = {};
+    if (row?.positioningConfigs) {
+      try {
+        positioningConfigs = typeof row.positioningConfigs === 'string'
+          ? JSON.parse(row.positioningConfigs)
+          : row.positioningConfigs;
+      } catch {
+        positioningConfigs = {};
+      }
+    }
+
     return {
       releaseEnabled: row?.releaseEnabled ?? true,
       positioningEnabled: row?.positioningEnabled ?? false,
-      positioningMode: row?.positioningMode ?? 'off',
+      // Legacy fields
+      positioningMode: row?.positioningMode ?? 'smart',
       followTargetNickName: row?.followTargetNickName ?? null,
       followTargetUserNo: row?.followTargetUserNo ?? null,
+      // SELL config - defaults (fallback to legacy if not set)
+      sellMode: row?.sellMode ?? row?.positioningMode ?? 'smart',
+      sellFollowTarget: row?.sellFollowTarget ?? row?.followTargetNickName ?? null,
+      // BUY config - defaults (fallback to legacy if not set)
+      buyMode: row?.buyMode ?? row?.positioningMode ?? 'smart',
+      buyFollowTarget: row?.buyFollowTarget ?? row?.followTargetNickName ?? null,
+      // Per-asset configs
+      positioningConfigs,
       // Smart mode filters
       smartMinUserGrade: row?.smartMinUserGrade ?? 2,
       smartMinFinishRate: row?.smartMinFinishRate ?? 0.90,
@@ -1665,9 +1706,14 @@ export async function getBotConfig(): Promise<BotConfig> {
     return {
       releaseEnabled: true,
       positioningEnabled: false,
-      positioningMode: 'off',
+      positioningMode: 'smart',
       followTargetNickName: null,
       followTargetUserNo: null,
+      sellMode: 'smart',
+      sellFollowTarget: null,
+      buyMode: 'smart',
+      buyFollowTarget: null,
+      positioningConfigs: {},
       smartMinUserGrade: 2,
       smartMinFinishRate: 0.90,
       smartMinOrderCount: 10,
@@ -1678,6 +1724,35 @@ export async function getBotConfig(): Promise<BotConfig> {
       matchPrice: false,
       autoMessageEnabled: false,
       autoMessageText: null,
+    };
+  }
+}
+
+/**
+ * Get positioning config for a specific trade type and asset
+ * Checks per-asset config first, then falls back to trade type defaults
+ */
+export function getPositioningConfigForAd(
+  config: BotConfig,
+  tradeType: 'SELL' | 'BUY',
+  asset: string
+): AssetPositioningConfig {
+  // Check per-asset config first (e.g., "SELL:USDT")
+  const key = `${tradeType}:${asset}`;
+  if (config.positioningConfigs[key]) {
+    return config.positioningConfigs[key];
+  }
+
+  // Fallback to trade type defaults
+  if (tradeType === 'SELL') {
+    return {
+      mode: (config.sellMode as 'smart' | 'follow') || 'smart',
+      followTarget: config.sellFollowTarget,
+    };
+  } else {
+    return {
+      mode: (config.buyMode as 'smart' | 'follow') || 'smart',
+      followTarget: config.buyFollowTarget,
     };
   }
 }
