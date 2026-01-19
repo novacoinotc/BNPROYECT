@@ -68,10 +68,16 @@ export class SmartEngine {
    * Get recommended price using smart algorithm
    */
   async getPrice(asset: string, fiat: string): Promise<SmartResult | null> {
-    // Search type is from CLIENT perspective:
-    // - Our SELL ad → search with BUY → finds other sellers
-    // - Our BUY ad → search with SELL → finds other buyers
+    // API tradeType from USER perspective:
+    // - tradeType='BUY' returns ads from "Buy" tab (where users BUY from SELLERS)
+    // - tradeType='SELL' returns ads from "Sell" tab (where users SELL to BUYERS)
+    //
+    // Our positioning logic:
+    // - Our SELL ad → we compete with other SELLERS → search 'BUY' tab
+    // - Our BUY ad → we compete with other BUYERS → search 'SELL' tab
     const searchType = this.adType === 'SELL' ? TradeType.BUY : TradeType.SELL;
+
+    logger.info(`🔍 [SMART] Our ${this.adType} ad → searching '${searchType}' tab for ${asset}/${fiat}`);
 
     const ads = await this.client.searchAds({
       asset,
@@ -80,6 +86,10 @@ export class SmartEngine {
       page: 1,
       rows: 20,
     });
+
+    if (ads.length > 0) {
+      logger.info(`🔍 [SMART] Found ${ads.length} ads. Top 3: ${ads.slice(0, 3).map(a => `${a.advertiser.nickName}@${a.price}`).join(', ')}`);
+    }
 
     if (ads.length === 0) {
       return null;

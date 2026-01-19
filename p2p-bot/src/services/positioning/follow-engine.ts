@@ -4,6 +4,7 @@
 
 import { getBinanceClient, BinanceC2CClient } from '../binance-client.js';
 import { AdData, TradeType } from '../../types/binance.js';
+import { logger } from '../../utils/logger.js';
 
 export interface FollowConfig {
   targetNickName: string;
@@ -42,10 +43,16 @@ export class FollowEngine {
       return null;
     }
 
-    // Search type is from CLIENT perspective:
-    // - Our SELL ad → search with BUY → finds other sellers
-    // - Our BUY ad → search with SELL → finds other buyers
+    // API tradeType from USER perspective:
+    // - tradeType='BUY' returns ads from "Buy" tab (SELLERS)
+    // - tradeType='SELL' returns ads from "Sell" tab (BUYERS)
+    //
+    // Our positioning logic:
+    // - Our SELL ad → we compete with other SELLERS → search 'BUY' tab
+    // - Our BUY ad → we compete with other BUYERS → search 'SELL' tab
     const searchType = this.adType === 'SELL' ? TradeType.BUY : TradeType.SELL;
+
+    logger.info(`🔍 [FOLLOW] Our ${this.adType} ad → searching '${searchType}' tab for "${this.config.targetNickName}" in ${asset}/${fiat}`);
 
     // Search multiple pages to find target
     let targetAd: AdData | null = null;
