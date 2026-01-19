@@ -90,7 +90,7 @@ export default function PositioningPage() {
 
     setLoadingSellers(prev => ({ ...prev, [cacheKey]: true }));
     try {
-      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${searchType}&rows=10`);
+      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${searchType}&rows=20`);
       const data = await response.json();
       if (data.success) {
         setSellersCache(prev => ({ ...prev, [cacheKey]: data.sellers }));
@@ -309,8 +309,11 @@ export default function PositioningPage() {
                       <div className="animate-spin h-4 w-4 border-2 border-primary-500 border-t-transparent rounded-full"></div>
                     </div>
                   ) : sellers.length > 0 ? (
-                    <div className="space-y-1 max-h-32 sm:max-h-40 overflow-y-auto">
-                      {sellers.slice(0, 5).map((seller, idx) => (
+                    <div className="space-y-1 max-h-48 sm:max-h-64 overflow-y-auto">
+                      {sellers
+                        .filter(s => !ignoredAdvertisers.some(ig => ig.toLowerCase() === s.nickName.toLowerCase()))
+                        .slice(0, 15)
+                        .map((seller, idx) => (
                         <button
                           key={seller.userNo}
                           onClick={() => updateAssetConfig(asset, tradeType, { followTarget: seller.nickName })}
