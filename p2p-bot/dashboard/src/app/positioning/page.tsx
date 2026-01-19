@@ -500,6 +500,7 @@ export default function PositioningPage() {
             />
           </div>
         </div>
+        </div>
       </details>
 
       {/* Save Button - Fixed at bottom on mobile */}
