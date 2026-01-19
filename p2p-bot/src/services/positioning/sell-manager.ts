@@ -276,9 +276,10 @@ export class SellAdManager extends EventEmitter {
     }
 
     // Check if update needed (diff >= 0.01)
-    const diff = Math.abs(ad.currentPrice - targetPrice);
+    // Round to 2 decimals to avoid floating point errors (e.g., 17.74-17.73=0.00999... instead of 0.01)
+    const diff = Math.round(Math.abs(ad.currentPrice - targetPrice) * 100) / 100;
     if (diff < 0.01) {
-      logger.debug(`✓ [SELL] ${ad.asset}: Sin cambio (actual=${ad.currentPrice.toFixed(2)}, target=${targetPrice.toFixed(2)}, diff=${diff.toFixed(4)})`);
+      logger.debug(`✓ [SELL] ${ad.asset}: Sin cambio (actual=${ad.currentPrice.toFixed(2)}, target=${targetPrice.toFixed(2)}, diff=${diff.toFixed(2)})`);
       return;
     }
 
