@@ -189,6 +189,12 @@ export class SellAdManager extends EventEmitter {
         undercutCents: dbConfig.undercutCents,
         matchPrice: this.config.matchPrice,
         myNickName: process.env.BINANCE_MY_NICKNAME || undefined,
+        ignoredAdvertisers: dbConfig.ignoredAdvertisers || [],
+      });
+
+      // Update follow engine with ignored advertisers
+      this.followEngine.updateConfig({
+        ignoredAdvertisers: dbConfig.ignoredAdvertisers || [],
       });
 
       if (oldMode !== this.config.mode) {

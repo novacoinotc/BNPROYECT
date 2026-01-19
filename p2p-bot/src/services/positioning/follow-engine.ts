@@ -10,6 +10,7 @@ export interface FollowConfig {
   targetNickName: string;
   undercutCents: number;
   matchPrice: boolean; // true = exact match, false = undercut
+  ignoredAdvertisers?: string[]; // List of nicknames to always ignore
 }
 
 export interface FollowResult {
@@ -41,6 +42,17 @@ export class FollowEngine {
   async getPrice(asset: string, fiat: string): Promise<FollowResult | null> {
     if (!this.config.targetNickName) {
       return null;
+    }
+
+    // Check if target is in ignored list (warn but don't block - user explicitly set this target)
+    if (this.config.ignoredAdvertisers?.length) {
+      const isIgnored = this.config.ignoredAdvertisers.some(
+        ignored => ignored.toLowerCase() === this.config.targetNickName.toLowerCase()
+      );
+      if (isIgnored) {
+        logger.warn(`⚠️ [FOLLOW] Target "${this.config.targetNickName}" is in ignored list - skipping`);
+        return null;
+      }
     }
 
     // API tradeType from USER perspective:

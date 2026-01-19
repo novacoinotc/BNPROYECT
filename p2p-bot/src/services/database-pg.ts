@@ -1638,6 +1638,8 @@ export interface BotConfig {
   // Auto-message
   autoMessageEnabled: boolean;
   autoMessageText: string | null;
+  // Ignored advertisers (global list)
+  ignoredAdvertisers: string[];
 }
 
 /**
@@ -1679,6 +1681,18 @@ export async function getBotConfig(): Promise<BotConfig> {
       }
     }
 
+    // Parse ignoredAdvertisers from JSON
+    let ignoredAdvertisers: string[] = [];
+    if (row?.ignoredAdvertisers) {
+      try {
+        ignoredAdvertisers = typeof row.ignoredAdvertisers === 'string'
+          ? JSON.parse(row.ignoredAdvertisers)
+          : row.ignoredAdvertisers;
+      } catch {
+        ignoredAdvertisers = [];
+      }
+    }
+
     return {
       releaseEnabled: row?.releaseEnabled ?? true,
       positioningEnabled: row?.positioningEnabled ?? false,
@@ -1707,6 +1721,8 @@ export async function getBotConfig(): Promise<BotConfig> {
       // Auto-message
       autoMessageEnabled: row?.autoMessageEnabled ?? false,
       autoMessageText: row?.autoMessageText ?? null,
+      // Ignored advertisers
+      ignoredAdvertisers,
     };
   } catch (error) {
     logger.warn({ error }, 'Failed to get bot config, using defaults');
@@ -1731,6 +1747,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       matchPrice: false,
       autoMessageEnabled: false,
       autoMessageText: null,
+      ignoredAdvertisers: [],
     };
   }
 }

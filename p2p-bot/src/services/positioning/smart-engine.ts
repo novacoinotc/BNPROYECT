@@ -14,6 +14,7 @@ export interface SmartConfig {
   matchPrice: boolean;         // true = exact match, false = undercut
   myNickName?: string;         // Our nickname to exclude from results
   minUserGrade: number;        // Minimum user grade (1=basic, 2=verified, 3+=advanced)
+  ignoredAdvertisers?: string[]; // List of nicknames to always ignore
 }
 
 export interface SmartResult {
@@ -103,11 +104,22 @@ export class SmartEngine {
       return null;
     }
 
-    // Filter out our own ads and apply quality filters
+    // Filter out our own ads, ignored advertisers, and apply quality filters
     const qualifiedAds = ads.filter(ad => {
+      const nickName = ad.advertiser.nickName;
       // Exclude our own ads by nickname
-      if (this.config.myNickName && ad.advertiser.nickName === this.config.myNickName) {
+      if (this.config.myNickName && nickName === this.config.myNickName) {
         return false;
+      }
+      // Exclude ignored advertisers (case-insensitive)
+      if (this.config.ignoredAdvertisers?.length) {
+        const isIgnored = this.config.ignoredAdvertisers.some(
+          ignored => ignored.toLowerCase() === nickName.toLowerCase()
+        );
+        if (isIgnored) {
+          logger.debug(`🚫 [SMART] Ignoring advertiser: ${nickName}`);
+          return false;
+        }
       }
       return this.passesFilters(ad);
     });

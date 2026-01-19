@@ -36,6 +36,7 @@ interface BotConfig {
   releaseLastActive: string | null;
   positioningLastActive: string | null;
   updatedAt: string;
+  ignoredAdvertisers: string[];
 }
 
 const ASSETS = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB'];
@@ -56,6 +57,10 @@ export default function PositioningPage() {
   // Global defaults for new configs
   const [globalMinOrderCount, setGlobalMinOrderCount] = useState(10);
   const [globalMinSurplus, setGlobalMinSurplus] = useState(100);
+
+  // Ignored advertisers
+  const [ignoredAdvertisers, setIgnoredAdvertisers] = useState<string[]>([]);
+  const [newIgnoredName, setNewIgnoredName] = useState('');
 
   const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
     const key = `${tradeType}:${asset}`;
@@ -106,6 +111,7 @@ export default function PositioningPage() {
         setPositioningConfigs(data.config.positioningConfigs || {});
         setGlobalMinOrderCount(data.config.smartMinOrderCount ?? 10);
         setGlobalMinSurplus(data.config.smartMinSurplus ?? 100);
+        setIgnoredAdvertisers(data.config.ignoredAdvertisers || []);
       }
     } catch (err) {
       console.error(err);
@@ -160,7 +166,21 @@ export default function PositioningPage() {
       // Global defaults (used when per-asset not set)
       smartMinOrderCount: globalMinOrderCount,
       smartMinSurplus: globalMinSurplus,
+      // Ignored advertisers
+      ignoredAdvertisers,
     });
+  };
+
+  const addIgnoredAdvertiser = () => {
+    const name = newIgnoredName.trim();
+    if (name && !ignoredAdvertisers.includes(name)) {
+      setIgnoredAdvertisers([...ignoredAdvertisers, name]);
+      setNewIgnoredName('');
+    }
+  };
+
+  const removeIgnoredAdvertiser = (name: string) => {
+    setIgnoredAdvertisers(ignoredAdvertisers.filter(n => n !== name));
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -500,6 +520,59 @@ export default function PositioningPage() {
             />
           </div>
         </div>
+        </div>
+      </details>
+
+      {/* Ignored Advertisers */}
+      <details className="card">
+        <summary className="p-4 cursor-pointer flex items-center justify-between">
+          <h2 className="font-semibold text-white">🚫 Anunciantes Ignorados ({ignoredAdvertisers.length})</h2>
+          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </summary>
+        <div className="px-4 pb-4 pt-0">
+          <p className="text-xs text-gray-500 mb-3">
+            Estos anunciantes serán ignorados en Smart mode y Follow mode para todos los pares.
+          </p>
+
+          {/* Add new */}
+          <div className="flex gap-2 mb-3">
+            <input
+              type="text"
+              value={newIgnoredName}
+              onChange={(e) => setNewIgnoredName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addIgnoredAdvertiser()}
+              placeholder="Nombre del anunciante..."
+              className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
+            />
+            <button
+              onClick={addIgnoredAdvertiser}
+              disabled={!newIgnoredName.trim()}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm font-medium"
+            >
+              + Agregar
+            </button>
+          </div>
+
+          {/* List */}
+          {ignoredAdvertisers.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-3">No hay anunciantes ignorados</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto">
+              {ignoredAdvertisers.map((name) => (
+                <div key={name} className="flex items-center justify-between p-2 bg-gray-700/50 rounded-lg">
+                  <span className="text-white text-sm">{name}</span>
+                  <button
+                    onClick={() => removeIgnoredAdvertiser(name)}
+                    className="text-red-400 hover:text-red-300 text-xs px-2 py-1"
+                  >
+                    ✕ Quitar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </details>
 
