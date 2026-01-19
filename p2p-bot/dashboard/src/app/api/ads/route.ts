@@ -198,10 +198,30 @@ function formatProxyResponse(data: any) {
     buyerBtcPositionLimit: ad.buyerBtcPositionLimit,
   }));
 
+  const buyAds = (data.buyAds || []).map((ad: any) => ({
+    advNo: ad.advNo,
+    asset: ad.asset,
+    fiatUnit: ad.fiatUnit,
+    price: ad.price,
+    priceType: ad.priceType,
+    priceFloatingRatio: ad.priceFloatingRatio,
+    minAmount: ad.minSingleTransAmount,
+    maxAmount: ad.maxSingleTransAmount,
+    surplusAmount: ad.surplusAmount,
+    tradeMethods: ad.tradeMethods?.map((m: any) => ({
+      payType: m.payType,
+      payBank: m.payBank,
+    })) || [],
+    status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
+    tradeType: 'BUY',
+    autoReplyMsg: ad.autoReplyMsg,
+    remarks: ad.remarks,
+  }));
+
   return {
     success: true,
-    sellAds,
-    buyAds: data.buyAds?.length || 0,
+    sellAds: sellAds.map((ad: any) => ({ ...ad, tradeType: 'SELL' })),
+    buyAds,
     merchant: data.merchant || {},
     source: data.source || 'proxy',
   };
@@ -230,6 +250,7 @@ function formatDirectResponse(adsData: any) {
         payBank: m.payBank,
       })) || [],
       status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
+      tradeType: 'SELL',
       autoReplyMsg: ad.autoReplyMsg,
       remarks: ad.remarks,
       buyerRegDaysLimit: ad.buyerRegDaysLimit,
@@ -237,7 +258,29 @@ function formatDirectResponse(adsData: any) {
       dynamicMaxSingleTransAmount: ad.dynamicMaxSingleTransAmount,
       dynamicMaxSingleTransQuantity: ad.dynamicMaxSingleTransQuantity,
     })),
-    buyAds: buyAds.length,
+    buyAds: buyAds.map((ad: any) => ({
+      advNo: ad.advNo,
+      asset: ad.asset,
+      fiatUnit: ad.fiatUnit,
+      price: ad.price,
+      priceType: ad.priceType,
+      priceFloatingRatio: ad.priceFloatingRatio,
+      minAmount: ad.minSingleTransAmount,
+      maxAmount: ad.maxSingleTransAmount,
+      surplusAmount: ad.surplusAmount,
+      tradeMethods: ad.tradeMethods?.map((m: any) => ({
+        payType: m.payType,
+        payBank: m.payBank,
+      })) || [],
+      status: ad.advStatus === 1 ? 'ONLINE' : 'OFFLINE',
+      tradeType: 'BUY',
+      autoReplyMsg: ad.autoReplyMsg,
+      remarks: ad.remarks,
+      buyerRegDaysLimit: ad.buyerRegDaysLimit,
+      buyerBtcPositionLimit: ad.buyerBtcPositionLimit,
+      dynamicMaxSingleTransAmount: ad.dynamicMaxSingleTransAmount,
+      dynamicMaxSingleTransQuantity: ad.dynamicMaxSingleTransQuantity,
+    })),
     merchant: {
       monthFinishRate: merchant.monthFinishRate,
       monthOrderCount: merchant.monthOrderCount,
