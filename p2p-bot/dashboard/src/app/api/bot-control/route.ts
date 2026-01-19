@@ -202,6 +202,12 @@ export async function POST(request: NextRequest) {
       values.push(body.autoMessageText || null);
     }
 
+    // Ignored advertisers (JSONB array)
+    if (Array.isArray(body.ignoredAdvertisers)) {
+      updates.push(`"ignoredAdvertisers" = $${paramIndex++}`);
+      values.push(JSON.stringify(body.ignoredAdvertisers));
+    }
+
     if (updates.length === 0) {
       return NextResponse.json(
         { success: false, error: 'No updates provided' },
