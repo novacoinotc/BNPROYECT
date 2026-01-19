@@ -83,19 +83,37 @@ async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
   const ts = Date.now();
   const query = `timestamp=${ts}`;
 
+  const requestBody = { advNo, price: roundedPrice };
+
   try {
     const res = await fetch(
       `https://api.binance.com/sapi/v1/c2c/ads/update?${query}&signature=${signQuery(query)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': apiKey },
-        body: JSON.stringify({ advNo, price: roundedPrice }),
+        body: JSON.stringify(requestBody),
       }
     );
 
-    const data = await res.json() as any;
-    return data.success === true || data.code === '000000';
-  } catch {
+    const text = await res.text();
+
+    if (!text) {
+      logger.warn(`⚠️ [SELL] Empty API response for advNo=${advNo}`);
+      return false;
+    }
+
+    const data = JSON.parse(text);
+    const success = data.success === true || data.code === '000000';
+
+    if (success) {
+      logger.info(`✅ [SELL] API Update OK: advNo=${advNo} → $${roundedPrice}`);
+    } else {
+      logger.warn(`⚠️ [SELL] API Update FAILED: code=${data.code} msg=${data.msg || data.message || JSON.stringify(data)}`);
+    }
+
+    return success;
+  } catch (error: any) {
+    logger.error(`❌ [SELL] API Error: ${error.message}`);
     return false;
   }
 }
@@ -199,8 +217,13 @@ export class SellAdManager extends EventEmitter {
     for (const ad of sellAds) {
       const existing = this.ads.get(ad.advNo);
       if (existing) {
+        // Log if API returns different price than what we think we have
+        if (Math.abs(existing.currentPrice - ad.currentPrice) >= 0.01) {
+          logger.info(`🔄 [SELL] ${ad.asset} API price changed: ${existing.currentPrice.toFixed(2)} → ${ad.currentPrice.toFixed(2)}`);
+        }
         existing.currentPrice = ad.currentPrice;
       } else {
+        logger.info(`📌 [SELL] Discovered ad: ${ad.asset} @ ${ad.currentPrice.toFixed(2)}`);
         this.ads.set(ad.advNo, ad);
       }
     }
