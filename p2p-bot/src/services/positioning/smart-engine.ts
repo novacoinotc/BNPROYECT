@@ -5,6 +5,7 @@
 
 import { getBinanceClient, BinanceC2CClient } from '../binance-client.js';
 import { AdData, TradeType } from '../../types/binance.js';
+import { logger } from '../../utils/logger.js';
 
 export interface SmartConfig {
   minMonthOrderCount: number;  // Minimum completed orders
@@ -48,9 +49,16 @@ export class SmartEngine {
   private passesFilters(ad: AdData): boolean {
     const adv = ad.advertiser;
 
-    // Only check: orders completed and available volume
+    // Filter 1: Minimum orders completed this month
     if (adv.monthOrderCount < this.config.minMonthOrderCount) return false;
-    if (parseFloat(ad.surplusAmount) < this.config.minSurplusAmount) return false;
+
+    // Filter 2: Minimum available volume IN FIAT VALUE (price × crypto amount)
+    // This ensures the filter works correctly for all assets (BNB, BTC, etc.)
+    // where crypto units are much smaller than fiat values
+    const price = parseFloat(ad.price);
+    const surplusAmount = parseFloat(ad.surplusAmount);
+    const fiatValue = price * surplusAmount;
+    if (fiatValue < this.config.minSurplusAmount) return false;
 
     return true;
   }
