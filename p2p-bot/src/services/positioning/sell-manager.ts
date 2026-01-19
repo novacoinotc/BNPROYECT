@@ -228,12 +228,13 @@ export class SellAdManager extends EventEmitter {
 
     // Skip if this asset is disabled
     if (assetConfig.enabled === false) {
-      logger.debug(`[SELL] ${ad.asset} - Bot desactivado para este asset`);
+      // Log at INFO level so user knows it's disabled
+      logger.info(`⏸️ [SELL] ${ad.asset} - Desactivado (enabled=false)`);
       return;
     }
 
-    // Debug: config used for this asset
-    logger.debug(`[SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
+    // Log config used for this asset (INFO level for visibility)
+    logger.info(`🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';
@@ -250,6 +251,8 @@ export class SellAdManager extends EventEmitter {
       if (result?.success) {
         targetPrice = result.targetPrice;
         logInfo = `siguiendo ${result.targetNickName}@${result.targetFoundPrice}`;
+      } else {
+        logger.warn(`⚠️ [SELL] ${ad.asset}: Follow fallido - target "${assetConfig.followTarget}" no encontrado, usando Smart`);
       }
     }
 
@@ -267,11 +270,17 @@ export class SellAdManager extends EventEmitter {
       }
     }
 
-    if (targetPrice === null) return;
+    if (targetPrice === null) {
+      logger.warn(`⚠️ [SELL] ${ad.asset}: No se pudo calcular precio objetivo`);
+      return;
+    }
 
     // Check if update needed (diff >= 0.01)
     const diff = Math.abs(ad.currentPrice - targetPrice);
-    if (diff < 0.01) return;
+    if (diff < 0.01) {
+      logger.debug(`✓ [SELL] ${ad.asset}: Sin cambio (actual=${ad.currentPrice.toFixed(2)}, target=${targetPrice.toFixed(2)}, diff=${diff.toFixed(4)})`);
+      return;
+    }
 
     // Update price
     const success = await updateAdPrice(ad.advNo, targetPrice);
