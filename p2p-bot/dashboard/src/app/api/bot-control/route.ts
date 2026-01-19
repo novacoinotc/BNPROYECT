@@ -40,6 +40,18 @@ export async function GET() {
       }
     }
 
+    // Parse ignoredAdvertisers from JSONB
+    let ignoredAdvertisers: string[] = [];
+    if (config.ignoredAdvertisers) {
+      try {
+        ignoredAdvertisers = typeof config.ignoredAdvertisers === 'string'
+          ? JSON.parse(config.ignoredAdvertisers)
+          : config.ignoredAdvertisers;
+      } catch {
+        ignoredAdvertisers = [];
+      }
+    }
+
     return NextResponse.json({
       success: true,
       config: {
@@ -85,6 +97,9 @@ export async function GET() {
         positioningLastActive: config.positioningLastActive,
         updatedAt: config.updatedAt,
         updatedBy: config.updatedBy,
+
+        // Ignored advertisers
+        ignoredAdvertisers,
       },
     });
   } catch (error) {
