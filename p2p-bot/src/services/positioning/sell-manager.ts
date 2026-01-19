@@ -213,14 +213,12 @@ export class SellAdManager extends EventEmitter {
       }
     }
 
-    // Add or update
+    // Add or update - ALWAYS log current API price for debugging
     for (const ad of sellAds) {
       const existing = this.ads.get(ad.advNo);
       if (existing) {
-        // Log if API returns different price than what we think we have
-        if (Math.abs(existing.currentPrice - ad.currentPrice) >= 0.01) {
-          logger.info(`🔄 [SELL] ${ad.asset} API price changed: ${existing.currentPrice.toFixed(2)} → ${ad.currentPrice.toFixed(2)}`);
-        }
+        // Always log the price from API so we can verify updates took effect
+        logger.info(`📊 [SELL] ${ad.asset} API reports: $${ad.currentPrice.toFixed(2)} (local: $${existing.currentPrice.toFixed(2)})`);
         existing.currentPrice = ad.currentPrice;
       } else {
         logger.info(`📌 [SELL] Discovered ad: ${ad.asset} @ ${ad.currentPrice.toFixed(2)}`);
