@@ -170,6 +170,7 @@ export class SellAdManager extends EventEmitter {
         minSurplusAmount: dbConfig.smartMinSurplus,
         undercutCents: dbConfig.undercutCents,
         matchPrice: this.config.matchPrice,
+        myNickName: process.env.BINANCE_MY_NICKNAME || undefined,
       });
 
       if (oldMode !== this.config.mode) {

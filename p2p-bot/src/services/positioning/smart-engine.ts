@@ -12,6 +12,7 @@ export interface SmartConfig {
   minSurplusAmount: number;    // Minimum available volume
   undercutCents: number;
   matchPrice: boolean;         // true = exact match, false = undercut
+  myNickName?: string;         // Our nickname to exclude from results
 }
 
 export interface SmartResult {
@@ -84,8 +85,14 @@ export class SmartEngine {
       return null;
     }
 
-    // Filter and sort by price
-    const qualifiedAds = ads.filter(ad => this.passesFilters(ad));
+    // Filter out our own ads and apply quality filters
+    const qualifiedAds = ads.filter(ad => {
+      // Exclude our own ads by nickname
+      if (this.config.myNickName && ad.advertiser.nickName === this.config.myNickName) {
+        return false;
+      }
+      return this.passesFilters(ad);
+    });
 
     if (qualifiedAds.length === 0) {
       // No qualified competitors - use best available
