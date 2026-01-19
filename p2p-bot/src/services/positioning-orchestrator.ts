@@ -292,7 +292,8 @@ export class PositioningOrchestrator extends EventEmitter {
       analysis.currentPrice = this.currentPrice;
 
       // Check if price should be updated
-      const priceDiff = Math.abs(this.currentPrice - analysis.targetPrice);
+      // Round to 2 decimals to avoid floating point errors (e.g., 17.74-17.73=0.00999... instead of 0.01)
+      const priceDiff = Math.round(Math.abs(this.currentPrice - analysis.targetPrice) * 100) / 100;
       const threshold = this.currentPrice * this.PRICE_UPDATE_THRESHOLD;
       const shouldUpdate = priceDiff > threshold || this.currentPrice === 0;
 

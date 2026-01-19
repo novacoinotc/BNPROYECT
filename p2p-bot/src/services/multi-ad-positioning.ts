@@ -365,7 +365,8 @@ export class MultiAdPositioningManager extends EventEmitter {
     ad.targetPrice = analysis.targetPrice;
 
     // Check if price should be updated (more than 1 centavo difference)
-    const priceDiff = Math.abs(ad.currentPrice - analysis.targetPrice);
+    // Round to 2 decimals to avoid floating point errors (e.g., 17.74-17.73=0.00999... instead of 0.01)
+    const priceDiff = Math.round(Math.abs(ad.currentPrice - analysis.targetPrice) * 100) / 100;
     const shouldUpdate = priceDiff >= this.PRICE_UPDATE_THRESHOLD;
 
     if (shouldUpdate) {
