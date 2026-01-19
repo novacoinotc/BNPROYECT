@@ -14,6 +14,15 @@ const navItems = [
     ),
   },
   {
+    href: '/positioning',
+    label: 'Bot',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+      </svg>
+    ),
+  },
+  {
     href: '/orders',
     label: 'Ordenes',
     icon: (
@@ -41,15 +50,6 @@ const navItems = [
     ),
   },
   {
-    href: '/support-requests',
-    label: 'Ayuda',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-      </svg>
-    ),
-  },
-  {
     href: '/settings',
     label: 'Config',
     icon: (
@@ -67,13 +67,13 @@ export function BottomNav() {
   return (
     <nav className="bottom-nav">
       <div className="max-w-lg mx-auto flex items-center justify-around py-2">
-        {/* Logo */}
-        <div className="flex flex-col items-center px-3">
-          <div className="flex items-center gap-1.5 text-white font-bold text-sm">
+        {/* Logo - Hidden on very small screens */}
+        <div className="hidden xs:flex flex-col items-center px-2">
+          <div className="flex items-center gap-1 text-white font-bold text-sm">
             <span className="text-primary-500">P2P</span>
             <span className="text-gray-400 font-normal text-xs">BOT</span>
           </div>
-          <span className="text-[10px] text-gray-600 uppercase tracking-wider">Terminal</span>
+          <span className="text-[9px] text-gray-600 uppercase tracking-wider">Terminal</span>
         </div>
 
         {/* Nav Items */}
@@ -86,7 +86,7 @@ export function BottomNav() {
               className={`bottom-nav-item ${isActive ? 'active' : ''}`}
             >
               {item.icon}
-              <span className="text-[10px] mt-1 font-medium">{item.label}</span>
+              <span className="text-[10px] mt-0.5 font-medium">{item.label}</span>
             </Link>
           );
         })}
