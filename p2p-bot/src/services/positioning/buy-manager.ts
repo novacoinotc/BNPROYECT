@@ -55,14 +55,28 @@ async function fetchBuyAds(): Promise<BuyAd[]> {
     const data = JSON.parse(text);
     const allAds: any[] = [];
 
+    // Handle different API response formats
     if (Array.isArray(data.data)) {
+      // Direct array format
       allAds.push(...data.data);
-    } else if (data.data?.buyList) {
-      allAds.push(...data.data.buyList);
+    } else if (data.data) {
+      // Object format with lists
+      if (data.data.buyList) {
+        allAds.push(...data.data.buyList);
+      }
+      if (data.data.sellList) {
+        // Also check sellList in case BUY ads are mixed in
+        allAds.push(...data.data.sellList);
+      }
     }
 
+    // Log what we found
+    const buyCount = allAds.filter(ad => ad.tradeType === 'BUY').length;
+    const sellCount = allAds.filter(ad => ad.tradeType === 'SELL').length;
+    logger.info(`📦 [BUY] API returned ${allAds.length} total ads (${buyCount} BUY, ${sellCount} SELL)`);
+
     // Filter only online BUY ads
-    return allAds
+    const filtered = allAds
       .filter(ad => ad.tradeType === 'BUY' && ad.advStatus === 1)
       .map(ad => ({
         advNo: ad.advNo,
@@ -71,6 +85,9 @@ async function fetchBuyAds(): Promise<BuyAd[]> {
         currentPrice: parseFloat(ad.price),
         lastUpdate: null,
       }));
+
+    logger.info(`📦 [BUY] Found ${filtered.length} active BUY ads`);
+    return filtered;
   } catch (error: any) {
     logger.error(`❌ [BUY] Error fetching ads: ${error.message}`);
     return [];
@@ -281,10 +298,12 @@ export class BuyAdManager extends EventEmitter {
 
     // Fallback to smart mode
     if (targetPrice === null) {
-      // Update smart engine with per-asset price strategy
+      // Update smart engine with per-asset config (price strategy + smart filters)
       this.smartEngine.updateConfig({
         undercutCents: assetConfig.undercutCents,
         matchPrice: assetConfig.matchPrice,
+        minMonthOrderCount: assetConfig.smartMinOrderCount,
+        minSurplusAmount: assetConfig.smartMinSurplus,
       });
       const result = await this.smartEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {

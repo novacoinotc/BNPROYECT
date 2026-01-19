@@ -1601,6 +1601,9 @@ export interface AssetPositioningConfig {
   // Per-asset price strategy
   matchPrice: boolean;      // true = exact match, false = undercut by cents
   undercutCents: number;    // Cents to undercut competitor
+  // Per-asset smart filters
+  smartMinOrderCount: number;  // Min monthly orders for smart mode
+  smartMinSurplus: number;     // Min volume in FIAT (e.g., MXN) for smart mode
 }
 
 // Map of "TRADE_TYPE:ASSET" -> config (e.g., "SELL:USDT", "BUY:BTC")
@@ -1752,6 +1755,9 @@ export function getPositioningConfigForAd(
       // Per-asset price strategy (fallback to global defaults)
       matchPrice: assetConfig.matchPrice ?? config.matchPrice ?? false,
       undercutCents: assetConfig.undercutCents ?? config.undercutCents ?? 1,
+      // Per-asset smart filters (fallback to global defaults)
+      smartMinOrderCount: assetConfig.smartMinOrderCount ?? config.smartMinOrderCount ?? 10,
+      smartMinSurplus: assetConfig.smartMinSurplus ?? config.smartMinSurplus ?? 100,
     };
   }
 
@@ -1763,6 +1769,8 @@ export function getPositioningConfigForAd(
       followTarget: config.sellFollowTarget,
       matchPrice: config.matchPrice ?? false,
       undercutCents: config.undercutCents ?? 1,
+      smartMinOrderCount: config.smartMinOrderCount ?? 10,
+      smartMinSurplus: config.smartMinSurplus ?? 100,
     };
   } else {
     return {
@@ -1771,6 +1779,8 @@ export function getPositioningConfigForAd(
       followTarget: config.buyFollowTarget,
       matchPrice: config.matchPrice ?? false,
       undercutCents: config.undercutCents ?? 1,
+      smartMinOrderCount: config.smartMinOrderCount ?? 10,
+      smartMinSurplus: config.smartMinSurplus ?? 100,
     };
   }
 }

@@ -9,10 +9,11 @@ import { logger } from '../../utils/logger.js';
 
 export interface SmartConfig {
   minMonthOrderCount: number;  // Minimum completed orders
-  minSurplusAmount: number;    // Minimum available volume
+  minSurplusAmount: number;    // Minimum available volume (in FIAT, e.g., MXN)
   undercutCents: number;
   matchPrice: boolean;         // true = exact match, false = undercut
   myNickName?: string;         // Our nickname to exclude from results
+  minUserGrade: number;        // Minimum user grade (1=basic, 2=verified, 3+=advanced)
 }
 
 export interface SmartResult {
@@ -24,9 +25,10 @@ export interface SmartResult {
 
 const DEFAULT_CONFIG: SmartConfig = {
   minMonthOrderCount: 10,
-  minSurplusAmount: 100,
+  minSurplusAmount: 100,  // In FIAT (e.g., MXN) - calculated as price × crypto amount
   undercutCents: 1,
   matchPrice: false,
+  minUserGrade: 2,  // 1=basic, 2=verified, 3+=advanced (filters out unverified users)
 };
 
 export class SmartEngine {
@@ -45,15 +47,21 @@ export class SmartEngine {
   }
 
   /**
-   * Check if an ad passes filters (simplified to only 2 criteria)
+   * Check if an ad passes filters
    */
   private passesFilters(ad: AdData): boolean {
     const adv = ad.advertiser;
 
-    // Filter 1: Minimum orders completed this month
+    // Filter 1: Minimum user grade (verification level)
+    // Grade 1 = basic/unverified, Grade 2+ = verified merchants
+    if (adv.userGrade < this.config.minUserGrade) {
+      return false;
+    }
+
+    // Filter 2: Minimum orders completed this month
     if (adv.monthOrderCount < this.config.minMonthOrderCount) return false;
 
-    // Filter 2: Minimum available volume IN FIAT VALUE (price × crypto amount)
+    // Filter 3: Minimum available volume IN FIAT VALUE (price × crypto amount)
     // This ensures the filter works correctly for all assets (BNB, BTC, etc.)
     // where crypto units are much smaller than fiat values
     const price = parseFloat(ad.price);
@@ -88,7 +96,7 @@ export class SmartEngine {
     });
 
     if (ads.length > 0) {
-      logger.info(`🔍 [SMART] Found ${ads.length} ads. Top 3: ${ads.slice(0, 3).map(a => `${a.advertiser.nickName}@${a.price}`).join(', ')}`);
+      logger.info(`🔍 [SMART] Found ${ads.length} ads. Top 5: ${ads.slice(0, 5).map(a => `${a.advertiser.nickName}(G${a.advertiser.userGrade})@${a.price}`).join(', ')}`);
     }
 
     if (ads.length === 0) {
@@ -103,6 +111,10 @@ export class SmartEngine {
       }
       return this.passesFilters(ad);
     });
+
+    // Log filter results
+    const verifiedCount = ads.filter(a => a.advertiser.userGrade >= this.config.minUserGrade).length;
+    logger.info(`🔍 [SMART] Filters: ${verifiedCount} Grade${this.config.minUserGrade}+, ${qualifiedAds.length} passed all (minOrders=${this.config.minMonthOrderCount}, minVolume=${this.config.minSurplusAmount} MXN)`);
 
     if (qualifiedAds.length === 0) {
       // No qualified competitors - use best available

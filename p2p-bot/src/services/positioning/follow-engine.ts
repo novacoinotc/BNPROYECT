@@ -80,10 +80,12 @@ export class FollowEngine {
     }
 
     if (!targetAd) {
+      logger.warn(`⚠️ [FOLLOW] Target "${this.config.targetNickName}" NOT FOUND in ${asset}/${fiat} (searched 3 pages)`);
       return null;
     }
 
     const targetPrice = parseFloat(targetAd.price);
+    logger.info(`✅ [FOLLOW] Found "${targetAd.advertiser.nickName}" at $${targetPrice.toFixed(2)} in ${asset}/${fiat}`);
 
     // If matchPrice is true, use exact same price
     // Otherwise, undercut by the configured cents

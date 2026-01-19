@@ -279,10 +279,12 @@ export class SellAdManager extends EventEmitter {
 
     // Fallback to smart mode
     if (targetPrice === null) {
-      // Update smart engine with per-asset price strategy
+      // Update smart engine with per-asset config (price strategy + smart filters)
       this.smartEngine.updateConfig({
         undercutCents: assetConfig.undercutCents,
         matchPrice: assetConfig.matchPrice,
+        minMonthOrderCount: assetConfig.smartMinOrderCount,
+        minSurplusAmount: assetConfig.smartMinSurplus,
       });
       const result = await this.smartEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {

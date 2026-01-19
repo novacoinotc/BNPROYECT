@@ -330,7 +330,12 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // Check for AYUDA keyword in text messages (support request)
     if (event.type === 'message' && event.message && !event.message.self) {
       const content = (event.message.content || '').toUpperCase().trim();
+      // Log all incoming text messages for debugging
+      if (content) {
+        logger.info(`💬 [MESSAGE] Order ${event.message.orderNo}: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}" from ${event.message.fromNickName}`);
+      }
       if (content === 'AYUDA' || content.includes('AYUDA')) {
+        logger.info(`🆘 [SUPPORT] Detected AYUDA in order ${event.message.orderNo}`);
         await this.handleSupportRequest(event.message);
       }
     }

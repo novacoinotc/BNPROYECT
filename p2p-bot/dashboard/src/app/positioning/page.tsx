@@ -18,6 +18,9 @@ interface AssetPositioningConfig {
   followTarget: string | null;
   matchPrice: boolean;
   undercutCents: number;
+  // Per-asset smart filters
+  smartMinOrderCount: number;
+  smartMinSurplus: number;  // In FIAT (MXN) - calculated as price × crypto amount
 }
 
 type PositioningConfigsMap = Record<string, AssetPositioningConfig>;
@@ -50,13 +53,22 @@ export default function PositioningPage() {
   const [sellersCache, setSellersCache] = useState<Record<string, Seller[]>>({});
   const [loadingSellers, setLoadingSellers] = useState<Record<string, boolean>>({});
 
-  // Smart filters
-  const [minOrderCount, setMinOrderCount] = useState(10);
-  const [minSurplus, setMinSurplus] = useState(100);
+  // Global defaults for new configs
+  const [globalMinOrderCount, setGlobalMinOrderCount] = useState(10);
+  const [globalMinSurplus, setGlobalMinSurplus] = useState(100);
 
   const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
     const key = `${tradeType}:${asset}`;
-    return positioningConfigs[key] || { enabled: true, mode: 'smart', followTarget: null, matchPrice: false, undercutCents: 1 };
+    const stored = positioningConfigs[key];
+    return stored || {
+      enabled: true,
+      mode: 'smart',
+      followTarget: null,
+      matchPrice: false,
+      undercutCents: 1,
+      smartMinOrderCount: globalMinOrderCount,
+      smartMinSurplus: globalMinSurplus,
+    };
   };
 
   const updateAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY', updates: Partial<AssetPositioningConfig>) => {
@@ -92,8 +104,8 @@ export default function PositioningPage() {
       if (data.success) {
         setConfig(data.config);
         setPositioningConfigs(data.config.positioningConfigs || {});
-        setMinOrderCount(data.config.smartMinOrderCount ?? 10);
-        setMinSurplus(data.config.smartMinSurplus ?? 100);
+        setGlobalMinOrderCount(data.config.smartMinOrderCount ?? 10);
+        setGlobalMinSurplus(data.config.smartMinSurplus ?? 100);
       }
     } catch (err) {
       console.error(err);
@@ -145,8 +157,9 @@ export default function PositioningPage() {
   const saveAllConfig = () => {
     updateConfig({
       positioningConfigs,
-      smartMinOrderCount: minOrderCount,
-      smartMinSurplus: minSurplus,
+      // Global defaults (used when per-asset not set)
+      smartMinOrderCount: globalMinOrderCount,
+      smartMinSurplus: globalMinSurplus,
     });
   };
 
@@ -195,9 +208,14 @@ export default function PositioningPage() {
       }`}>
         {/* Header with toggle */}
         <div className="flex items-center justify-between mb-3">
-          <h3 className={`text-base sm:text-lg font-bold ${isSell ? 'text-emerald-400' : 'text-orange-400'}`}>
-            {isSell ? '💰 Venta' : '🛒 Compra'}
-          </h3>
+          <div>
+            <h3 className={`text-base sm:text-lg font-bold ${isSell ? 'text-emerald-400' : 'text-orange-400'}`}>
+              {isSell ? '💰 Venta' : '🛒 Compra'}
+            </h3>
+            <p className="text-[10px] text-gray-500">
+              {isSell ? 'Vendemos crypto (busca en tab Comprar)' : 'Compramos crypto (busca en tab Vender)'}
+            </p>
+          </div>
           <button
             onClick={toggleEnabled}
             className={`px-3 py-1.5 rounded-lg font-bold text-sm transition ${
@@ -302,10 +320,34 @@ export default function PositioningPage() {
               </div>
             )}
 
-            {/* Smart Mode */}
+            {/* Smart Mode - Filters */}
             {cfg.mode === 'smart' && (
-              <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
-                Busca el mejor precio automaticamente
+              <div className="space-y-2">
+                <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                  Busca el mejor precio entre comerciantes verificados
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Min. Ordenes</label>
+                    <input
+                      type="number"
+                      value={cfg.smartMinOrderCount ?? globalMinOrderCount}
+                      onChange={(e) => updateAssetConfig(asset, tradeType, { smartMinOrderCount: parseInt(e.target.value) || 10 })}
+                      className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                      min="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Min. Volumen (MXN)</label>
+                    <input
+                      type="number"
+                      value={cfg.smartMinSurplus ?? globalMinSurplus}
+                      onChange={(e) => updateAssetConfig(asset, tradeType, { smartMinSurplus: parseInt(e.target.value) || 100 })}
+                      className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                      min="0"
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
@@ -424,31 +466,35 @@ export default function PositioningPage() {
         <TradeConfig asset={selectedAsset} tradeType="BUY" />
       </div>
 
-      {/* Smart Filters - Collapsible on mobile */}
+      {/* Smart Filters Global Defaults - Collapsible on mobile */}
       <details className="card">
         <summary className="p-4 cursor-pointer flex items-center justify-between">
-          <h2 className="font-semibold text-white">Filtros Smart</h2>
+          <h2 className="font-semibold text-white">Filtros Smart (Defaults)</h2>
           <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </summary>
-        <div className="px-4 pb-4 pt-0 grid grid-cols-2 gap-4">
+        <div className="px-4 pb-4 pt-0">
+          <p className="text-xs text-gray-500 mb-3">
+            Valores por defecto. Cada par puede tener sus propios filtros arriba.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Min. Ordenes</label>
             <input
               type="number"
-              value={minOrderCount}
-              onChange={(e) => setMinOrderCount(parseInt(e.target.value) || 0)}
+              value={globalMinOrderCount}
+              onChange={(e) => setGlobalMinOrderCount(parseInt(e.target.value) || 0)}
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
               min="0"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Min. Volumen</label>
+            <label className="block text-xs text-gray-400 mb-1">Min. Volumen (MXN)</label>
             <input
               type="number"
-              value={minSurplus}
-              onChange={(e) => setMinSurplus(parseInt(e.target.value) || 0)}
+              value={globalMinSurplus}
+              onChange={(e) => setGlobalMinSurplus(parseInt(e.target.value) || 0)}
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
               min="0"
             />
