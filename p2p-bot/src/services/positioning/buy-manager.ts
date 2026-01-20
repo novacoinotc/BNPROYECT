@@ -285,7 +285,7 @@ export class BuyAdManager extends EventEmitter {
     let targetPrice: number | null = null;
     let logInfo = '';
 
-    // Try follow mode first
+    // Follow mode - if target not found, keep current price (NO automatic fallback to smart)
     if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
       // Update follow engine with per-asset config (including per-asset price strategy)
       this.followEngine.updateConfig({
@@ -298,12 +298,14 @@ export class BuyAdManager extends EventEmitter {
         targetPrice = result.targetPrice;
         logInfo = `siguiendo ${result.targetNickName}@${result.targetFoundPrice}`;
       } else {
-        logger.warn(`⚠️ [BUY] ${ad.asset}: Follow fallido - target "${assetConfig.followTarget}" no encontrado, usando Smart`);
+        // Target not found - keep current price, don't switch to smart mode
+        logger.warn(`⚠️ [BUY] ${ad.asset}: Target "${assetConfig.followTarget}" no encontrado/offline - manteniendo precio actual $${ad.currentPrice.toFixed(2)}`);
+        return; // Exit without changing price
       }
     }
 
-    // Fallback to smart mode
-    if (targetPrice === null) {
+    // Smart mode - only if explicitly configured as smart (not as fallback)
+    if (assetConfig.mode === 'smart') {
       // Update smart engine with per-asset config (price strategy + smart filters)
       this.smartEngine.updateConfig({
         undercutCents: assetConfig.undercutCents,
