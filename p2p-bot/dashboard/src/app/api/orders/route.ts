@@ -120,6 +120,7 @@ export async function GET(request: NextRequest) {
         totalPrice: true,
         unitPrice: true,
         status: true,
+        buyerUserNo: true,
         buyerNickName: true,
         buyerRealName: true,
         binanceCreateTime: true,

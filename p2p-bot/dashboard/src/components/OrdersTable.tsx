@@ -33,6 +33,7 @@ interface Order {
   status: string;
   totalPrice: string;
   asset: string;
+  buyerUserNo: string;
   buyerNickName: string;
   buyerRealName: string | null;
   binanceCreateTime: string;
@@ -778,11 +779,17 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                                     e.stopPropagation();
                                     if (!confirm(`Agregar "${order.buyerNickName}" a compradores confiables?`)) return;
                                     try {
+                                      // buyerUserNo is required for security
+                                      if (!order.buyerUserNo) {
+                                        alert('buyerUserNo no disponible - la orden puede ser antigua');
+                                        return;
+                                      }
                                       const response = await fetch('/api/trusted-buyers', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({
                                           counterPartNickName: order.buyerNickName,
+                                          buyerUserNo: order.buyerUserNo,
                                           realName: order.buyerRealName,
                                           verifiedBy: 'Dashboard',
                                           notes: `Verificado en orden ${order.orderNumber}`,
