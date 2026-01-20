@@ -1,7 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { Pool } from 'pg';
 
-// Railway proxy URL - bypasses Binance geo-restriction
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+// Fallback Railway proxy URL
 const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
+
+// Get bot URL for the logged-in merchant
+async function getMerchantBotUrl(merchantId: string): Promise<string | null> {
+  try {
+    const result = await pool.query(
+      'SELECT "botApiUrl" FROM "Merchant" WHERE id = $1',
+      [merchantId]
+    );
+    return result.rows[0]?.botApiUrl || null;
+  } catch (error) {
+    console.error('Error getting merchant bot URL:', error);
+    return null;
+  }
+}
 
 // Binance API configuration - support both env var names
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
@@ -32,13 +54,15 @@ function buildSignedQuery(params: Record<string, any> = {}): string {
 }
 
 // Try Railway proxy first (bypasses Binance geo-restriction from US Vercel servers)
-async function tryRailwayProxy(): Promise<{ success: boolean; data?: any; error?: string }> {
-  if (!RAILWAY_API_URL) {
-    return { success: false, error: 'RAILWAY_API_URL not configured' };
+async function tryRailwayProxy(botUrl?: string | null): Promise<{ success: boolean; data?: any; error?: string }> {
+  const url = botUrl || RAILWAY_API_URL;
+
+  if (!url) {
+    return { success: false, error: 'Bot API URL not configured' };
   }
 
   try {
-    const response = await fetch(`${RAILWAY_API_URL}/api/ads`, {
+    const response = await fetch(`${url}/api/ads`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -292,13 +316,22 @@ function formatDirectResponse(adsData: any) {
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Try Railway proxy first (bypasses geo-restriction)
-    const proxyResult = await tryRailwayProxy();
+    // Get the logged-in merchant's bot URL
+    const session = await getServerSession(authOptions);
+    let botUrl: string | null = null;
+
+    if (session?.user?.id) {
+      botUrl = await getMerchantBotUrl(session.user.id);
+      console.log(`Using bot URL for merchant ${session.user.id}: ${botUrl}`);
+    }
+
+    // 1. Try merchant's bot proxy first (bypasses geo-restriction)
+    const proxyResult = await tryRailwayProxy(botUrl);
     if (proxyResult.success && proxyResult.data) {
       return NextResponse.json(formatProxyResponse(proxyResult.data));
     }
 
-    console.log('Railway proxy failed, trying direct Binance API...');
+    console.log('Bot proxy failed, trying direct Binance API...');
 
     // 2. Fallback to direct Binance API
     const directResult = await getMyAdsDirect();
