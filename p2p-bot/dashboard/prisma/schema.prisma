@@ -108,7 +108,7 @@ model Order {
   status            OrderStatus
 
   // Buyer info
-  buyerUserNo       String
+  buyerUserNo       String?   // Nullable - comes from getOrderDetail, not initial list
   buyerNickName     String
   buyerRealName     String?
 
