@@ -635,7 +635,11 @@ export class BinanceC2CClient {
 
     const rawResponse = response as any;
 
-    // Normalize orderStatus and EXTRACT the buyer's real name from correct field
+    // Normalize orderStatus and EXTRACT the buyer's identity fields
+    // IMPORTANT: API returns 'maker' (us) and 'taker' (buyer) objects
+    // For SELL orders: taker is the buyer, maker is us (seller)
+    const takerUserNo = rawResponse.taker?.userNo || null;
+
     const normalizedOrder = {
       ...response,
       orderStatus: normalizeOrderStatus(response.orderStatus as unknown as number | string),
@@ -643,7 +647,19 @@ export class BinanceC2CClient {
       // This is the name we need for third-party payment verification
       buyerRealName: rawResponse.buyerName || null,
       sellerRealName: rawResponse.sellerName || null,
-    };
+      // IMPORTANT: Extract taker's userNo - this is the buyer's unique ID
+      // Use type assertion since we're adding a partial buyer object
+      buyer: {
+        userNo: takerUserNo,
+        nickName: rawResponse.buyerNickname || rawResponse.taker?.nickName || '',
+        realName: rawResponse.buyerName || rawResponse.taker?.realName || '',
+        // Default values for required fields in UserInfo
+        userType: rawResponse.taker?.merchantType || 'USER',
+        userGrade: rawResponse.taker?.userGrade || 0,
+        monthFinishRate: rawResponse.taker?.monthFinishRate || 0,
+        monthOrderCount: rawResponse.taker?.monthOrderCount || 0,
+      },
+    } as OrderData;
 
     // Log buyer name fields - this is critical for name verification
     logger.info({
@@ -659,23 +675,20 @@ export class BinanceC2CClient {
       counterPartNickName: rawResponse.counterPartNickName,
     }, '📋 [ORDER DETAIL] Buyer identity fields');
 
-    // Debug: Log full response structure including potential userNo fields
+    // Debug: Log full response structure including taker/maker objects
     logger.info({
       orderNumber,
-      responseKeys: Object.keys(rawResponse),
-      // Check all possible userNo field names
-      makerUserNo: rawResponse.makerUserNo,
-      takerUserNo: rawResponse.takerUserNo,
-      buyerUserNo: rawResponse.buyerUserNo,
-      sellerUserNo: rawResponse.sellerUserNo,
-      counterPartUserNo: rawResponse.counterPartUserNo,
-      userNo: rawResponse.userNo,
-      // Check nested objects
-      hasBuyerObject: !!rawResponse.buyer,
-      buyerObjectUserNo: rawResponse.buyer?.userNo,
-      hasSellerObject: !!rawResponse.seller,
-      sellerObjectUserNo: rawResponse.seller?.userNo,
-    }, '[API DEBUG] getOrderDetail - checking for userNo fields');
+      // Check taker (buyer) object - this is where userNo should be
+      hasTakerObject: !!rawResponse.taker,
+      takerUserNo: rawResponse.taker?.userNo,
+      takerNickName: rawResponse.taker?.nickName,
+      takerRealName: rawResponse.taker?.realName,
+      // Check maker (seller/us) object
+      hasMakerObject: !!rawResponse.maker,
+      makerUserNo: rawResponse.maker?.userNo,
+      // Final extracted value
+      extractedBuyerUserNo: takerUserNo,
+    }, '[API DEBUG] getOrderDetail - taker/maker userNo fields');
 
     return normalizedOrder;
   }
