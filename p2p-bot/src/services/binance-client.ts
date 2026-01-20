@@ -659,8 +659,23 @@ export class BinanceC2CClient {
       counterPartNickName: rawResponse.counterPartNickName,
     }, '📋 [ORDER DETAIL] Buyer identity fields');
 
-    // Debug: Log full response structure
-    logger.debug({ orderNumber, responseKeys: Object.keys(rawResponse) }, '[API DEBUG] getOrderDetail keys');
+    // Debug: Log full response structure including potential userNo fields
+    logger.info({
+      orderNumber,
+      responseKeys: Object.keys(rawResponse),
+      // Check all possible userNo field names
+      makerUserNo: rawResponse.makerUserNo,
+      takerUserNo: rawResponse.takerUserNo,
+      buyerUserNo: rawResponse.buyerUserNo,
+      sellerUserNo: rawResponse.sellerUserNo,
+      counterPartUserNo: rawResponse.counterPartUserNo,
+      userNo: rawResponse.userNo,
+      // Check nested objects
+      hasBuyerObject: !!rawResponse.buyer,
+      buyerObjectUserNo: rawResponse.buyer?.userNo,
+      hasSellerObject: !!rawResponse.seller,
+      sellerObjectUserNo: rawResponse.seller?.userNo,
+    }, '[API DEBUG] getOrderDetail - checking for userNo fields');
 
     return normalizedOrder;
   }
