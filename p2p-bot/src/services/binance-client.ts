@@ -676,19 +676,28 @@ export class BinanceC2CClient {
     }, '📋 [ORDER DETAIL] Buyer identity fields');
 
     // Debug: Log full response structure including taker/maker objects
+    // Also log ALL keys in taker object to find the userNo field
+    const takerKeys = rawResponse.taker ? Object.keys(rawResponse.taker) : [];
     logger.info({
       orderNumber,
       // Check taker (buyer) object - this is where userNo should be
       hasTakerObject: !!rawResponse.taker,
+      takerKeys: takerKeys.slice(0, 20), // First 20 keys
       takerUserNo: rawResponse.taker?.userNo,
+      takerUserId: rawResponse.taker?.userId,
       takerNickName: rawResponse.taker?.nickName,
       takerRealName: rawResponse.taker?.realName,
-      // Check maker (seller/us) object
-      hasMakerObject: !!rawResponse.maker,
-      makerUserNo: rawResponse.maker?.userNo,
+      // Check other possible ID fields in taker
+      takerId: rawResponse.taker?.id,
+      takerUserNumber: rawResponse.taker?.userNumber,
+      // Check top-level fields that might have buyer ID
+      buyerUserId: rawResponse.buyerUserId,
+      makerUserId: rawResponse.makerUserId,
+      takerUserIdTopLevel: rawResponse.takerUserId,
+      userId: rawResponse.userId,
       // Final extracted value
       extractedBuyerUserNo: takerUserNo,
-    }, '[API DEBUG] getOrderDetail - taker/maker userNo fields');
+    }, '[API DEBUG] getOrderDetail - checking ALL possible ID fields');
 
     return normalizedOrder;
   }
