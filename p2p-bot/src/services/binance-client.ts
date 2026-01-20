@@ -661,40 +661,6 @@ export class BinanceC2CClient {
       },
     } as OrderData;
 
-    // Log buyer name fields - this is critical for name verification
-    logger.info({
-      orderNumber,
-      status: normalizedOrder.orderStatus,
-      amount: normalizedOrder.totalPrice,
-      // The CORRECT fields for buyer identity:
-      buyerNickname: rawResponse.buyerNickname,
-      buyerName: rawResponse.buyerName, // ← THIS is the KYC verified real name
-      sellerNickname: rawResponse.sellerNickname,
-      sellerName: rawResponse.sellerName,
-      // For backwards compatibility, also check old field names
-      counterPartNickName: rawResponse.counterPartNickName,
-    }, '📋 [ORDER DETAIL] Buyer identity fields');
-
-    // Debug: Log ALL top-level keys of the response to find buyer ID
-    const allKeys = Object.keys(rawResponse).join(',');
-    logger.info(
-      `[API DEBUG] Order ${orderNumber} ALL KEYS: [${allKeys}]`
-    );
-    // Also log any field that might contain user ID
-    logger.info(
-      `[API DEBUG] Order ${orderNumber} ID FIELDS: ` +
-      `makerNo=${rawResponse.makerNo}, ` +
-      `takerNo=${rawResponse.takerNo}, ` +
-      `buyerNo=${rawResponse.buyerNo}, ` +
-      `sellerNo=${rawResponse.sellerNo}, ` +
-      `counterPartNo=${rawResponse.counterPartNo}, ` +
-      `makerUserNo=${rawResponse.makerUserNo}, ` +
-      `takerUserNo=${rawResponse.takerUserNo}, ` +
-      `advUserId=${rawResponse.advUserId}, ` +
-      `mainUserId=${rawResponse.mainUserId}, ` +
-      `userId=${rawResponse.userId}`
-    );
-
     return normalizedOrder;
   }
 
