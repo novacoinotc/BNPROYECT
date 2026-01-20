@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Pool } from 'pg';
+import { getMerchantContext } from '@/lib/merchant-context';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -9,20 +10,32 @@ const pool = new Pool({
 // GET - Get current bot configuration
 export async function GET() {
   try {
-    // Try to get existing config
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const merchantId = context.merchantId;
+
+    // Try to get existing config for this merchant
     let result = await pool.query(
-      `SELECT * FROM "BotConfig" WHERE id = 'main'`
+      `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
+      [merchantId]
     );
 
-    // If no config exists, create default
+    // If no config exists for this merchant, create default
     if (result.rows.length === 0) {
+      const configId = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
       await pool.query(
-        `INSERT INTO "BotConfig" (id, "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
-         VALUES ('main', true, false, 'off', NOW())
-         ON CONFLICT (id) DO NOTHING`
+        `INSERT INTO "BotConfig" (id, "merchantId", "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
+         VALUES ($1, $2, true, false, 'off', NOW())
+         ON CONFLICT ("merchantId") DO NOTHING`,
+        [configId, merchantId]
       );
       result = await pool.query(
-        `SELECT * FROM "BotConfig" WHERE id = 'main'`
+        `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
+        [merchantId]
       );
     }
 
@@ -114,6 +127,13 @@ export async function GET() {
 // POST - Update bot configuration
 export async function POST(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const merchantId = context.merchantId;
     const body = await request.json();
 
     // Build dynamic update query
@@ -233,17 +253,20 @@ export async function POST(request: NextRequest) {
     // Add updatedAt and updatedBy
     updates.push(`"updatedAt" = NOW()`);
     updates.push(`"updatedBy" = $${paramIndex++}`);
-    values.push('Dashboard');
+    values.push(context.name || 'Dashboard');
 
-    // Ensure config exists first
+    // Ensure config exists first for this merchant
+    const configId = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
     await pool.query(
-      `INSERT INTO "BotConfig" (id, "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
-       VALUES ('main', true, false, 'off', NOW())
-       ON CONFLICT (id) DO NOTHING`
+      `INSERT INTO "BotConfig" (id, "merchantId", "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
+       VALUES ($1, $2, true, false, 'off', NOW())
+       ON CONFLICT ("merchantId") DO NOTHING`,
+      [configId, merchantId]
     );
 
-    // Update config
-    const query = `UPDATE "BotConfig" SET ${updates.join(', ')} WHERE id = 'main' RETURNING *`;
+    // Update config for this merchant
+    values.push(merchantId);
+    const query = `UPDATE "BotConfig" SET ${updates.join(', ')} WHERE "merchantId" = $${paramIndex} RETURNING *`;
     const result = await pool.query(query, values);
 
     const config = result.rows[0];
@@ -251,9 +274,9 @@ export async function POST(request: NextRequest) {
     // Log the action
     const logId = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
     await pool.query(
-      `INSERT INTO "AuditLog" (id, action, details, success, "createdAt")
-       VALUES ($1, 'bot_config_changed', $2, true, NOW())`,
-      [logId, JSON.stringify(body)]
+      `INSERT INTO "AuditLog" (id, action, details, success, "merchantId", "createdAt")
+       VALUES ($1, 'bot_config_changed', $2, true, $3, NOW())`,
+      [logId, JSON.stringify(body), merchantId]
     );
 
     // Parse positioningConfigs from JSONB

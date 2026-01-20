@@ -649,9 +649,10 @@ export class WebhookReceiver extends EventEmitter {
       }, '💰 Bank payment received via webhook');
 
       // ALWAYS save to database for later matching
+      // In multi-tenant mode, payment is associated with merchant via MERCHANT_ID env var
       try {
         await db.savePayment(payload);
-        logger.info({ transactionId: payload.transactionId }, 'Payment saved to DB for matching');
+        logger.info({ transactionId: payload.transactionId, merchantId: process.env.MERCHANT_ID }, 'Payment saved to DB for matching');
       } catch (dbError) {
         logger.error({ error: dbError }, 'Failed to save payment to DB');
         // Continue - don't fail the webhook

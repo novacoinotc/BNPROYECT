@@ -1,6 +1,7 @@
 // =====================================================
 // DATABASE SERVICE (PostgreSQL native)
 // Using pg package instead of Prisma for Railway compatibility
+// Multi-Tenant: Uses MERCHANT_ID from environment
 // =====================================================
 
 import pg from 'pg';
@@ -38,6 +39,27 @@ function generateId(): string {
   const timestamp = Date.now().toString(36);
   const randomPart = Math.random().toString(36).substring(2, 15);
   return `c${timestamp}${randomPart}`;
+}
+
+// ==================== MULTI-TENANT SUPPORT ====================
+
+/**
+ * Get the current merchant ID from environment
+ * Each bot instance runs with its own MERCHANT_ID
+ */
+function getMerchantId(): string | null {
+  return process.env.MERCHANT_ID || null;
+}
+
+/**
+ * Validate that MERCHANT_ID is set (required for multi-tenant operations)
+ */
+function requireMerchantId(): string {
+  const merchantId = getMerchantId();
+  if (!merchantId) {
+    logger.warn('MERCHANT_ID not set - running in single-tenant mode');
+  }
+  return merchantId || '';
 }
 
 // ==================== CONNECTION ====================
@@ -117,6 +139,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
 
     // If no rows updated, insert new order
     if (updateResult.rowCount === 0) {
+      const merchantId = getMerchantId();
       await db.query(
         `INSERT INTO "Order" (
           id, "orderNumber", "advNo", "tradeType", asset, "fiatUnit",
@@ -124,8 +147,9 @@ export async function saveOrder(order: OrderData): Promise<void> {
           "buyerUserNo", "buyerNickName", "buyerRealName",
           "sellerUserNo", "sellerNickName",
           "binanceCreateTime", "confirmPayEndTime",
+          "merchantId",
           "createdAt", "updatedAt"
-        ) VALUES ($1, $2, $3, $4::"TradeType", $5, $6, $7, $8, $9, $10, $11::"OrderStatus", $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())`,
+        ) VALUES ($1, $2, $3, $4::"TradeType", $5, $6, $7, $8, $9, $10, $11::"OrderStatus", $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())`,
         [
           generateId(),
           order.orderNumber,
@@ -145,6 +169,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
           sellerNickName,
           new Date(order.createTime),
           order.confirmPayEndTime ? new Date(order.confirmPayEndTime) : null,
+          merchantId,
         ]
       );
     }
@@ -183,13 +208,14 @@ export async function getRecentOrders(limit: number = 50) {
 export async function savePayment(payment: BankWebhookPayload): Promise<string> {
   const db = getPool();
   const id = generateId();
+  const merchantId = getMerchantId();
 
   await db.query(
     `INSERT INTO "Payment" (
       id, "transactionId", amount, currency, "senderName",
       "senderAccount", "receiverAccount", concept, "bankReference",
-      "bankTimestamp", status, "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', NOW(), NOW())`,
+      "bankTimestamp", status, "merchantId", "createdAt", "updatedAt"
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11, NOW(), NOW())`,
     [
       id,
       payment.transactionId,
@@ -201,10 +227,11 @@ export async function savePayment(payment: BankWebhookPayload): Promise<string> 
       payment.concept || null,
       payment.bankReference || null,
       new Date(payment.timestamp),
+      merchantId,
     ]
   );
 
-  logger.debug({ transactionId: payment.transactionId }, 'Payment saved');
+  logger.debug({ transactionId: payment.transactionId, merchantId }, 'Payment saved');
   return id;
 }
 
@@ -285,10 +312,17 @@ export async function findUnmatchedPaymentsByAmount(
   createdAt: Date;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
   const tolerance = expectedAmount * (tolerancePercent / 100);
   const minAmount = expectedAmount - tolerance;
   const maxAmount = expectedAmount + tolerance;
   const minTime = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+
+  // Filter by merchantId if set (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $4' : '';
+  const params = merchantId
+    ? [minAmount, maxAmount, minTime, merchantId]
+    : [minAmount, maxAmount, minTime];
 
   const result = await db.query(
     `SELECT id, "transactionId", amount, "senderName", "senderAccount", "createdAt"
@@ -296,9 +330,10 @@ export async function findUnmatchedPaymentsByAmount(
      WHERE status = 'PENDING'
        AND amount BETWEEN $1 AND $2
        AND "createdAt" >= $3
+       ${merchantFilter}
      ORDER BY "createdAt" DESC
      LIMIT 10`,
-    [minAmount, maxAmount, minTime]
+    params
   );
 
   // PostgreSQL returns Decimal as string - convert to number
@@ -323,6 +358,7 @@ export async function findOrdersAwaitingPayment(
   createdAt: Date;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
   const tolerance = amount * (tolerancePercent / 100);
   const minAmount = amount - tolerance;
   const maxAmount = amount + tolerance;
@@ -332,7 +368,14 @@ export async function findOrdersAwaitingPayment(
     tolerancePercent,
     minAmount,
     maxAmount,
+    merchantId,
   }, 'Searching for orders awaiting payment');
+
+  // Filter by merchantId if set (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $3' : '';
+  const params = merchantId
+    ? [minAmount, maxAmount, merchantId]
+    : [minAmount, maxAmount];
 
   const result = await db.query(
     `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", "createdAt"
@@ -340,9 +383,10 @@ export async function findOrdersAwaitingPayment(
      WHERE status = 'PAID'::"OrderStatus"
        AND "totalPrice"::numeric BETWEEN $1 AND $2
        AND "releasedAt" IS NULL
+       ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
      LIMIT 10`,
-    [minAmount, maxAmount]
+    params
   );
 
   logger.info({
@@ -1452,6 +1496,7 @@ export async function isTrustedBuyer(
   buyerUserNo?: string | null
 ): Promise<boolean> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   // SECURITY: We REQUIRE buyerUserNo to check trusted status
   // Nickname and realName are NOT reliable identifiers
@@ -1464,10 +1509,13 @@ export async function isTrustedBuyer(
   }
 
   // Search ONLY by buyerUserNo - the only unique identifier
+  // Also filter by merchantId if in multi-tenant mode
+  const merchantFilter = merchantId ? ' AND "merchantId" = $2' : '';
   const query = `SELECT id, "counterPartNickName", "realName", "buyerUserNo" FROM "TrustedBuyer"
-                 WHERE "isActive" = true AND "buyerUserNo" = $1`;
+                 WHERE "isActive" = true AND "buyerUserNo" = $1${merchantFilter}`;
 
-  const result = await db.query(query, [buyerUserNo]);
+  const params = merchantId ? [buyerUserNo, merchantId] : [buyerUserNo];
+  const result = await db.query(query, params);
 
   if (result.rows.length > 0) {
     const matched = result.rows[0];
@@ -1575,33 +1623,45 @@ export async function removeTrustedBuyer(buyerUserNoOrId: string): Promise<boole
 }
 
 /**
- * List all trusted buyers
+ * List all trusted buyers (filtered by merchantId in multi-tenant mode)
  */
 export async function listTrustedBuyers(includeInactive: boolean = false): Promise<TrustedBuyerData[]> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
-  const query = includeInactive
-    ? `SELECT * FROM "TrustedBuyer" ORDER BY "verifiedAt" DESC`
-    : `SELECT * FROM "TrustedBuyer" WHERE "isActive" = true ORDER BY "verifiedAt" DESC`;
+  // Build query with optional merchantId filter
+  const merchantFilter = merchantId
+    ? (includeInactive ? `WHERE "merchantId" = $1` : `WHERE "isActive" = true AND "merchantId" = $1`)
+    : (includeInactive ? '' : `WHERE "isActive" = true`);
 
-  const result = await db.query(query);
+  const query = `SELECT * FROM "TrustedBuyer" ${merchantFilter} ORDER BY "verifiedAt" DESC`;
+  const params = merchantId ? [merchantId] : [];
+
+  const result = await db.query(query, params);
   return result.rows;
 }
 
 /**
  * Update trusted buyer stats after auto-release
- * Uses buyerUserNo as the primary identifier
+ * Uses buyerUserNo as the primary identifier (filtered by merchantId in multi-tenant mode)
  */
 export async function incrementTrustedBuyerStats(
   buyerUserNo: string,
   amountReleased: number
 ): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   if (!buyerUserNo) {
     logger.warn({ amountReleased }, 'Cannot update trusted buyer stats - no userNo provided');
     return;
   }
+
+  // Filter by merchantId if in multi-tenant mode
+  const merchantFilter = merchantId ? ' AND "merchantId" = $3' : '';
+  const params = merchantId
+    ? [amountReleased, buyerUserNo, merchantId]
+    : [amountReleased, buyerUserNo];
 
   await db.query(
     `UPDATE "TrustedBuyer" SET
@@ -1609,11 +1669,11 @@ export async function incrementTrustedBuyerStats(
       "totalAmountReleased" = "totalAmountReleased" + $1,
       "lastAutoReleaseAt" = NOW(),
       "updatedAt" = NOW()
-    WHERE "buyerUserNo" = $2`,
-    [amountReleased, buyerUserNo]
+    WHERE "buyerUserNo" = $2${merchantFilter}`,
+    params
   );
 
-  logger.debug({ buyerUserNo, amountReleased }, 'Trusted buyer stats updated');
+  logger.debug({ buyerUserNo, amountReleased, merchantId }, 'Trusted buyer stats updated');
 }
 
 // ==================== BOT CONFIG ====================
@@ -1673,23 +1733,47 @@ export interface BotConfig {
  */
 export async function getBotConfig(): Promise<BotConfig> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   try {
-    // Try to get existing config
-    let result = await db.query(
-      `SELECT * FROM "BotConfig" WHERE id = 'main'`
-    );
-
-    // If no config exists, create default
-    if (result.rows.length === 0) {
-      await db.query(
-        `INSERT INTO "BotConfig" (id, "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
-         VALUES ('main', true, false, 'off', NOW())
-         ON CONFLICT (id) DO NOTHING`
+    // Try to get existing config for this merchant (or 'main' for backwards compatibility)
+    let result;
+    if (merchantId) {
+      result = await db.query(
+        `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
+        [merchantId]
       );
+    } else {
+      // Backwards compatibility: use id = 'main' if no merchantId
       result = await db.query(
         `SELECT * FROM "BotConfig" WHERE id = 'main'`
       );
+    }
+
+    // If no config exists, create default
+    if (result.rows.length === 0) {
+      const configId = generateId();
+      if (merchantId) {
+        await db.query(
+          `INSERT INTO "BotConfig" (id, "merchantId", "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
+           VALUES ($1, $2, true, false, 'off', NOW())
+           ON CONFLICT ("merchantId") DO NOTHING`,
+          [configId, merchantId]
+        );
+        result = await db.query(
+          `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
+          [merchantId]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO "BotConfig" (id, "releaseEnabled", "positioningEnabled", "positioningMode", "updatedAt")
+           VALUES ('main', true, false, 'off', NOW())
+           ON CONFLICT (id) DO NOTHING`
+        );
+        result = await db.query(
+          `SELECT * FROM "BotConfig" WHERE id = 'main'`
+        );
+      }
     }
 
     const row = result.rows[0];

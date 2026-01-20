@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
@@ -34,6 +35,12 @@ async function syncOrdersFromRailway(): Promise<{ success: boolean; synced?: num
 
 export async function GET(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const limit = parseInt(searchParams.get('limit') || '50');
     const status = searchParams.get('status');
@@ -62,13 +69,16 @@ export async function GET(request: NextRequest) {
     // By default, hide dismissed orders unless showDismissed=true
     const dismissedFilter = showDismissed ? {} : { dismissed: false };
 
+    // Get merchant filter (admin sees all, merchant sees own)
+    const merchantFilter = getMerchantFilter(context);
+
     let whereClause: any;
     if (status) {
-      whereClause = { status: status as any, ...dismissedFilter };
+      whereClause = { status: status as any, ...dismissedFilter, ...merchantFilter };
     } else if (showAll) {
-      whereClause = dismissedFilter;
+      whereClause = { ...dismissedFilter, ...merchantFilter };
     } else {
-      whereClause = { status: { in: activeStatuses as any }, ...dismissedFilter };
+      whereClause = { status: { in: activeStatuses as any }, ...dismissedFilter, ...merchantFilter };
     }
 
     const orders = await prisma.order.findMany({
@@ -118,6 +128,12 @@ export async function GET(request: NextRequest) {
 // PATCH - Dismiss order (hide from dashboard)
 export async function PATCH(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { orderNumber, dismissed } = body;
 
@@ -125,6 +141,19 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { error: 'Missing orderNumber' },
         { status: 400 }
+      );
+    }
+
+    // Check if merchant has access to this order
+    const merchantFilter = getMerchantFilter(context);
+    const existingOrder = await prisma.order.findFirst({
+      where: { orderNumber, ...merchantFilter },
+    });
+
+    if (!existingOrder) {
+      return NextResponse.json(
+        { error: 'Order not found or access denied' },
+        { status: 404 }
       );
     }
 

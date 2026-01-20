@@ -1,22 +1,35 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 
 export async function GET() {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const merchantFilter = getMerchantFilter(context);
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Get today's stats
-    const todayStats = await prisma.dailyStats.findUnique({
-      where: { date: today },
+    // Get today's stats (use findFirst since unique now includes merchantId)
+    const todayStats = await prisma.dailyStats.findFirst({
+      where: {
+        date: today,
+        ...merchantFilter,
+      },
     });
 
     // Get active orders count
     const activeOrders = await prisma.order.count({
       where: {
         status: { in: ['PENDING', 'PAID'] },
+        ...merchantFilter,
       },
     });
 
@@ -24,11 +37,13 @@ export async function GET() {
     const pendingReleases = await prisma.payment.count({
       where: {
         status: 'MATCHED',
+        ...merchantFilter,
       },
     });
 
     // Get latest price
     const latestPrice = await prisma.priceHistory.findFirst({
+      where: merchantFilter,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -40,6 +55,7 @@ export async function GET() {
       where: {
         binanceCreateTime: { gte: thirtyDaysAgo },
         status: 'COMPLETED',
+        ...merchantFilter,
       },
     });
 
@@ -47,6 +63,7 @@ export async function GET() {
       where: {
         binanceCreateTime: { gte: thirtyDaysAgo },
         status: { notIn: ['PENDING'] },
+        ...merchantFilter,
       },
     });
 

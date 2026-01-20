@@ -1,6 +1,7 @@
 // =====================================================
 // PRISMA SCHEMA
 // PostgreSQL database for P2P Trading Bot
+// Multi-Merchant Architecture
 // =====================================================
 
 generator client {
@@ -46,6 +47,50 @@ enum VerificationMethod {
   MANUAL
 }
 
+// ==================== MERCHANT (NEW - Multi-tenant) ====================
+
+/// Merchant account - each merchant has their own bot and dashboard access
+model Merchant {
+  id                String   @id @default(cuid())
+  name              String
+  email             String   @unique
+  passwordHash      String
+
+  // Binance credentials (stored encrypted in env vars per Railway project)
+  // These fields are for reference/display only - actual keys are in Railway
+  binanceNickname   String?
+
+  // Bank account for webhook routing
+  clabeAccount      String?  @unique
+  bankName          String?
+
+  // Roles and status
+  isAdmin           Boolean  @default(false)
+  isActive          Boolean  @default(true)
+
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastLoginAt       DateTime?
+
+  // Relations
+  orders            Order[]
+  payments          Payment[]
+  botConfig         BotConfig?
+  trustedBuyers     TrustedBuyer[]
+  priceHistory      PriceHistory[]
+  dailyStats        DailyStats[]
+  buyerCache        BuyerCache[]
+  alerts            Alert[]
+  auditLogs         AuditLog[]
+  supportRequests   SupportRequest[]
+  chatMessages      ChatMessage[]
+
+  @@index([email])
+  @@index([clabeAccount])
+  @@index([isActive])
+}
+
 // ==================== MODELS ====================
 
 /// Stores all P2P orders
@@ -89,6 +134,10 @@ model Order {
   // Dashboard control
   dismissed         Boolean     @default(false)  // Hide from dashboard when stale
 
+  // Multi-tenant
+  merchantId        String?
+  merchant          Merchant?   @relation(fields: [merchantId], references: [id])
+
   // Relations
   payments          Payment[]
   messages          ChatMessage[]
@@ -98,6 +147,7 @@ model Order {
   @@index([binanceCreateTime])
   @@index([verificationStatus])
   @@index([dismissed])
+  @@index([merchantId])
 }
 
 /// Bank payments received via webhook
@@ -127,12 +177,17 @@ model Payment {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
+  // Multi-tenant
+  merchantId        String?
+  merchant          Merchant?       @relation(fields: [merchantId], references: [id])
+
   // Relations
   order             Order?          @relation(fields: [matchedOrderId], references: [id])
 
   @@index([status])
   @@index([amount])
   @@index([senderName])
+  @@index([merchantId])
 }
 
 /// Chat messages for audit trail
@@ -150,10 +205,15 @@ model ChatMessage {
   binanceTime   DateTime
   createdAt     DateTime @default(now())
 
+  // Multi-tenant
+  merchantId    String?
+  merchant      Merchant? @relation(fields: [merchantId], references: [id])
+
   // Relations
   order         Order    @relation(fields: [orderNumber], references: [orderNumber])
 
   @@index([orderNumber])
+  @@index([merchantId])
 }
 
 /// Price history for analytics
@@ -172,14 +232,19 @@ model PriceHistory {
 
   createdAt       DateTime @default(now())
 
+  // Multi-tenant
+  merchantId      String?
+  merchant        Merchant? @relation(fields: [merchantId], references: [id])
+
   @@index([asset, fiat])
   @@index([createdAt])
+  @@index([merchantId])
 }
 
 /// Daily statistics
 model DailyStats {
   id                String   @id @default(cuid())
-  date              DateTime @db.Date @unique
+  date              DateTime @db.Date
 
   // Volume
   totalOrders       Int      @default(0)
@@ -202,12 +267,19 @@ model DailyStats {
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  // Multi-tenant
+  merchantId        String?
+  merchant          Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@unique([date, merchantId])
+  @@index([merchantId])
 }
 
 /// Buyer reputation cache
 model BuyerCache {
   id                    String   @id @default(cuid())
-  userNo                String   @unique
+  userNo                String
   nickName              String
 
   completedOrders       Int      @default(0)
@@ -229,9 +301,15 @@ model BuyerCache {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  // Multi-tenant
+  merchantId            String?
+  merchant              Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@unique([userNo, merchantId])
   @@index([nickName])
   @@index([isTrusted])
   @@index([isBlocked])
+  @@index([merchantId])
 }
 
 /// Manually verified trusted buyers for auto-release
@@ -239,7 +317,7 @@ model BuyerCache {
 model TrustedBuyer {
   id                    String   @id @default(cuid())
   counterPartNickName   String             // Binance nickname (may have duplicates like "Use***")
-  buyerUserNo           String?  @unique   // Binance unique user ID - MOST SECURE identifier
+  buyerUserNo           String?            // Binance unique user ID - MOST SECURE identifier
   realName              String?            // Verified real name (for display only, NOT for matching!)
   verifiedAt            DateTime @default(now())
   verifiedBy            String?            // Admin who verified
@@ -256,9 +334,15 @@ model TrustedBuyer {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  // Multi-tenant
+  merchantId            String?
+  merchant              Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@unique([buyerUserNo, merchantId])
   @@index([counterPartNickName])
   @@index([buyerUserNo])
   @@index([isActive])
+  @@index([merchantId])
 }
 
 /// System alerts and notifications
@@ -277,10 +361,15 @@ model Alert {
 
   createdAt   DateTime @default(now())
 
+  // Multi-tenant
+  merchantId  String?
+  merchant    Merchant? @relation(fields: [merchantId], references: [id])
+
   @@index([type])
   @@index([severity])
   @@index([acknowledged])
   @@index([createdAt])
+  @@index([merchantId])
 }
 
 /// Audit log for all bot actions
@@ -294,9 +383,14 @@ model AuditLog {
 
   createdAt   DateTime @default(now())
 
+  // Multi-tenant
+  merchantId  String?
+  merchant    Merchant? @relation(fields: [merchantId], references: [id])
+
   @@index([action])
   @@index([orderNumber])
   @@index([createdAt])
+  @@index([merchantId])
 }
 
 /// Support requests from buyers who need additional help
@@ -318,14 +412,20 @@ model SupportRequest {
   closedAt          DateTime?
   notes             String?  // Notes from support
 
+  // Multi-tenant
+  merchantId        String?
+  merchant          Merchant? @relation(fields: [merchantId], references: [id])
+
   @@index([status])
   @@index([orderNumber])
   @@index([createdAt])
+  @@index([merchantId])
 }
 
 /// Bot configuration - kill switches and settings
+/// Now per-merchant instead of singleton
 model BotConfig {
-  id                  String   @id @default("main")
+  id                  String   @id @default(cuid())
 
   // Kill switches
   releaseEnabled      Boolean  @default(true)   // Auto-release bot on/off
@@ -338,6 +438,15 @@ model BotConfig {
   followTargetNickName String?
   followTargetUserNo   String?
 
+  // SELL/BUY mode config
+  sellMode            String?
+  sellFollowTarget    String?
+  buyMode             String?
+  buyFollowTarget     String?
+
+  // Per-asset positioning configs (JSON)
+  positioningConfigs  Json?
+
   // Smart mode filters
   smartMinUserGrade     Int      @default(2)
   smartMinFinishRate    Float    @default(0.90)
@@ -348,10 +457,14 @@ model BotConfig {
 
   // Positioning strategy
   undercutCents         Float    @default(1)    // Centavos a bajar del mejor competidor
+  matchPrice            Boolean  @default(false)
 
   // Auto-message after release
   autoMessageEnabled    Boolean  @default(false)
   autoMessageText       String?  @db.Text
+
+  // Ignored advertisers (JSON array)
+  ignoredAdvertisers    Json?
 
   // Status tracking
   releaseLastActive   DateTime?
@@ -360,4 +473,10 @@ model BotConfig {
   // Timestamps
   updatedAt           DateTime @updatedAt
   updatedBy           String?
+
+  // Multi-tenant - one config per merchant
+  merchantId          String?  @unique
+  merchant            Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
 }

@@ -1,16 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 
 // GET - List all trusted buyers
 export async function GET(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const includeInactive = searchParams.get('includeInactive') === 'true';
 
+    // Get merchant filter (admin sees all, merchant sees own)
+    const merchantFilter = getMerchantFilter(context);
+
     const trustedBuyers = await prisma.trustedBuyer.findMany({
-      where: includeInactive ? undefined : { isActive: true },
+      where: {
+        ...(includeInactive ? {} : { isActive: true }),
+        ...merchantFilter,
+      },
       orderBy: { verifiedAt: 'desc' },
     });
 
@@ -32,6 +45,12 @@ export async function GET(request: NextRequest) {
 // SECURITY: buyerUserNo is REQUIRED - it's the only reliable unique identifier
 export async function POST(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { counterPartNickName, buyerUserNo, realName, verifiedBy, notes } = body;
 
@@ -49,9 +68,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if buyerUserNo already exists (this is the UNIQUE identifier)
+    // Check if buyerUserNo already exists for this merchant (unique per merchant)
     const existing = await prisma.trustedBuyer.findFirst({
-      where: { buyerUserNo },
+      where: {
+        buyerUserNo,
+        merchantId: context.merchantId,
+      },
     });
 
     if (existing) {
@@ -83,15 +105,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create new entry with unique buyerUserNo
+    // Create new entry with unique buyerUserNo for this merchant
     const trustedBuyer = await prisma.trustedBuyer.create({
       data: {
         counterPartNickName,
         buyerUserNo,
         realName: realName || null,
-        verifiedBy: verifiedBy || null,
+        verifiedBy: verifiedBy || context.name,
         notes: notes || null,
         isActive: true,
+        merchantId: context.merchantId,
       },
     });
 
@@ -119,6 +142,12 @@ export async function POST(request: NextRequest) {
 // PATCH - Update a trusted buyer (e.g., add realName)
 export async function PATCH(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { id, realName, notes } = body;
 
@@ -126,6 +155,19 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'id is required' },
         { status: 400 }
+      );
+    }
+
+    // Check if merchant has access to this trusted buyer
+    const merchantFilter = getMerchantFilter(context);
+    const existingBuyer = await prisma.trustedBuyer.findFirst({
+      where: { id, ...merchantFilter },
+    });
+
+    if (!existingBuyer) {
+      return NextResponse.json(
+        { success: false, error: 'Trusted buyer not found or access denied' },
+        { status: 404 }
       );
     }
 
@@ -161,6 +203,12 @@ export async function PATCH(request: NextRequest) {
 // DELETE - Remove (deactivate) a trusted buyer
 export async function DELETE(request: NextRequest) {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { id } = body;
 
@@ -168,6 +216,19 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'id is required' },
         { status: 400 }
+      );
+    }
+
+    // Check if merchant has access to this trusted buyer
+    const merchantFilter = getMerchantFilter(context);
+    const existingBuyer = await prisma.trustedBuyer.findFirst({
+      where: { id, ...merchantFilter },
+    });
+
+    if (!existingBuyer) {
+      return NextResponse.json(
+        { success: false, error: 'Trusted buyer not found or access denied' },
+        { status: 404 }
       );
     }
 
