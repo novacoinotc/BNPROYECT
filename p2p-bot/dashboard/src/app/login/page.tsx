@@ -2,10 +2,9 @@
 
 import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/';
   const error = searchParams.get('error');
@@ -32,8 +31,8 @@ function LoginForm() {
         setErrorMessage(result.error);
         setIsLoading(false);
       } else if (result?.ok) {
-        router.push(callbackUrl);
-        router.refresh();
+        // Use window.location for reliable redirect after auth
+        window.location.href = callbackUrl;
       }
     } catch (error) {
       setErrorMessage('Error al iniciar sesion');
