@@ -1,10 +1,19 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 
 export async function GET() {
   try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const merchantFilter = getMerchantFilter(context);
+
     // Get last 24 hours of price data
     const oneDayAgo = new Date();
     oneDayAgo.setHours(oneDayAgo.getHours() - 24);
@@ -12,6 +21,7 @@ export async function GET() {
     const priceHistory = await prisma.priceHistory.findMany({
       where: {
         createdAt: { gte: oneDayAgo },
+        ...merchantFilter,
       },
       orderBy: { createdAt: 'asc' },
       select: {

@@ -1,18 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
+import { Pool } from 'pg';
 
 const prisma = new PrismaClient();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
 
-// Sync orders from Binance via Railway proxy
-async function syncOrdersFromRailway(): Promise<{ success: boolean; synced?: number; error?: string }> {
-  if (!RAILWAY_API_URL) {
-    return { success: false, error: 'RAILWAY_API_URL not configured' };
+// Get bot URL for the logged-in merchant
+async function getMerchantBotUrl(merchantId: string): Promise<string | null> {
+  try {
+    const result = await pool.query(
+      'SELECT "botApiUrl" FROM "Merchant" WHERE id = $1',
+      [merchantId]
+    );
+    return result.rows[0]?.botApiUrl || null;
+  } catch (error) {
+    console.error('Error getting merchant bot URL:', error);
+    return null;
+  }
+}
+
+// Sync orders from Binance via merchant's bot proxy
+async function syncOrdersFromRailway(botUrl?: string | null): Promise<{ success: boolean; synced?: number; error?: string }> {
+  const apiUrl = botUrl || RAILWAY_API_URL;
+
+  if (!apiUrl) {
+    return { success: false, error: 'Bot API URL not configured' };
   }
 
   try {
-    const response = await fetch(`${RAILWAY_API_URL}/api/orders/sync`, {
+    const response = await fetch(`${apiUrl}/api/orders/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(15000), // 15 second timeout
@@ -20,15 +41,15 @@ async function syncOrdersFromRailway(): Promise<{ success: boolean; synced?: num
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Railway sync error: ${response.status} - ${errorText}`);
+      console.error(`Bot sync error: ${response.status} - ${errorText}`);
       return { success: false, error: `HTTP ${response.status}` };
     }
 
     const data = await response.json();
-    console.log(`Railway sync result: ${data.message || 'OK'}`);
+    console.log(`Bot sync result: ${data.message || 'OK'}`);
     return { success: true, synced: data.saved || 0 };
   } catch (error: any) {
-    console.error('Railway sync failed:', error.message);
+    console.error('Bot sync failed:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -47,9 +68,12 @@ export async function GET(request: NextRequest) {
     const showAll = searchParams.get('showAll') === 'true';
     const skipSync = searchParams.get('skipSync') === 'true';
 
-    // Sync orders from Binance via Railway (unless skipSync is set)
+    // Get merchant's bot URL for syncing
+    const botUrl = await getMerchantBotUrl(context.merchantId);
+
+    // Sync orders from Binance via merchant's bot (unless skipSync is set)
     if (!skipSync) {
-      const syncResult = await syncOrdersFromRailway();
+      const syncResult = await syncOrdersFromRailway(botUrl);
       if (syncResult.success) {
         console.log(`Synced ${syncResult.synced} orders from Railway`);
       } else {
