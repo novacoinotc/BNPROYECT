@@ -132,7 +132,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
     const updateResult = await db.query(
       `UPDATE "Order" SET
         status = $1::"OrderStatus",
-        "buyerUserNo" = CASE WHEN $6 IS NOT NULL AND $6 <> 'counterpart' AND $6 <> 'self' THEN $6 ELSE "buyerUserNo" END,
+        "buyerUserNo" = CASE WHEN $6::text IS NOT NULL AND $6::text <> 'counterpart' AND $6::text <> 'self' AND $6::text <> '' THEN $6::text ELSE "buyerUserNo" END,
         "buyerRealName" = COALESCE($4, "buyerRealName"),
         "buyerNickName" = CASE WHEN $5 <> 'unknown' AND ("buyerNickName" = 'unknown' OR "buyerNickName" IS NULL) THEN $5 ELSE "buyerNickName" END,
         "paidAt" = CASE WHEN $2 = 'PAID' AND "paidAt" IS NULL THEN NOW() ELSE "paidAt" END,
@@ -140,7 +140,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
         "cancelledAt" = CASE WHEN $2 IN ('CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT') AND "cancelledAt" IS NULL THEN NOW() ELSE "cancelledAt" END,
         "updatedAt" = NOW()
       WHERE "orderNumber" = $3`,
-      [status, status, order.orderNumber, buyerRealName, buyerNickName, buyerUserNo]
+      [status, status, order.orderNumber, buyerRealName, buyerNickName, buyerUserNo || null]
     );
 
     // If no rows updated, insert new order
