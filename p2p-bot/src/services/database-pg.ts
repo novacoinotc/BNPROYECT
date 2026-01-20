@@ -1880,10 +1880,15 @@ export function getPositioningConfigForAd(
   const key = `${tradeType}:${asset}`;
   if (config.positioningConfigs[key]) {
     const assetConfig = config.positioningConfigs[key];
+    // Get trade type defaults for fallback (sellMode/buyMode, sellFollowTarget/buyFollowTarget)
+    const tradeTypeMode = tradeType === 'SELL' ? config.sellMode : config.buyMode;
+    const tradeTypeFollowTarget = tradeType === 'SELL' ? config.sellFollowTarget : config.buyFollowTarget;
     return {
       enabled: assetConfig.enabled !== false, // Default to true
-      mode: assetConfig.mode || 'smart',
-      followTarget: assetConfig.followTarget || null,
+      // Per-asset mode, fallback to trade type mode, then 'smart'
+      mode: assetConfig.mode || tradeTypeMode || 'smart',
+      // Per-asset follow target, fallback to trade type target
+      followTarget: assetConfig.followTarget || tradeTypeFollowTarget || null,
       // Per-asset price strategy (fallback to global defaults)
       matchPrice: assetConfig.matchPrice ?? config.matchPrice ?? false,
       undercutCents: assetConfig.undercutCents ?? config.undercutCents ?? 1,
