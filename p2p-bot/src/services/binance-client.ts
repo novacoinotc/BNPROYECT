@@ -636,9 +636,9 @@ export class BinanceC2CClient {
     const rawResponse = response as any;
 
     // Normalize orderStatus and EXTRACT the buyer's identity fields
-    // IMPORTANT: API returns 'maker' (us) and 'taker' (buyer) objects
+    // IMPORTANT: API returns 'takerUserNo' at TOP LEVEL (not inside a taker object)
     // For SELL orders: taker is the buyer, maker is us (seller)
-    const takerUserNo = rawResponse.taker?.userNo || null;
+    const takerUserNo = rawResponse.takerUserNo || null;
 
     const normalizedOrder = {
       ...response,
