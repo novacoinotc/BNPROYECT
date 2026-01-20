@@ -675,18 +675,24 @@ export class BinanceC2CClient {
       counterPartNickName: rawResponse.counterPartNickName,
     }, '📋 [ORDER DETAIL] Buyer identity fields');
 
-    // Debug: Log full response structure including taker/maker objects
-    // Use string interpolation to force values into the log message
-    const takerKeys = rawResponse.taker ? Object.keys(rawResponse.taker).slice(0, 25).join(',') : 'NO_TAKER';
+    // Debug: Log ALL top-level keys of the response to find buyer ID
+    const allKeys = Object.keys(rawResponse).join(',');
     logger.info(
-      `[API DEBUG] Order ${orderNumber}: ` +
-      `hasTaker=${!!rawResponse.taker}, ` +
-      `takerKeys=[${takerKeys}], ` +
-      `taker.userNo=${rawResponse.taker?.userNo}, ` +
-      `taker.userId=${rawResponse.taker?.userId}, ` +
-      `taker.nickName=${rawResponse.taker?.nickName}, ` +
-      `topLevel.userId=${rawResponse.userId}, ` +
-      `EXTRACTED=${takerUserNo}`
+      `[API DEBUG] Order ${orderNumber} ALL KEYS: [${allKeys}]`
+    );
+    // Also log any field that might contain user ID
+    logger.info(
+      `[API DEBUG] Order ${orderNumber} ID FIELDS: ` +
+      `makerNo=${rawResponse.makerNo}, ` +
+      `takerNo=${rawResponse.takerNo}, ` +
+      `buyerNo=${rawResponse.buyerNo}, ` +
+      `sellerNo=${rawResponse.sellerNo}, ` +
+      `counterPartNo=${rawResponse.counterPartNo}, ` +
+      `makerUserNo=${rawResponse.makerUserNo}, ` +
+      `takerUserNo=${rawResponse.takerUserNo}, ` +
+      `advUserId=${rawResponse.advUserId}, ` +
+      `mainUserId=${rawResponse.mainUserId}, ` +
+      `userId=${rawResponse.userId}`
     );
 
     return normalizedOrder;
