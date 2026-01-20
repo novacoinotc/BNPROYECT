@@ -25,6 +25,7 @@ export default function MerchantsPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingMerchant, setEditingMerchant] = useState<Merchant | null>(null);
+  const [newlyCreatedId, setNewlyCreatedId] = useState<string | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -67,10 +68,14 @@ export default function MerchantsPage() {
       if (!res.ok) throw new Error(result.error || 'Failed to create merchant');
       return result;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['admin-merchants'] });
       setShowCreateModal(false);
       resetForm();
+      // Show the new merchant ID
+      if (data?.merchant?.id) {
+        setNewlyCreatedId(data.merchant.id);
+      }
     },
     onError: (error: Error) => {
       setFormError(error.message);
@@ -213,10 +218,9 @@ export default function MerchantsPage() {
           <table className="w-full">
             <thead className="bg-gray-900">
               <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">ID (Railway)</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">Nombre</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">Email</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">CLABE</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">Binance</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">Estado</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-400">Rol</th>
                 <th className="px-4 py-3 text-right text-sm font-medium text-gray-400">Acciones</th>
@@ -226,18 +230,29 @@ export default function MerchantsPage() {
               {merchants.map((merchant) => (
                 <tr key={merchant.id} className="hover:bg-gray-750">
                   <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs text-blue-400 bg-blue-500/10 px-2 py-1 rounded font-mono">
+                        {merchant.id}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(merchant.id);
+                          alert('ID copiado: ' + merchant.id);
+                        }}
+                        className="text-gray-500 hover:text-gray-300"
+                        title="Copiar ID"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
                     <span className="text-white font-medium">{merchant.name}</span>
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-gray-300">{merchant.email}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-gray-400 text-sm font-mono">
-                      {merchant.clabeAccount || '-'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-gray-400">{merchant.binanceNickname || '-'}</span>
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -275,7 +290,7 @@ export default function MerchantsPage() {
               ))}
               {merchants.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                     No hay merchants registrados
                   </td>
                 </tr>
@@ -390,6 +405,26 @@ export default function MerchantsPage() {
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
             <h2 className="text-xl font-bold text-white mb-4">Editar Merchant</h2>
 
+            {/* Merchant ID for Railway */}
+            <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <p className="text-xs text-blue-400 mb-1">MERCHANT_ID para Railway:</p>
+              <div className="flex items-center gap-2">
+                <code className="text-sm text-white font-mono bg-gray-900 px-2 py-1 rounded flex-1">
+                  {editingMerchant.id}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(editingMerchant.id);
+                    alert('ID copiado!');
+                  }}
+                  className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+                >
+                  Copiar
+                </button>
+              </div>
+            </div>
+
             {formError && (
               <div className="mb-4 p-3 bg-red-500/20 border border-red-500 rounded-lg text-red-300 text-sm">
                 {formError}
@@ -477,6 +512,46 @@ export default function MerchantsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* New Merchant ID Modal */}
+      {newlyCreatedId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+            <div className="text-center">
+              <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Merchant Creado</h2>
+              <p className="text-gray-400 mb-4">Guarda este ID para configurar Railway:</p>
+
+              <div className="bg-gray-900 p-4 rounded-lg mb-4">
+                <p className="text-xs text-gray-500 mb-1">MERCHANT_ID</p>
+                <code className="text-lg text-blue-400 font-mono">{newlyCreatedId}</code>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(newlyCreatedId);
+                    alert('ID copiado al portapapeles!');
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                >
+                  Copiar ID
+                </button>
+                <button
+                  onClick={() => setNewlyCreatedId(null)}
+                  className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
