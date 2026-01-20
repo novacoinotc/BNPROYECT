@@ -131,6 +131,9 @@ export class OrderManager extends EventEmitter {
             try {
               const orderDetail = await this.client.getOrderDetail(order.orderNumber);
               // Extract buyer info from order detail
+              if (orderDetail.buyer?.userNo) {
+                (order as any).buyerUserNo = orderDetail.buyer.userNo;
+              }
               if (orderDetail.buyer?.realName) {
                 (order as any).buyerRealName = orderDetail.buyer.realName;
               }
@@ -145,6 +148,7 @@ export class OrderManager extends EventEmitter {
               logger.info({
                 orderNumber: order.orderNumber,
                 counterPartNickName: order.counterPartNickName,
+                buyerUserNo: (order as any).buyerUserNo,
                 buyerRealName: (order as any).buyerRealName,
               }, 'Fetched buyer info from order detail for sync');
             } catch (detailErr) {
@@ -306,6 +310,9 @@ export class OrderManager extends EventEmitter {
     if (order.orderStatus === 'BUYER_PAYED') {
       try {
         const orderDetail = await this.client.getOrderDetail(order.orderNumber);
+        if (orderDetail.buyer?.userNo) {
+          (order as any).buyerUserNo = orderDetail.buyer.userNo;
+        }
         if (orderDetail.buyer?.realName) {
           (order as any).buyerRealName = orderDetail.buyer.realName;
         }
@@ -318,6 +325,7 @@ export class OrderManager extends EventEmitter {
         logger.info({
           orderNumber: order.orderNumber,
           counterPartNickName: order.counterPartNickName,
+          buyerUserNo: (order as any).buyerUserNo,
           buyerRealName: (order as any).buyerRealName,
         }, 'Fetched buyer info from order detail for new order');
       } catch (detailError) {
@@ -393,6 +401,10 @@ export class OrderManager extends EventEmitter {
         // Buyer marked as paid - fetch order detail to get buyer info BEFORE saving
         try {
           const orderDetail = await this.client.getOrderDetail(newOrder.orderNumber);
+          // Extract buyer userNo (unique identifier)
+          if (orderDetail.buyer?.userNo) {
+            (newOrder as any).buyerUserNo = orderDetail.buyer.userNo;
+          }
           // Extract buyer real name
           if (orderDetail.buyer?.realName) {
             (newOrder as any).buyerRealName = orderDetail.buyer.realName;
@@ -407,6 +419,7 @@ export class OrderManager extends EventEmitter {
           logger.info({
             orderNumber: newOrder.orderNumber,
             counterPartNickName: newOrder.counterPartNickName,
+            buyerUserNo: (newOrder as any).buyerUserNo,
             buyerRealName: (newOrder as any).buyerRealName,
           }, 'Got buyer info from order detail');
         } catch (detailError) {
