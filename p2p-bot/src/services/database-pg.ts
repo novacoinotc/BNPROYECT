@@ -1422,7 +1422,8 @@ export async function savePriceHistory(data: {
 export interface TrustedBuyerData {
   id: string;
   counterPartNickName: string;
-  realName: string | null;
+  buyerUserNo: string | null;  // Binance unique user ID - PRIMARY identifier
+  realName: string | null;      // For display only, NOT for matching
   verifiedAt: Date;
   verifiedBy: string | null;
   notes: string | null;
@@ -1435,47 +1436,56 @@ export interface TrustedBuyerData {
 }
 
 /**
- * Check if a buyer is trusted (by nickname OR realName)
- * This allows matching even if nicknames are censored (e.g., "lui***")
+ * Check if a buyer is trusted by buyerUserNo (Binance unique ID)
+ *
+ * SECURITY FIX (2026-01-19):
+ * - ONLY match by buyerUserNo - it's the ONLY unique identifier
+ * - DO NOT match by nickname - many users have same censored nickname (e.g., "Use***")
+ * - DO NOT match by realName - different people can have the same name
+ *
+ * If buyerUserNo is not provided, the buyer is NOT considered trusted.
+ * This ensures we only trust buyers we have explicitly verified.
  */
-export async function isTrustedBuyer(counterPartNickName: string, buyerRealName?: string | null): Promise<boolean> {
+export async function isTrustedBuyer(
+  counterPartNickName: string,
+  buyerRealName?: string | null,
+  buyerUserNo?: string | null
+): Promise<boolean> {
   const db = getPool();
 
-  // Normalize names for comparison (uppercase, trim whitespace)
-  const normalizedNickName = counterPartNickName?.trim() || '';
-  const normalizedRealName = buyerRealName?.trim().toUpperCase() || '';
-
-  // Search by nickname OR realName (if provided)
-  let query: string;
-  let params: string[];
-
-  if (normalizedRealName) {
-    // Search by either nickname or realName (case-insensitive for realName)
-    query = `SELECT id, "counterPartNickName", "realName" FROM "TrustedBuyer"
-             WHERE "isActive" = true
-             AND ("counterPartNickName" = $1 OR UPPER(TRIM("realName")) = $2)`;
-    params = [normalizedNickName, normalizedRealName];
-  } else {
-    // Only search by nickname
-    query = `SELECT id, "counterPartNickName", "realName" FROM "TrustedBuyer"
-             WHERE "counterPartNickName" = $1 AND "isActive" = true`;
-    params = [normalizedNickName];
+  // SECURITY: We REQUIRE buyerUserNo to check trusted status
+  // Nickname and realName are NOT reliable identifiers
+  if (!buyerUserNo) {
+    logger.debug({
+      counterPartNickName,
+      buyerRealName,
+    }, '🔍 [TRUSTED BUYER] No userNo provided - cannot verify trusted status');
+    return false;
   }
 
-  const result = await db.query(query, params);
+  // Search ONLY by buyerUserNo - the only unique identifier
+  const query = `SELECT id, "counterPartNickName", "realName", "buyerUserNo" FROM "TrustedBuyer"
+                 WHERE "isActive" = true AND "buyerUserNo" = $1`;
+
+  const result = await db.query(query, [buyerUserNo]);
 
   if (result.rows.length > 0) {
     const matched = result.rows[0];
     logger.info({
-      searchedNickName: normalizedNickName,
-      searchedRealName: normalizedRealName || '(not provided)',
-      matchedBy: matched.counterPartNickName === normalizedNickName ? 'nickname' : 'realName',
+      searchedUserNo: buyerUserNo,
       trustedBuyerNickName: matched.counterPartNickName,
       trustedBuyerRealName: matched.realName,
-    }, '⭐ [TRUSTED BUYER] Match found in trusted buyers list');
+      trustedBuyerUserNo: matched.buyerUserNo,
+    }, '⭐ [TRUSTED BUYER] Match found by userNo - buyer is TRUSTED');
+    return true;
   }
 
-  return result.rows.length > 0;
+  logger.debug({
+    searchedUserNo: buyerUserNo,
+    counterPartNickName,
+  }, '🔍 [TRUSTED BUYER] userNo not in trusted list');
+
+  return false;
 }
 
 /**
@@ -1492,64 +1502,73 @@ export async function getTrustedBuyer(counterPartNickName: string): Promise<Trus
 
 /**
  * Add a buyer to trusted list
+ * IMPORTANT: buyerUserNo is REQUIRED for proper identification
  */
 export async function addTrustedBuyer(
   counterPartNickName: string,
+  buyerUserNo: string,
   realName?: string,
   verifiedBy?: string,
   notes?: string
 ): Promise<TrustedBuyerData> {
   const db = getPool();
 
-  // Try to update if exists (reactivate)
+  if (!buyerUserNo) {
+    throw new Error('buyerUserNo is required to add a trusted buyer');
+  }
+
+  // Try to update if exists by userNo (reactivate)
   const updateResult = await db.query(
     `UPDATE "TrustedBuyer" SET
       "isActive" = true,
-      "realName" = COALESCE($2, "realName"),
-      "verifiedBy" = COALESCE($3, "verifiedBy"),
-      "notes" = COALESCE($4, "notes"),
+      "counterPartNickName" = $2,
+      "realName" = COALESCE($3, "realName"),
+      "verifiedBy" = COALESCE($4, "verifiedBy"),
+      "notes" = COALESCE($5, "notes"),
       "verifiedAt" = NOW(),
       "updatedAt" = NOW()
-    WHERE "counterPartNickName" = $1
+    WHERE "buyerUserNo" = $1
     RETURNING *`,
-    [counterPartNickName, realName || null, verifiedBy || null, notes || null]
+    [buyerUserNo, counterPartNickName, realName || null, verifiedBy || null, notes || null]
   );
 
   if (updateResult.rows.length > 0) {
-    logger.info({ counterPartNickName }, '⭐ Trusted buyer reactivated');
+    logger.info({ buyerUserNo, counterPartNickName }, '⭐ Trusted buyer reactivated');
     return updateResult.rows[0];
   }
 
   // Insert new trusted buyer
   const insertResult = await db.query(
     `INSERT INTO "TrustedBuyer" (
-      id, "counterPartNickName", "realName", "verifiedBy", "notes",
+      id, "counterPartNickName", "buyerUserNo", "realName", "verifiedBy", "notes",
       "verifiedAt", "isActive", "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, $4, $5, NOW(), true, NOW(), NOW())
+    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), true, NOW(), NOW())
     RETURNING *`,
-    [generateId(), counterPartNickName, realName || null, verifiedBy || null, notes || null]
+    [generateId(), counterPartNickName, buyerUserNo, realName || null, verifiedBy || null, notes || null]
   );
 
-  logger.info({ counterPartNickName, realName }, '⭐ New trusted buyer added');
+  logger.info({ buyerUserNo, counterPartNickName, realName }, '⭐ New trusted buyer added');
   return insertResult.rows[0];
 }
 
 /**
  * Remove buyer from trusted list (deactivate)
+ * Can remove by buyerUserNo (preferred) or by id
  */
-export async function removeTrustedBuyer(counterPartNickName: string): Promise<boolean> {
+export async function removeTrustedBuyer(buyerUserNoOrId: string): Promise<boolean> {
   const db = getPool();
 
+  // Try to remove by buyerUserNo first, then by id
   const result = await db.query(
     `UPDATE "TrustedBuyer" SET
       "isActive" = false,
       "updatedAt" = NOW()
-    WHERE "counterPartNickName" = $1`,
-    [counterPartNickName]
+    WHERE "buyerUserNo" = $1 OR "id" = $1`,
+    [buyerUserNoOrId]
   );
 
   if (result.rowCount && result.rowCount > 0) {
-    logger.info({ counterPartNickName }, '❌ Trusted buyer removed');
+    logger.info({ buyerUserNoOrId }, '❌ Trusted buyer removed');
     return true;
   }
   return false;
@@ -1571,12 +1590,18 @@ export async function listTrustedBuyers(includeInactive: boolean = false): Promi
 
 /**
  * Update trusted buyer stats after auto-release
+ * Uses buyerUserNo as the primary identifier
  */
 export async function incrementTrustedBuyerStats(
-  counterPartNickName: string,
+  buyerUserNo: string,
   amountReleased: number
 ): Promise<void> {
   const db = getPool();
+
+  if (!buyerUserNo) {
+    logger.warn({ amountReleased }, 'Cannot update trusted buyer stats - no userNo provided');
+    return;
+  }
 
   await db.query(
     `UPDATE "TrustedBuyer" SET
@@ -1584,11 +1609,11 @@ export async function incrementTrustedBuyerStats(
       "totalAmountReleased" = "totalAmountReleased" + $1,
       "lastAutoReleaseAt" = NOW(),
       "updatedAt" = NOW()
-    WHERE "counterPartNickName" = $2`,
-    [amountReleased, counterPartNickName]
+    WHERE "buyerUserNo" = $2`,
+    [amountReleased, buyerUserNo]
   );
 
-  logger.debug({ counterPartNickName, amountReleased }, 'Trusted buyer stats updated');
+  logger.debug({ buyerUserNo, amountReleased }, 'Trusted buyer stats updated');
 }
 
 // ==================== BOT CONFIG ====================

@@ -29,10 +29,11 @@ export async function GET(request: NextRequest) {
 }
 
 // POST - Add a trusted buyer
+// SECURITY: buyerUserNo is REQUIRED - it's the only reliable unique identifier
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { counterPartNickName, realName, verifiedBy, notes } = body;
+    const { counterPartNickName, buyerUserNo, realName, verifiedBy, notes } = body;
 
     if (!counterPartNickName) {
       return NextResponse.json(
@@ -41,12 +42,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if exact match already exists (same nickname AND realName)
+    if (!buyerUserNo) {
+      return NextResponse.json(
+        { success: false, error: 'buyerUserNo is required - find it in the order detail on Binance' },
+        { status: 400 }
+      );
+    }
+
+    // Check if buyerUserNo already exists (this is the UNIQUE identifier)
     const existing = await prisma.trustedBuyer.findFirst({
-      where: {
-        counterPartNickName,
-        realName: realName || null,
-      },
+      where: { buyerUserNo },
     });
 
     if (existing) {
@@ -56,6 +61,8 @@ export async function POST(request: NextRequest) {
           where: { id: existing.id },
           data: {
             isActive: true,
+            counterPartNickName, // Update nickname in case it changed
+            realName: realName || existing.realName,
             verifiedBy: verifiedBy || existing.verifiedBy,
             notes: notes || existing.notes,
             verifiedAt: new Date(),
@@ -71,15 +78,16 @@ export async function POST(request: NextRequest) {
 
       // Already exists and is active
       return NextResponse.json(
-        { success: false, error: `Buyer "${counterPartNickName}" with name "${realName || 'N/A'}" already exists` },
+        { success: false, error: `Buyer with userNo "${buyerUserNo}" already exists as "${existing.counterPartNickName}"` },
         { status: 409 }
       );
     }
 
-    // Create new entry (allows multiple buyers with same censored nickname but different realNames)
+    // Create new entry with unique buyerUserNo
     const trustedBuyer = await prisma.trustedBuyer.create({
       data: {
         counterPartNickName,
+        buyerUserNo,
         realName: realName || null,
         verifiedBy: verifiedBy || null,
         notes: notes || null,
@@ -90,9 +98,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       trustedBuyer,
-      message: `Trusted buyer "${counterPartNickName}" (${realName || 'no name'}) added successfully`,
+      message: `Trusted buyer "${counterPartNickName}" (userNo: ${buyerUserNo}) added successfully`,
     });
-  } catch (error) {
+  } catch (error: any) {
+    // Handle unique constraint violation
+    if (error.code === 'P2002') {
+      return NextResponse.json(
+        { success: false, error: 'A buyer with this userNo already exists' },
+        { status: 409 }
+      );
+    }
     console.error('Error adding trusted buyer:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to add trusted buyer' },

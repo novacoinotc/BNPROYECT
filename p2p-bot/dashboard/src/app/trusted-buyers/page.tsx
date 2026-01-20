@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 interface TrustedBuyer {
   id: string;
   counterPartNickName: string;
+  buyerUserNo: string | null;  // Binance unique user ID - PRIMARY identifier
   realName: string | null;
   verifiedAt: string;
   verifiedBy: string | null;
@@ -107,6 +108,10 @@ export default function TrustedBuyersPage() {
               pero <strong>siempre requieren</strong> coincidencia de nombre entre cuenta Binance y pago bancario.
               El limite maximo de auto-release sigue aplicando.
             </p>
+            <p className="text-sm text-amber-400 mt-2">
+              <strong>Importante:</strong> Se identifica al comprador por su <code className="bg-dark-bg px-1 rounded">UserNo</code> de Binance (ID unico),
+              no por nickname ni nombre. El UserNo se encuentra en el detalle de cada orden.
+            </p>
           </div>
         </div>
       </div>
@@ -129,6 +134,7 @@ export default function TrustedBuyersPage() {
             <thead className="bg-dark-hover text-gray-400 text-xs uppercase">
               <tr>
                 <th className="px-4 py-3 text-left">Nickname</th>
+                <th className="px-4 py-3 text-left">UserNo</th>
                 <th className="px-4 py-3 text-left">Nombre Real</th>
                 <th className="px-4 py-3 text-center">Auto-releases</th>
                 <th className="px-4 py-3 text-right">Monto Total</th>
@@ -148,6 +154,15 @@ export default function TrustedBuyersPage() {
                       <span className="text-lg">⭐</span>
                       <span className="text-white font-medium">{buyer.counterPartNickName}</span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {buyer.buyerUserNo ? (
+                      <code className="text-xs bg-dark-bg px-2 py-1 rounded text-amber-400">
+                        {buyer.buyerUserNo}
+                      </code>
+                    ) : (
+                      <span className="text-red-400 text-xs">Sin UserNo!</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-300">
                     {buyer.realName || <span className="text-gray-500">-</span>}
@@ -235,6 +250,7 @@ function AddTrustedBuyerModal({
   onSuccess: () => void;
 }) {
   const [nickname, setNickname] = useState('');
+  const [buyerUserNo, setBuyerUserNo] = useState('');
   const [realName, setRealName] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -244,6 +260,10 @@ function AddTrustedBuyerModal({
     e.preventDefault();
     if (!nickname.trim()) {
       setError('Nickname es requerido');
+      return;
+    }
+    if (!buyerUserNo.trim()) {
+      setError('UserNo es requerido - se encuentra en el detalle de la orden');
       return;
     }
 
@@ -256,6 +276,7 @@ function AddTrustedBuyerModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           counterPartNickName: nickname.trim(),
+          buyerUserNo: buyerUserNo.trim(),
           realName: realName.trim() || null,
           notes: notes.trim() || null,
           verifiedBy: 'Dashboard',
@@ -287,19 +308,33 @@ function AddTrustedBuyerModal({
               type="text"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              placeholder="ej: Juan123"
+              placeholder="ej: Use*** o Juan123"
               className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-dark-border focus:border-primary-500 focus:outline-none"
               autoFocus
             />
           </div>
 
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Nombre Real (opcional)</label>
+            <label className="block text-sm text-amber-400 mb-2">UserNo de Binance * (ID unico)</label>
+            <input
+              type="text"
+              value={buyerUserNo}
+              onChange={(e) => setBuyerUserNo(e.target.value)}
+              placeholder="ej: s]7d8f9g0h1i2j3k4l5m6n"
+              className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-amber-500/50 focus:border-amber-500 focus:outline-none font-mono"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Se encuentra en el detalle de la orden en Binance (buyer.userNo)
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Nombre Real (para referencia)</label>
             <input
               type="text"
               value={realName}
               onChange={(e) => setRealName(e.target.value)}
-              placeholder="ej: Juan Perez Garcia"
+              placeholder="ej: JUAN PEREZ GARCIA"
               className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-dark-border focus:border-primary-500 focus:outline-none"
             />
           </div>
@@ -388,15 +423,21 @@ function EditTrustedBuyerModal({
       <div className="bg-dark-card rounded-xl p-6 w-full max-w-md border border-dark-border" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-semibold text-white mb-4">Editar Comprador Confiable</h3>
 
-        <div className="mb-4 p-3 bg-dark-bg rounded-lg">
-          <span className="text-gray-400 text-sm">Nickname:</span>
-          <span className="text-white ml-2 font-medium">{buyer.counterPartNickName}</span>
+        <div className="mb-4 space-y-2">
+          <div className="p-3 bg-dark-bg rounded-lg">
+            <span className="text-gray-400 text-sm">Nickname:</span>
+            <span className="text-white ml-2 font-medium">{buyer.counterPartNickName}</span>
+          </div>
+          <div className="p-3 bg-dark-bg rounded-lg">
+            <span className="text-gray-400 text-sm">UserNo:</span>
+            <code className="text-amber-400 ml-2 font-mono text-sm">{buyer.buyerUserNo || 'No registrado'}</code>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm text-gray-400 mb-2">
-              Nombre Real <span className="text-primary-400">(importante para identificacion)</span>
+              Nombre Real <span className="text-gray-500">(para referencia)</span>
             </label>
             <input
               type="text"
@@ -406,9 +447,6 @@ function EditTrustedBuyerModal({
               className="w-full bg-dark-bg text-white rounded-lg px-3 py-2 border border-dark-border focus:border-primary-500 focus:outline-none"
               autoFocus
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Usa el nombre exacto que aparece en el KYC de Binance o en los pagos bancarios
-            </p>
           </div>
 
           <div>

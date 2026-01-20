@@ -239,7 +239,8 @@ model BuyerCache {
 model TrustedBuyer {
   id                    String   @id @default(cuid())
   counterPartNickName   String             // Binance nickname (may have duplicates like "Use***")
-  realName              String?            // Verified real name (used to distinguish buyers)
+  buyerUserNo           String?  @unique   // Binance unique user ID - MOST SECURE identifier
+  realName              String?            // Verified real name (for display only, NOT for matching!)
   verifiedAt            DateTime @default(now())
   verifiedBy            String?            // Admin who verified
   notes                 String?            // Verification notes
@@ -256,6 +257,7 @@ model TrustedBuyer {
   updatedAt             DateTime @updatedAt
 
   @@index([counterPartNickName])
+  @@index([buyerUserNo])
   @@index([isActive])
 }
 

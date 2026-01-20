@@ -8,6 +8,104 @@ Bot automatizado para gestión de P2P en Binance con:
 
 ---
 
+## 2026-01-19
+
+### ✅ Lista Global de Anunciantes Ignorados
+
+**Nueva funcionalidad**: Sistema para ignorar anunciantes específicos en todo el bot.
+
+**Características**:
+- Lista global de nicknames a ignorar (case-insensitive)
+- Aplica tanto a Smart Mode como Follow Mode
+- UI completa en dashboard para agregar/eliminar anunciantes
+- Los anunciantes ignorados se filtran de la lista de competidores en el dashboard
+- Persistencia en base de datos (JSONB)
+
+**Archivos modificados**:
+- `src/services/positioning/smart-engine.ts`: Filtro de ignorados en qualifiedAds
+- `src/services/positioning/follow-engine.ts`: Skip si target está en lista ignorada
+- `src/services/positioning/buy-manager.ts`: Pasa ignoredAdvertisers a engines
+- `src/services/positioning/sell-manager.ts`: Pasa ignoredAdvertisers a engines
+- `src/services/database-pg.ts`: Agregado `ignoredAdvertisers: string[]` a BotConfig
+- `dashboard/src/app/api/bot-control/route.ts`: GET/POST para ignoredAdvertisers
+- `dashboard/src/app/positioning/page.tsx`: UI completa para gestionar lista
+
+**SQL requerido** (ejecutar una vez):
+```sql
+ALTER TABLE "BotConfig"
+ADD COLUMN IF NOT EXISTS "ignoredAdvertisers" JSONB DEFAULT '[]';
+```
+
+### ✅ Mejora de Filtros Smart - userGrade vs proMerchant
+
+**Cambio**: El filtro de "Verified Merchant" ahora usa `userGrade >= 2` en lugar de `proMerchant`.
+
+**Razón**:
+- `proMerchant` solo incluye merchants con tier PRO (muy restrictivo)
+- `userGrade` indica nivel de verificación:
+  - 1 = Básico
+  - 2 = Verificado (incluye la mayoría de merchants serios)
+  - 3+ = Avanzado/PRO
+
+**Archivos modificados**:
+- `src/services/positioning/smart-engine.ts`:
+  - Cambiado `requireProMerchant: boolean` → `minUserGrade: number`
+  - Default: `minUserGrade: 2`
+
+### ✅ Filtros Smart por Asset/TradeType
+
+**Nueva funcionalidad**: Configuración independiente de filtros Smart para cada combinación asset/tradeType.
+
+**Características**:
+- Cada anuncio (ej: SELL:USDT, BUY:ETH) puede tener sus propios filtros
+- Filtros configurables: `smartMinOrderCount`, `smartMinSurplus`
+- Fallback a valores globales si no hay config específica
+- Etiqueta "(MXN)" clarificada para Min Volumen (calculado como precio × cantidad crypto)
+
+**Archivos modificados**:
+- `src/services/database-pg.ts`:
+  - Agregado `smartMinOrderCount` y `smartMinSurplus` a `AssetPositioningConfig`
+  - Actualizado `getPositioningConfigForAd()` para incluir estos campos
+- `src/services/positioning/buy-manager.ts`: Pasa config per-asset a smartEngine
+- `src/services/positioning/sell-manager.ts`: Pasa config per-asset a smartEngine
+- `dashboard/src/app/positioning/page.tsx`: UI para configurar filtros por asset
+
+### ✅ Mejoras de UI en Dashboard Positioning
+
+**Cambios**:
+1. **Top 15 competidores**: Antes mostraba top 5, ahora muestra top 15
+2. **Filtrado de ignorados en lista**: Los anunciantes ignorados ya no aparecen en la lista de competidores
+3. **Botones TOP 1 y FOLLOW**: Funcionan correctamente con la nueva estructura
+4. **Mobile-optimized**: Interfaz responsive para uso en móvil
+
+**Archivos modificados**:
+- `dashboard/src/app/positioning/page.tsx`:
+  - Aumentado fetch de 10 a 20 rows en searchAds
+  - Filtro de ignorados aplicado antes de slice
+  - `.slice(0, 15)` para mostrar top 15
+
+### 🐛 Correcciones de Bugs
+
+1. **Error "is not iterable"**:
+   - Problema: API returnaba `buyAds.length` en lugar del array
+   - Fix: `dashboard/src/app/api/ads/route.ts` corregido para retornar array
+
+2. **Follow Mode en ETH no funcionaba**:
+   - Problema: Lógica de tradeType invertida
+   - Regla de oro documentada:
+     - Nuestro SELL ad → buscamos otros SELLERS → `tradeType='BUY'` (tab Comprar)
+     - Nuestro BUY ad → buscamos otros BUYERS → `tradeType='SELL'` (tab Vender)
+
+3. **TypeScript build errors**:
+   - Agregados `smartMinOrderCount: 10, smartMinSurplus: 100` a objetos fallback
+   - Corregido div sin cerrar en positioning/page.tsx
+
+4. **ignoredAdvertisers no se guardaba**:
+   - Faltaba handler en POST de bot-control/route.ts
+   - Faltaba parsing en GET de bot-control/route.ts
+
+---
+
 ## 2026-01-18
 
 ### 🔬 Investigación: Chat API de Binance P2P (COMPLETADA)
@@ -108,6 +206,14 @@ Cada moneda (USDT, BTC, ETH, USDC, BNB) puede tener:
 - `followTarget`: Nickname del competidor a seguir
 - `matchPrice`: true = igualar precio, false = bajar
 - `undercutCents`: Centavos a bajar si matchPrice=false
+- `smartMinOrderCount`: Mínimo de órdenes mensuales (solo Smart mode)
+- `smartMinSurplus`: Mínimo volumen disponible en MXN (solo Smart mode)
+
+#### Lista de Anunciantes Ignorados
+- `ignoredAdvertisers`: Array de nicknames a ignorar globalmente
+- Aplica a Smart Mode (no los considera como competidores)
+- Aplica a Follow Mode (no permite seguir a ignorados)
+- Case-insensitive matching
 
 ### 3. Webhook Receiver (`webhook-receiver.ts`)
 Recibe notificaciones bancarias:
@@ -119,10 +225,17 @@ Recibe notificaciones bancarias:
 Tablas principales:
 - `orders`: Órdenes sincronizadas de Binance
 - `bank_payments`: Pagos bancarios recibidos
-- `bot_config`: Configuración del bot
+- `BotConfig`: Configuración del bot (incluye `ignoredAdvertisers` JSONB, `positioningConfigs` JSONB)
 - `verification_steps`: Pasos de verificación por orden
 - `trusted_buyers`: Compradores de confianza
+- `AuditLog`: Log de auditoría de cambios de configuración
 - `alerts`: Alertas del sistema
+
+**Columnas importantes de BotConfig**:
+- `positioningConfigs`: JSONB con configuración por asset (ej: `{"SELL:USDT": {...}, "BUY:ETH": {...}}`)
+- `ignoredAdvertisers`: JSONB array de nicknames a ignorar (ej: `["Competidor1", "Competidor2"]`)
+- `sellMode`, `buyMode`: Modo por defecto para SELL/BUY ads ('smart' | 'follow')
+- `sellFollowTarget`, `buyFollowTarget`: Target por defecto para follow mode
 
 ---
 
@@ -220,14 +333,22 @@ d5c1541 feat: Add per-asset enable/disable toggle
 
 ## Notas Técnicas
 
-### TradeType Logic (IMPORTANTE)
-El API de búsqueda de Binance usa perspectiva del CLIENTE:
-- `tradeType: 'BUY'` → Encuentra SELLERS (yo quiero comprar)
-- `tradeType: 'SELL'` → Encuentra BUYERS (yo quiero vender)
+### TradeType Logic (IMPORTANTE - REGLA DE ORO)
+El API de búsqueda de Binance usa perspectiva del USUARIO que busca:
+- `tradeType: 'BUY'` → Tab "Comprar" → Muestra SELLERS (usuarios que venden crypto)
+- `tradeType: 'SELL'` → Tab "Vender" → Muestra BUYERS (usuarios que compran crypto)
 
-Para el positioning bot:
-- **Mi ad es SELL** → Busco otros SELLERS con `tradeType: 'SELL'`
-- **Mi ad es BUY** → Busco otros BUYERS con `tradeType: 'BUY'`
+**Para el positioning bot** (perspectiva del MERCHANT):
+- **Mi ad es SELL** (yo vendo crypto) → Compito con otros SELLERS → Busco en tab "Comprar" → `tradeType: 'BUY'`
+- **Mi ad es BUY** (yo compro crypto) → Compito con otros BUYERS → Busco en tab "Vender" → `tradeType: 'SELL'`
+
+**Resumen**:
+```
+Mi Ad    | Compito con | Tab Binance | tradeType API
+---------|-------------|-------------|---------------
+SELL     | SELLERS     | Comprar     | 'BUY'
+BUY      | BUYERS      | Vender      | 'SELL'
+```
 
 ### Name Comparison
 El sistema normaliza nombres para comparación:

@@ -1300,15 +1300,18 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // 2. TRUSTED BUYERS - manually verified by admin (STILL requires name match!)
     const skipRiskCheck = orderAmount <= this.config.skipRiskCheckThreshold;
 
-    // Check if buyer is in our trusted buyers list (by nickname OR realName)
-    // This handles censored nicknames like "lui***" by also matching on verified real name
+    // Check if buyer is in our trusted buyers list
+    // SECURITY FIX (2026-01-19): Only match by buyerUserNo or exact nickname
+    // DO NOT match by realName - different people can have the same name!
     const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
     const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
+    const buyerUserNo = pending.order.buyer?.userNo || null;
     let isTrustedBuyer = false;
 
-    if (buyerNickName || buyerRealName) {
+    if (buyerNickName || buyerUserNo) {
       try {
-        isTrustedBuyer = await db.isTrustedBuyer(buyerNickName, buyerRealName);
+        // Pass buyerUserNo for secure matching (realName is NOT used for matching anymore)
+        isTrustedBuyer = await db.isTrustedBuyer(buyerNickName, buyerRealName, buyerUserNo);
         if (isTrustedBuyer) {
           logger.info(
             `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" (${buyerRealName || 'no real name'}) is in trusted list - skipping risk check`
@@ -1637,18 +1640,21 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         // Update trusted buyer stats if applicable
         const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
         const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
-        if (buyerNickName || buyerRealName) {
+        const buyerUserNoForStats = pending.order.buyer?.userNo || null;
+        if (buyerUserNoForStats) {
           try {
-            const isTrusted = await db.isTrustedBuyer(buyerNickName, buyerRealName);
+            // Check if this buyer is trusted (by userNo only)
+            const isTrusted = await db.isTrustedBuyer(buyerNickName, buyerRealName, buyerUserNoForStats);
             if (isTrusted) {
               const orderAmount = parseFloat(pending.order.totalPrice);
-              await db.incrementTrustedBuyerStats(buyerNickName, orderAmount);
+              // Update stats using userNo as identifier
+              await db.incrementTrustedBuyerStats(buyerUserNoForStats, orderAmount);
               logger.info(
-                `⭐ [TRUSTED BUYER] Updated stats for "${buyerNickName}" (${buyerRealName || 'no name'}) - auto-released $${orderAmount}`
+                `⭐ [TRUSTED BUYER] Updated stats for userNo=${buyerUserNoForStats} "${buyerNickName}" (${buyerRealName || 'no name'}) - auto-released $${orderAmount}`
               );
             }
           } catch (err) {
-            logger.warn({ err, buyerNickName, buyerRealName }, 'Error updating trusted buyer stats');
+            logger.warn({ err, buyerUserNoForStats, buyerNickName }, 'Error updating trusted buyer stats');
           }
         }
 
