@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 
 const navItems = [
   {
@@ -50,6 +51,16 @@ const navItems = [
     ),
   },
   {
+    href: '/support-requests',
+    label: 'Soporte',
+    hasBadge: true,
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+      </svg>
+    ),
+  },
+  {
     href: '/settings',
     label: 'Config',
     icon: (
@@ -63,6 +74,19 @@ const navItems = [
 
 export function BottomNav() {
   const pathname = usePathname();
+
+  // Fetch pending support requests count
+  const { data: supportData } = useQuery({
+    queryKey: ['support-requests-count'],
+    queryFn: async () => {
+      const res = await fetch('/api/support-requests?status=PENDING');
+      if (!res.ok) return { counts: { PENDING: 0 } };
+      return res.json();
+    },
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  const pendingCount = supportData?.counts?.PENDING || 0;
 
   return (
     <nav className="bottom-nav">
@@ -79,14 +103,20 @@ export function BottomNav() {
         {/* Nav Items */}
         {navItems.map((item) => {
           const isActive = pathname === item.href;
+          const showBadge = (item as any).hasBadge && pendingCount > 0;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`bottom-nav-item ${isActive ? 'active' : ''}`}
+              className={`bottom-nav-item ${isActive ? 'active' : ''} relative`}
             >
               {item.icon}
               <span className="text-[10px] mt-0.5 font-medium">{item.label}</span>
+              {showBadge && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                  {pendingCount > 99 ? '99+' : pendingCount}
+                </span>
+              )}
             </Link>
           );
         })}

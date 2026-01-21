@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 
@@ -101,6 +102,12 @@ function mapBinanceStatus(binanceStatus: string): string {
 
 export async function POST(request: NextRequest) {
   try {
+    // Get merchant context - authentication required
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Check credentials first
     if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
       return NextResponse.json({
@@ -109,12 +116,16 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Get all active orders from DB
+    // Get merchant filter (admin sees all, merchant sees own)
+    const merchantFilter = getMerchantFilter(context);
+
+    // Get all active orders from DB - FILTERED BY MERCHANT
     const activeOrders = await prisma.order.findMany({
       where: {
         status: {
           in: ['PENDING', 'PAID', 'APPEALING'],
         },
+        ...merchantFilter,
       },
       select: {
         id: true,

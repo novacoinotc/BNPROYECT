@@ -1,15 +1,24 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 
 const prisma = new PrismaClient();
 
 // GET - Fetch support requests
 export async function GET(request: Request) {
   try {
+    // Get merchant context - authentication required
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status'); // PENDING, ATTENDED, CLOSED, or null for all
 
-    const where = status ? { status } : {};
+    // Get merchant filter (admin sees all, merchant sees own)
+    const merchantFilter = getMerchantFilter(context);
+    const where = status ? { status, ...merchantFilter } : { ...merchantFilter };
 
     const supportRequests = await prisma.supportRequest.findMany({
       where,
@@ -19,9 +28,10 @@ export async function GET(request: Request) {
       ],
     });
 
-    // Get count by status
+    // Get count by status - FILTERED BY MERCHANT
     const counts = await prisma.supportRequest.groupBy({
       by: ['status'],
+      where: merchantFilter,
       _count: { status: true },
     });
 
@@ -54,6 +64,12 @@ export async function GET(request: Request) {
 // PATCH - Update support request status
 export async function PATCH(request: Request) {
   try {
+    // Get merchant context - authentication required
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { id, status, attendedBy, notes } = body;
 
@@ -68,6 +84,19 @@ export async function PATCH(request: Request) {
       return NextResponse.json(
         { error: 'Invalid status. Must be PENDING, ATTENDED, or CLOSED' },
         { status: 400 }
+      );
+    }
+
+    // Check if merchant has access to this support request
+    const merchantFilter = getMerchantFilter(context);
+    const existingRequest = await prisma.supportRequest.findFirst({
+      where: { id, ...merchantFilter },
+    });
+
+    if (!existingRequest) {
+      return NextResponse.json(
+        { error: 'Support request not found or access denied' },
+        { status: 404 }
       );
     }
 

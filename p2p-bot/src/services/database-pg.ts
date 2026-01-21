@@ -193,9 +193,15 @@ export async function saveOrder(order: OrderData): Promise<void> {
 
 export async function getOrder(orderNumber: string) {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const params = merchantId ? [orderNumber, merchantId] : [orderNumber];
+
   const result = await db.query(
-    'SELECT * FROM "Order" WHERE "orderNumber" = $1',
-    [orderNumber]
+    `SELECT * FROM "Order" WHERE "orderNumber" = $1 ${merchantFilter}`,
+    params
   );
   return result.rows[0] || null;
 }
@@ -222,12 +228,16 @@ export async function savePayment(payment: BankWebhookPayload): Promise<string> 
   const id = generateId();
   const merchantId = getMerchantId();
 
-  await db.query(
+  // Use ON CONFLICT DO NOTHING to make this idempotent
+  // If transactionId already exists, the insert is skipped (no error)
+  const result = await db.query(
     `INSERT INTO "Payment" (
       id, "transactionId", amount, currency, "senderName",
       "senderAccount", "receiverAccount", concept, "bankReference",
       "bankTimestamp", status, "merchantId", "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11, NOW(), NOW())`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11, NOW(), NOW())
+    ON CONFLICT ("transactionId") DO NOTHING
+    RETURNING id`,
     [
       id,
       payment.transactionId,
@@ -243,8 +253,19 @@ export async function savePayment(payment: BankWebhookPayload): Promise<string> 
     ]
   );
 
-  logger.debug({ transactionId: payment.transactionId, merchantId }, 'Payment saved');
-  return id;
+  // If result has rows, it's a new payment. If no rows, it's a duplicate.
+  if (result.rows.length > 0) {
+    logger.debug({ transactionId: payment.transactionId, merchantId }, 'Payment saved');
+    return result.rows[0].id;
+  } else {
+    // Payment already exists - get existing ID
+    const existingResult = await db.query(
+      `SELECT id FROM "Payment" WHERE "transactionId" = $1`,
+      [payment.transactionId]
+    );
+    logger.warn({ transactionId: payment.transactionId, merchantId }, 'Duplicate payment ignored (idempotent)');
+    return existingResult.rows[0]?.id || id;
+  }
 }
 
 export async function matchPaymentToOrder(
@@ -255,15 +276,22 @@ export async function matchPaymentToOrder(
   receiptUrl?: string
 ): Promise<boolean> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // SECURITY: Filter by merchantId to prevent cross-merchant matching
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const orderParams = merchantId ? [orderNumber, merchantId] : [orderNumber];
 
   const orderResult = await db.query(
-    'SELECT id FROM "Order" WHERE "orderNumber" = $1',
-    [orderNumber]
+    `SELECT id FROM "Order" WHERE "orderNumber" = $1 ${merchantFilter}`,
+    orderParams
   );
 
   if (orderResult.rows.length === 0) {
-    throw new Error(`Order ${orderNumber} not found`);
+    throw new Error(`Order ${orderNumber} not found for this merchant`);
   }
+
+  const orderId = orderResult.rows[0].id;
 
   // CRITICAL: Check if payment was already released (prevent double-spend)
   const paymentCheck = await db.query(
@@ -281,9 +309,20 @@ export async function matchPaymentToOrder(
       }, '🚫 [DOUBLE-SPEND BLOCKED] Payment was already used for a released order!');
       return false; // Payment already used - don't allow re-matching
     }
+
+    // SECURITY: If payment is MATCHED, only allow re-matching to SAME order (name verification retry)
+    if (payment.status === 'MATCHED' && payment.matchedOrderId !== orderId) {
+      logger.warn({
+        transactionId,
+        orderNumber,
+        currentMatchedOrderId: payment.matchedOrderId,
+        requestedOrderId: orderId,
+      }, '🚫 [MATCH BLOCKED] Payment already matched to different order!');
+      return false;
+    }
   }
 
-  // Only match if payment is PENDING (not already matched or released)
+  // Only match if payment is PENDING, or re-matching to same order when MATCHED
   const result = await db.query(
     `UPDATE "Payment" SET
       status = 'MATCHED',
@@ -294,16 +333,16 @@ export async function matchPaymentToOrder(
       "receiptUrl" = $4,
       "updatedAt" = NOW()
     WHERE "transactionId" = $5
-      AND status IN ('PENDING', 'MATCHED')`,
-    [orderResult.rows[0].id, method, ocrConfidence || null, receiptUrl || null, transactionId]
+      AND (status = 'PENDING' OR (status = 'MATCHED' AND "matchedOrderId" = $1))`,
+    [orderId, method, ocrConfidence || null, receiptUrl || null, transactionId]
   );
 
   if (result.rowCount === 0) {
-    logger.warn({ transactionId, orderNumber }, '⚠️ Payment not matched - may already be released or not found');
+    logger.warn({ transactionId, orderNumber }, '⚠️ Payment not matched - may already be released or matched to different order');
     return false;
   }
 
-  logger.info({ transactionId, orderNumber }, 'Payment matched to order');
+  logger.info({ transactionId, orderNumber, merchantId }, 'Payment matched to order');
   return true;
 }
 
@@ -442,6 +481,8 @@ export async function findOrderByAmountAndName(
 
   const senderWords = new Set(normalizedSender.split(/\s+/).filter(w => w.length > 2));
 
+  const merchantId = getMerchantId();
+
   logger.info({
     amount,
     senderName,
@@ -449,16 +490,20 @@ export async function findOrderByAmountAndName(
     senderWords: Array.from(senderWords),
   }, '🔍 [SMART MATCH] Searching for order by amount AND name');
 
-  // Get all orders with matching amount
+  // Get all orders with matching amount - FILTERED BY MERCHANTID
+  const merchantFilter = merchantId ? 'AND "merchantId" = $3' : '';
+  const params = merchantId ? [minAmount, maxAmount, merchantId] : [minAmount, maxAmount];
+
   const result = await db.query(
     `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", "createdAt"
      FROM "Order"
      WHERE status = 'PAID'::"OrderStatus"
        AND "totalPrice"::numeric BETWEEN $1 AND $2
        AND "releasedAt" IS NULL
+       ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
      LIMIT 20`,
-    [minAmount, maxAmount]
+    params
   );
 
   if (result.rows.length === 0) {
@@ -540,9 +585,14 @@ export async function getOrdersNeedingBuyerName(
   tolerancePercent: number = 1
 ): Promise<Array<{ orderNumber: string }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
   const tolerance = amount * (tolerancePercent / 100);
   const minAmount = amount - tolerance;
   const maxAmount = amount + tolerance;
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $3' : '';
+  const params = merchantId ? [minAmount, maxAmount, merchantId] : [minAmount, maxAmount];
 
   const result = await db.query(
     `SELECT "orderNumber"
@@ -551,9 +601,10 @@ export async function getOrdersNeedingBuyerName(
        AND "totalPrice"::numeric BETWEEN $1 AND $2
        AND "releasedAt" IS NULL
        AND "buyerRealName" IS NULL
+       ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
      LIMIT 10`,
-    [minAmount, maxAmount]
+    params
   );
 
   return result.rows;
@@ -582,6 +633,11 @@ export async function updateOrderBuyerName(
  */
 export async function getAllOpenOrdersNeedingBuyerName(): Promise<Array<{ orderNumber: string }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $1' : '';
+  const params = merchantId ? [merchantId] : [];
 
   const result = await db.query(
     `SELECT "orderNumber"
@@ -589,8 +645,10 @@ export async function getAllOpenOrdersNeedingBuyerName(): Promise<Array<{ orderN
      WHERE status IN ('PENDING', 'PAID')
        AND "releasedAt" IS NULL
        AND "buyerRealName" IS NULL
+       ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
-     LIMIT 50`
+     LIMIT 50`,
+    params
   );
 
   return result.rows;
@@ -754,6 +812,7 @@ export async function hasOrderWithMatchingBuyerName(
   matchedOrders?: Array<{ orderNumber: string; buyerRealName: string | null; buyerNickName: string; matchScore: number }>;
 }> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   // Normalize sender name for comparison
   const normalizedSender = senderName
@@ -766,14 +825,19 @@ export async function hasOrderWithMatchingBuyerName(
 
   const senderWords = new Set(normalizedSender.split(/\s+/).filter(w => w.length > 2));
 
-  // Get ALL open orders (PENDING or PAID status, not released)
+  // Get ALL open orders (PENDING or PAID status, not released) - FILTERED BY MERCHANTID
+  const merchantFilter = merchantId ? 'AND "merchantId" = $1' : '';
+  const params = merchantId ? [merchantId] : [];
+
   const result = await db.query(
     `SELECT "orderNumber", "buyerRealName", "buyerNickName"
      FROM "Order"
      WHERE status IN ('PENDING', 'PAID')
        AND "releasedAt" IS NULL
+       ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
-     LIMIT 100`
+     LIMIT 100`,
+    params
   );
 
   if (result.rows.length === 0) {
@@ -1067,13 +1131,14 @@ export async function getOrdersForManualMatch(
 
 export async function saveChatMessage(message: ChatMessage): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   try {
     await db.query(
       `INSERT INTO "ChatMessage" (
         id, "messageId", "orderNumber", content, "imageUrl", "thumbnailUrl",
-        "messageType", "fromNickName", "isSelf", "binanceTime", "createdAt"
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+        "messageType", "fromNickName", "isSelf", "binanceTime", "merchantId", "createdAt"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
       [
         generateId(),
         message.id.toString(),
@@ -1085,6 +1150,7 @@ export async function saveChatMessage(message: ChatMessage): Promise<void> {
         message.fromNickName,
         message.self,
         new Date(message.createTime),
+        merchantId || null,
       ]
     );
   } catch (err) {
@@ -1106,11 +1172,12 @@ export async function createAlert(data: {
   metadata?: any;
 }): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   await db.query(
     `INSERT INTO "Alert" (
-      id, type, severity, title, message, "orderNumber", metadata, acknowledged, "createdAt"
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, NOW())`,
+      id, type, severity, title, message, "orderNumber", metadata, acknowledged, "merchantId", "createdAt"
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, NOW())`,
     [
       generateId(),
       data.type,
@@ -1119,30 +1186,43 @@ export async function createAlert(data: {
       data.message,
       data.orderNumber || null,
       data.metadata ? JSON.stringify(data.metadata) : null,
+      merchantId || null,
     ]
   );
 
-  logger.info({ type: data.type, severity: data.severity }, 'Alert created');
+  logger.info({ type: data.type, severity: data.severity, merchantId }, 'Alert created');
 }
 
 export async function getUnacknowledgedAlerts() {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? ' AND "merchantId" = $1' : '';
+  const params = merchantId ? [merchantId] : [];
+
   const result = await db.query(
-    'SELECT * FROM "Alert" WHERE acknowledged = false ORDER BY "createdAt" DESC'
+    `SELECT * FROM "Alert" WHERE acknowledged = false${merchantFilter} ORDER BY "createdAt" DESC`,
+    params
   );
   return result.rows;
 }
 
 export async function acknowledgeAlert(id: string, by: string): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // SECURITY: Filter by merchantId to prevent cross-tenant acknowledgment
+  const merchantFilter = merchantId ? ' AND "merchantId" = $3' : '';
+  const params = merchantId ? [by, id, merchantId] : [by, id];
 
   await db.query(
     `UPDATE "Alert" SET
       acknowledged = true,
       "acknowledgedAt" = NOW(),
       "acknowledgedBy" = $1
-    WHERE id = $2`,
-    [by, id]
+    WHERE id = $2${merchantFilter}`,
+    params
   );
 }
 
@@ -1156,10 +1236,11 @@ export async function logAction(
   error?: string
 ): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   await db.query(
-    `INSERT INTO "AuditLog" (id, action, "orderNumber", details, success, error, "createdAt")
-    VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    `INSERT INTO "AuditLog" (id, action, "orderNumber", details, success, error, "merchantId", "createdAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
     [
       generateId(),
       action,
@@ -1167,6 +1248,7 @@ export async function logAction(
       details ? JSON.stringify(details) : null,
       success,
       error || null,
+      merchantId || null,
     ]
   );
 }
@@ -1175,6 +1257,12 @@ export async function logAction(
 
 export async function getOrCreateBuyer(userNo: string, nickName: string) {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  // Each merchant has their own buyer cache entry per buyer
+  const merchantFilter = merchantId ? ' AND "merchantId" = $3' : '';
+  const updateParams = merchantId ? [nickName, userNo, merchantId] : [nickName, userNo];
 
   // Try to update first
   const updateResult = await db.query(
@@ -1183,22 +1271,22 @@ export async function getOrCreateBuyer(userNo: string, nickName: string) {
       "ordersWithUs" = "ordersWithUs" + 1,
       "lastOrderAt" = NOW(),
       "updatedAt" = NOW()
-    WHERE "userNo" = $2
+    WHERE "userNo" = $2${merchantFilter}
     RETURNING *`,
-    [nickName, userNo]
+    updateParams
   );
 
   if (updateResult.rows.length > 0) {
     return updateResult.rows[0];
   }
 
-  // Insert new buyer
+  // Insert new buyer with merchantId
   const insertResult = await db.query(
     `INSERT INTO "BuyerCache" (
-      id, "userNo", "nickName", "ordersWithUs", "lastOrderAt", "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, 1, NOW(), NOW(), NOW())
+      id, "userNo", "nickName", "ordersWithUs", "lastOrderAt", "merchantId", "createdAt", "updatedAt"
+    ) VALUES ($1, $2, $3, 1, NOW(), $4, NOW(), NOW())
     RETURNING *`,
-    [generateId(), userNo, nickName]
+    [generateId(), userNo, nickName, merchantId || null]
   );
 
   return insertResult.rows[0];
@@ -1575,9 +1663,15 @@ export async function isTrustedBuyer(
  */
 export async function getTrustedBuyer(counterPartNickName: string): Promise<TrustedBuyerData | null> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const params = merchantId ? [counterPartNickName, merchantId] : [counterPartNickName];
+
   const result = await db.query(
-    `SELECT * FROM "TrustedBuyer" WHERE "counterPartNickName" = $1`,
-    [counterPartNickName]
+    `SELECT * FROM "TrustedBuyer" WHERE "counterPartNickName" = $1 ${merchantFilter}`,
+    params
   );
   return result.rows[0] || null;
 }
@@ -1594,12 +1688,18 @@ export async function addTrustedBuyer(
   notes?: string
 ): Promise<TrustedBuyerData> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   if (!buyerUserNo) {
     throw new Error('buyerUserNo is required to add a trusted buyer');
   }
 
-  // Try to update if exists by userNo (reactivate)
+  // Try to update if exists by userNo (reactivate) - FILTERED BY MERCHANTID
+  const merchantFilter = merchantId ? ' AND "merchantId" = $6' : '';
+  const updateParams = merchantId
+    ? [buyerUserNo, counterPartNickName, realName || null, verifiedBy || null, notes || null, merchantId]
+    : [buyerUserNo, counterPartNickName, realName || null, verifiedBy || null, notes || null];
+
   const updateResult = await db.query(
     `UPDATE "TrustedBuyer" SET
       "isActive" = true,
@@ -1609,27 +1709,27 @@ export async function addTrustedBuyer(
       "notes" = COALESCE($5, "notes"),
       "verifiedAt" = NOW(),
       "updatedAt" = NOW()
-    WHERE "buyerUserNo" = $1
+    WHERE "buyerUserNo" = $1${merchantFilter}
     RETURNING *`,
-    [buyerUserNo, counterPartNickName, realName || null, verifiedBy || null, notes || null]
+    updateParams
   );
 
   if (updateResult.rows.length > 0) {
-    logger.info({ buyerUserNo, counterPartNickName }, '⭐ Trusted buyer reactivated');
+    logger.info({ buyerUserNo, counterPartNickName, merchantId }, '⭐ Trusted buyer reactivated');
     return updateResult.rows[0];
   }
 
-  // Insert new trusted buyer
+  // Insert new trusted buyer - INCLUDE MERCHANTID
   const insertResult = await db.query(
     `INSERT INTO "TrustedBuyer" (
       id, "counterPartNickName", "buyerUserNo", "realName", "verifiedBy", "notes",
-      "verifiedAt", "isActive", "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), true, NOW(), NOW())
+      "verifiedAt", "isActive", "merchantId", "createdAt", "updatedAt"
+    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), true, $7, NOW(), NOW())
     RETURNING *`,
-    [generateId(), counterPartNickName, buyerUserNo, realName || null, verifiedBy || null, notes || null]
+    [generateId(), counterPartNickName, buyerUserNo, realName || null, verifiedBy || null, notes || null, merchantId]
   );
 
-  logger.info({ buyerUserNo, counterPartNickName, realName }, '⭐ New trusted buyer added');
+  logger.info({ buyerUserNo, counterPartNickName, realName, merchantId }, '⭐ New trusted buyer added');
   return insertResult.rows[0];
 }
 
@@ -1639,18 +1739,22 @@ export async function addTrustedBuyer(
  */
 export async function removeTrustedBuyer(buyerUserNoOrId: string): Promise<boolean> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
-  // Try to remove by buyerUserNo first, then by id
+  // Try to remove by buyerUserNo first, then by id - FILTERED BY MERCHANTID
+  const merchantFilter = merchantId ? ' AND "merchantId" = $2' : '';
+  const params = merchantId ? [buyerUserNoOrId, merchantId] : [buyerUserNoOrId];
+
   const result = await db.query(
     `UPDATE "TrustedBuyer" SET
       "isActive" = false,
       "updatedAt" = NOW()
-    WHERE "buyerUserNo" = $1 OR "id" = $1`,
-    [buyerUserNoOrId]
+    WHERE ("buyerUserNo" = $1 OR "id" = $1)${merchantFilter}`,
+    params
   );
 
   if (result.rowCount && result.rowCount > 0) {
-    logger.info({ buyerUserNoOrId }, '❌ Trusted buyer removed');
+    logger.info({ buyerUserNoOrId, merchantId }, '❌ Trusted buyer removed');
     return true;
   }
   return false;
@@ -2012,15 +2116,16 @@ export async function createSupportRequest(
 ): Promise<SupportRequest> {
   const db = getPool();
   const id = generateId();
+  const merchantId = getMerchantId();
 
   const result = await db.query(
-    `INSERT INTO "SupportRequest" (id, "orderNumber", "buyerNickName", "buyerRealName", amount, message, status, "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW())
+    `INSERT INTO "SupportRequest" (id, "orderNumber", "buyerNickName", "buyerRealName", amount, message, status, "merchantId", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7, NOW())
      RETURNING *`,
-    [id, orderNumber, buyerNickName, buyerRealName, amount, message]
+    [id, orderNumber, buyerNickName, buyerRealName, amount, message, merchantId || null]
   );
 
-  logger.info({ orderNumber, buyerNickName }, '🆘 [SUPPORT] New support request created');
+  logger.info({ orderNumber, buyerNickName, merchantId }, '🆘 [SUPPORT] New support request created');
   return result.rows[0];
 }
 
@@ -2029,10 +2134,15 @@ export async function createSupportRequest(
  */
 export async function hasPendingSupportRequest(orderNumber: string): Promise<boolean> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const params = merchantId ? [orderNumber, merchantId] : [orderNumber];
 
   const result = await db.query(
-    `SELECT id FROM "SupportRequest" WHERE "orderNumber" = $1 AND status = 'PENDING' LIMIT 1`,
-    [orderNumber]
+    `SELECT id FROM "SupportRequest" WHERE "orderNumber" = $1 AND status = 'PENDING' ${merchantFilter} LIMIT 1`,
+    params
   );
 
   return result.rows.length > 0;
@@ -2043,15 +2153,27 @@ export async function hasPendingSupportRequest(orderNumber: string): Promise<boo
  */
 export async function getSupportRequests(status?: string): Promise<SupportRequest[]> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
-  let query = `SELECT * FROM "SupportRequest"`;
+  const conditions: string[] = [];
   const params: any[] = [];
+  let paramIndex = 1;
+
+  // Filter by merchantId if available (multi-tenant mode)
+  if (merchantId) {
+    conditions.push(`"merchantId" = $${paramIndex++}`);
+    params.push(merchantId);
+  }
 
   if (status) {
-    query += ` WHERE status = $1`;
+    conditions.push(`status = $${paramIndex++}`);
     params.push(status);
   }
 
+  let query = `SELECT * FROM "SupportRequest"`;
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
+  }
   query += ` ORDER BY "createdAt" DESC`;
 
   const result = await db.query(query, params);
@@ -2060,6 +2182,7 @@ export async function getSupportRequests(status?: string): Promise<SupportReques
 
 /**
  * Update support request status
+ * SECURITY: Filters by merchantId to prevent cross-tenant updates
  */
 export async function updateSupportRequestStatus(
   id: string,
@@ -2068,6 +2191,7 @@ export async function updateSupportRequestStatus(
   notes?: string
 ): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   const updates: string[] = [`status = $1`];
   const values: any[] = [status];
@@ -2092,12 +2216,18 @@ export async function updateSupportRequestStatus(
 
   values.push(id);
 
+  // SECURITY: Filter by merchantId to prevent cross-tenant updates
+  const merchantFilter = merchantId ? ` AND "merchantId" = $${++paramIndex}` : '';
+  if (merchantId) {
+    values.push(merchantId);
+  }
+
   await db.query(
-    `UPDATE "SupportRequest" SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+    `UPDATE "SupportRequest" SET ${updates.join(', ')} WHERE id = $${paramIndex - (merchantId ? 1 : 0)}${merchantFilter}`,
     values
   );
 
-  logger.info({ id, status }, '📝 [SUPPORT] Request status updated');
+  logger.info({ id, status, merchantId }, '📝 [SUPPORT] Request status updated');
 }
 
 /**
@@ -2105,9 +2235,15 @@ export async function updateSupportRequestStatus(
  */
 export async function getPendingSupportRequestCount(): Promise<number> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? ' AND "merchantId" = $1' : '';
+  const params = merchantId ? [merchantId] : [];
 
   const result = await db.query(
-    `SELECT COUNT(*) as count FROM "SupportRequest" WHERE status = 'PENDING'`
+    `SELECT COUNT(*) as count FROM "SupportRequest" WHERE status = 'PENDING'${merchantFilter}`,
+    params
   );
 
   return parseInt(result.rows[0].count);

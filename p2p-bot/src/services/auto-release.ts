@@ -302,8 +302,24 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         break;
 
       case 'released':
+        // Cleanup maps but DELAY unwatching chat by 20 minutes
+        // This allows detecting AYUDA requests after order is released
+        this.pendingReleases.delete(event.order.orderNumber);
+        this.lastCheckTime.delete(event.order.orderNumber);
+        this.loggedBlockedOrders.delete(event.order.orderNumber);
+
+        // Continue monitoring chat for 20 minutes after release
+        logger.info({ orderNumber: event.order.orderNumber },
+          '📡 [CHAT] Continuing chat monitoring for 20 minutes post-release');
+        setTimeout(() => {
+          this.chatHandler.unwatchOrder(event.order.orderNumber);
+          logger.info({ orderNumber: event.order.orderNumber },
+            '📡 [CHAT] Stopped monitoring chat (20 min post-release)');
+        }, 20 * 60 * 1000); // 20 minutes
+        break;
+
       case 'cancelled':
-        // Cleanup all maps for this order
+        // Cleanup all maps for this order immediately
         this.pendingReleases.delete(event.order.orderNumber);
         this.lastCheckTime.delete(event.order.orderNumber);
         this.loggedBlockedOrders.delete(event.order.orderNumber);

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getMerchantContext } from '@/lib/merchant-context';
 import { Pool } from 'pg';
 
 const pool = new Pool({
@@ -316,14 +315,15 @@ function formatDirectResponse(adsData: any) {
 
 export async function GET(request: NextRequest) {
   try {
-    // Get the logged-in merchant's bot URL
-    const session = await getServerSession(authOptions);
-    let botUrl: string | null = null;
-
-    if (session?.user?.id) {
-      botUrl = await getMerchantBotUrl(session.user.id);
-      console.log(`Using bot URL for merchant ${session.user.id}: ${botUrl}`);
+    // SECURITY: Require authentication
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Get the logged-in merchant's bot URL
+    const botUrl = await getMerchantBotUrl(context.merchantId);
+    console.log(`Using bot URL for merchant ${context.merchantId}: ${botUrl}`);
 
     // 1. Try merchant's bot proxy first (bypasses geo-restriction)
     const proxyResult = await tryRailwayProxy(botUrl);

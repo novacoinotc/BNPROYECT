@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
+import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 
+const prisma = new PrismaClient();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -26,6 +27,12 @@ async function getMerchantBotUrl(merchantId: string): Promise<string | null> {
 
 export async function POST(request: NextRequest) {
   try {
+    // SECURITY: Require authentication
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { orderNumber, authType, code } = body;
 
@@ -36,13 +43,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the logged-in merchant's bot URL
-    const session = await getServerSession(authOptions);
-    let botUrl: string | null = null;
+    // SECURITY: Verify merchant owns this order before proxying release
+    const merchantFilter = getMerchantFilter(context);
+    const order = await prisma.order.findFirst({
+      where: { orderNumber, ...merchantFilter },
+      select: { id: true, orderNumber: true },
+    });
 
-    if (session?.user?.id) {
-      botUrl = await getMerchantBotUrl(session.user.id);
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: 'Order not found or access denied' },
+        { status: 404 }
+      );
     }
+
+    // Get the logged-in merchant's bot URL
+    const botUrl = await getMerchantBotUrl(context.merchantId);
 
     // Use merchant's bot URL or fallback to global RAILWAY_API_URL
     const apiUrl = botUrl || RAILWAY_API_URL;
