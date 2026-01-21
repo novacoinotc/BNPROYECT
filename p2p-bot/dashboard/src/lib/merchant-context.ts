@@ -65,17 +65,25 @@ export async function getMerchantContext(): Promise<MerchantContext | null> {
 
 /**
  * Build a WHERE clause filter based on merchant context
- * Admins can see all data, merchants only see their own
+ * Admins see all by default, but when "viewing as" a merchant, filter by that merchant
+ * Regular merchants only see their own data
  */
 export function getMerchantFilter(context: MerchantContext | null): { merchantId?: string } {
   if (!context) {
     return {}; // No filter if no context (will be rejected by auth)
   }
 
-  if (context.isAdmin) {
-    return {}; // Admins see all
+  // If admin is viewing as a specific merchant, filter by that merchant
+  if (context.isAdmin && context.isViewingAs) {
+    return { merchantId: context.merchantId };
   }
 
+  // Admins without viewAs see all
+  if (context.isAdmin) {
+    return {};
+  }
+
+  // Regular merchants only see their own
   return { merchantId: context.merchantId };
 }
 
