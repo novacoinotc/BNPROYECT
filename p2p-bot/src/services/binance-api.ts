@@ -108,7 +108,15 @@ export async function fetchMerchantAds(tradeType?: 'BUY' | 'SELL'): Promise<AdIn
 
     return ads;
   } catch (error: any) {
-    logger.error({ error: error.message }, '❌ [BINANCE-API] Error fetching merchant ads');
+    // Log detailed error info for debugging
+    const errorDetails = {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      responseData: error.response?.data,
+    };
+    logger.error(errorDetails, '❌ [BINANCE-API] Error fetching merchant ads');
     return [];
   }
 }
@@ -167,10 +175,15 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
       message: data.msg || data.message,
     };
   } catch (error: any) {
-    logger.error({
+    // Log detailed error info for debugging
+    const errorDetails = {
       advNo,
-      error: error.message,
-    }, '❌ [BINANCE-API] Error updating ad price');
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      responseData: error.response?.data,
+    };
+    logger.error(errorDetails, '❌ [BINANCE-API] Error updating ad price');
     return {
       success: false,
       message: error.message,
