@@ -2,12 +2,12 @@
 // BUY AD MANAGER - Manages only BUY ads independently
 // =====================================================
 
-import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
 import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
+import { fetchBuyAds as fetchBuyAdsApi, updateAdPrice as updateAdPriceApi, AdInfo } from '../binance-api.js';
 
 interface BuyAd {
   advNo: string;
@@ -25,107 +25,26 @@ interface BuyManagerConfig {
   smartConfig: Partial<SmartConfig>;
 }
 
-// API helpers
-function signQuery(query: string): string {
-  const secret = process.env.BINANCE_API_SECRET || '';
-  return crypto.createHmac('sha256', secret).update(query).digest('hex');
-}
-
+// Wrapper functions using shared API helper with proxy support
 async function fetchBuyAds(): Promise<BuyAd[]> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-MBX-APIKEY': apiKey,
-        },
-        body: JSON.stringify({ page: 1, rows: 50 }),
-      }
-    );
-
-    const text = await res.text();
-    if (!text) return [];
-
-    const data = JSON.parse(text);
-    const allAds: any[] = [];
-
-    // Handle different API response formats
-    if (Array.isArray(data.data)) {
-      // Direct array format
-      allAds.push(...data.data);
-    } else if (data.data) {
-      // Object format with lists
-      if (data.data.buyList) {
-        allAds.push(...data.data.buyList);
-      }
-      if (data.data.sellList) {
-        // Also check sellList in case BUY ads are mixed in
-        allAds.push(...data.data.sellList);
-      }
-    }
-
-    // Filter only online BUY ads (advStatus === 1)
-    const filtered = allAds
-      .filter(ad => ad.tradeType === 'BUY' && ad.advStatus === 1)
-      .map(ad => ({
-        advNo: ad.advNo,
-        asset: ad.asset,
-        fiat: ad.fiatUnit,
-        currentPrice: parseFloat(ad.price),
-        lastUpdate: null,
-      }));
-    return filtered;
-  } catch (error: any) {
-    logger.error(`❌ [BUY] Error fetching ads: ${error.message}`);
-    return [];
-  }
+  const ads = await fetchBuyAdsApi();
+  return ads.map(ad => ({
+    advNo: ad.advNo,
+    asset: ad.asset,
+    fiat: ad.fiat,
+    currentPrice: ad.currentPrice,
+    lastUpdate: null,
+  }));
 }
 
 async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const roundedPrice = Math.round(price * 100) / 100;
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  const requestBody = { advNo, price: roundedPrice };
-
-  try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/update?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': apiKey },
-        body: JSON.stringify(requestBody),
-      }
-    );
-
-    const text = await res.text();
-
-    if (!text) {
-      logger.warn(`⚠️ [BUY] Empty API response for advNo=${advNo}`);
-      return false;
-    }
-
-    const data = JSON.parse(text);
-    const success = data.success === true || data.code === '000000';
-
-    if (success) {
-      logger.info(`✅ [BUY] API Update OK: advNo=${advNo} → $${roundedPrice}`);
-    } else {
-      logger.warn(`⚠️ [BUY] API Update FAILED: code=${data.code} msg=${data.msg || data.message || JSON.stringify(data)}`);
-    }
-
-    return success;
-  } catch (error: any) {
-    logger.error(`❌ [BUY] API Error: ${error.message}`);
-    return false;
+  const result = await updateAdPriceApi(advNo, price);
+  if (result.success) {
+    logger.info(`✅ [BUY] API Update OK: advNo=${advNo} → $${(Math.round(price * 100) / 100).toFixed(2)}`);
+  } else {
+    logger.warn(`⚠️ [BUY] API Update FAILED: ${result.message || 'Unknown error'}`);
   }
+  return result.success;
 }
 
 export class BuyAdManager extends EventEmitter {

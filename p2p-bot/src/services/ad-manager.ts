@@ -1,16 +1,14 @@
 // =====================================================
 // AD MANAGER - Automatically finds and manages active ads
+// Uses shared binance-api helper with proxy support
 // =====================================================
 
-import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
-
-const API_KEY = process.env.BINANCE_API_KEY!;
-const API_SECRET = process.env.BINANCE_API_SECRET!;
-
-function sign(query: string): string {
-  return crypto.createHmac('sha256', API_SECRET).update(query).digest('hex');
-}
+import {
+  fetchMerchantAds,
+  updateAdPrice as updateAdPriceApi,
+  AdInfo as ApiAdInfo,
+} from './binance-api.js';
 
 export interface AdInfo {
   advNo: string;
@@ -28,35 +26,20 @@ export interface AdInfo {
  * Get all user's ads
  */
 export async function getMyAds(): Promise<AdInfo[]> {
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
+  const ads = await fetchMerchantAds();
 
-  const res = await fetch(
-    `https://api.binance.com/sapi/v1/c2c/ads/list?${query}&signature=${sign(query)}`,
-    {
-      method: 'GET',
-      headers: { 'X-MBX-APIKEY': API_KEY },
-    }
-  );
-
-  const data = await res.json() as any;
-
-  if (!data.data) {
-    logger.warn('No ads data returned');
-    return [];
-  }
-
-  // Combine sellList and buyList
-  const allAds: AdInfo[] = [];
-
-  if (data.data.sellList) {
-    allAds.push(...data.data.sellList);
-  }
-  if (data.data.buyList) {
-    allAds.push(...data.data.buyList);
-  }
-
-  return allAds;
+  // Map from ApiAdInfo to AdInfo
+  return ads.map(ad => ({
+    advNo: ad.advNo,
+    tradeType: ad.tradeType,
+    asset: ad.asset,
+    fiatUnit: ad.fiat,
+    price: ad.currentPrice.toString(),
+    advStatus: ad.isOnline ? 1 : 4,
+    surplusAmount: '0',
+    minSingleTransAmount: '0',
+    maxSingleTransAmount: '0',
+  }));
 }
 
 /**
@@ -90,51 +73,26 @@ export async function findActiveAd(
 
 /**
  * Get ad detail by advNo
+ * Note: This function is deprecated - use getMyAds and filter instead
  */
 export async function getAdDetail(advNo: string): Promise<AdInfo | null> {
-  const ts = Date.now();
-  const query = `adsNo=${advNo}&timestamp=${ts}`;
-
-  const res = await fetch(
-    `https://api.binance.com/sapi/v1/c2c/ads/getDetailByNo?${query}&signature=${sign(query)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': API_KEY },
-    }
-  );
-
-  const data = await res.json() as any;
-  return data.data || null;
+  const ads = await getMyAds();
+  return ads.find(ad => ad.advNo === advNo) || null;
 }
 
 /**
  * Update ad price
  */
 export async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
-  const roundedPrice = Math.round(price * 100) / 100;
+  const result = await updateAdPriceApi(advNo, price);
 
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  const res = await fetch(
-    `https://api.binance.com/sapi/v1/c2c/ads/update?${query}&signature=${sign(query)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': API_KEY },
-      body: JSON.stringify({ advNo, price: roundedPrice }),
-    }
-  );
-
-  const data = await res.json() as any;
-  const success = data.success === true || data.code === '000000';
-
-  if (success) {
-    logger.info(`✅ Price updated: ${advNo} -> ${roundedPrice}`);
+  if (result.success) {
+    logger.info(`✅ Price updated: ${advNo} -> ${Math.round(price * 100) / 100}`);
   } else {
-    logger.error(`❌ Failed to update price: ${JSON.stringify(data)}`);
+    logger.error(`❌ Failed to update price: ${result.message || 'Unknown error'}`);
   }
 
-  return success;
+  return result.success;
 }
 
 /**

@@ -5,11 +5,11 @@
 // =====================================================
 
 import { EventEmitter } from 'events';
-import crypto from 'crypto';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { SmartPositioning, createSmartPositioning } from './smart-positioning.js';
 import { FollowPositioning, createFollowPositioning } from './follow-positioning.js';
 import { updateBotLastActive } from './database-pg.js';
+import { findActiveAdNo as findActiveAdNoApi } from './binance-api.js';
 import { logger } from '../utils/logger.js';
 import {
   TradeType,
@@ -21,89 +21,19 @@ import {
 
 // ==================== AUTO-DETECT ACTIVE AD ====================
 
-function signQuery(query: string): string {
-  const secret = process.env.BINANCE_API_SECRET || '';
-  return crypto.createHmac('sha256', secret).update(query).digest('hex');
-}
-
-interface AdInfo {
-  advNo: string;
-  tradeType: string;
-  asset: string;
-  fiatUnit: string;
-  price: string;
-  advStatus: number;
-}
-
 /**
  * Auto-detect the active ad based on tradeType, asset, and fiat.
  * Returns the advNo if found, or null if no matching active ad.
+ * Uses shared API helper with proxy support.
  */
 export async function findActiveAdNo(
   tradeType: TradeType,
   asset: string = 'USDT',
   fiat: string = 'MXN'
 ): Promise<string | null> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-
-  try {
-    const ts = Date.now();
-    const query = `timestamp=${ts}`;
-
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/list?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'GET',
-        headers: { 'X-MBX-APIKEY': apiKey },
-      }
-    );
-
-    const text = await res.text();
-    if (!text) {
-      logger.warn('Empty response from ads/list endpoint');
-      return null;
-    }
-
-    const data = JSON.parse(text);
-    const allAds: AdInfo[] = [];
-
-    if (data.data?.sellList) allAds.push(...data.data.sellList);
-    if (data.data?.buyList) allAds.push(...data.data.buyList);
-
-    // Find the active ad matching our criteria
-    // Note: tradeType here is the AD type (SELL/BUY), not the search type
-    const adTradeType = tradeType === TradeType.BUY ? 'SELL' : 'BUY';
-
-    const activeAd = allAds.find(ad =>
-      ad.tradeType === adTradeType &&
-      ad.asset === asset &&
-      ad.fiatUnit === fiat &&
-      ad.advStatus === 1 // 1 = online
-    );
-
-    if (activeAd) {
-      logger.info({
-        advNo: activeAd.advNo,
-        tradeType: activeAd.tradeType,
-        asset: activeAd.asset,
-        fiat: activeAd.fiatUnit,
-        price: activeAd.price,
-      }, '🎯 [AUTO-DETECT] Found active ad');
-      return activeAd.advNo;
-    }
-
-    logger.warn({
-      searchType: adTradeType,
-      asset,
-      fiat,
-      totalAds: allAds.length,
-    }, '⚠️ [AUTO-DETECT] No active ad found matching criteria');
-    return null;
-
-  } catch (error: any) {
-    logger.error({ error: error.message }, '❌ [AUTO-DETECT] Failed to find active ad');
-    return null;
-  }
+  // Convert TradeType enum to string for the API helper
+  const searchType = tradeType === TradeType.BUY ? 'BUY' : 'SELL';
+  return findActiveAdNoApi(searchType, asset, fiat);
 }
 
 export type PositioningMode = 'smart' | 'follow' | 'manual' | 'off';

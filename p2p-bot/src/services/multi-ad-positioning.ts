@@ -4,13 +4,13 @@
 // Respects dashboard config (smart/follow mode)
 // =====================================================
 
-import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { getBinanceClient } from './binance-client.js';
 import { SmartPositioning, createSmartPositioning } from './smart-positioning.js';
 import { FollowPositioning, createFollowPositioning } from './follow-positioning.js';
 import { getBotConfig, BotConfig } from './database-pg.js';
+import { fetchMerchantAds, updateAdPrice as updateAdPriceApi, AdInfo as ApiAdInfo } from './binance-api.js';
 import { TradeType, SmartPositioningConfig, FollowModeConfig, PositioningAnalysis } from '../types/binance.js';
 
 // ==================== TYPES ====================
@@ -50,46 +50,21 @@ export interface MultiAdStatus {
   lastConfigCheck: Date | null;
 }
 
-// ==================== API HELPERS ====================
-
-function signQuery(query: string): string {
-  const secret = process.env.BINANCE_API_SECRET || '';
-  return crypto.createHmac('sha256', secret).update(query).digest('hex');
-}
+// ==================== API HELPERS (using shared proxy-enabled helper) ====================
 
 async function fetchAllAds(): Promise<AdInfo[]> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
   try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-MBX-APIKEY': apiKey,
-        },
-        body: JSON.stringify({ page: 1, rows: 50 }),
-      }
-    );
-
-    const text = await res.text();
-    if (!text) return [];
-
-    const data = JSON.parse(text);
-    const allAds: AdInfo[] = [];
-
-    // Handle different response formats
-    if (Array.isArray(data.data)) {
-      allAds.push(...data.data);
-    } else if (data.data?.sellList) {
-      allAds.push(...data.data.sellList);
-      if (data.data.buyList) allAds.push(...data.data.buyList);
-    }
-
-    return allAds;
+    const ads = await fetchMerchantAds();
+    // Map to expected format
+    return ads.map(ad => ({
+      advNo: ad.advNo,
+      tradeType: ad.tradeType,
+      asset: ad.asset,
+      fiatUnit: ad.fiat,
+      price: ad.currentPrice.toString(),
+      advStatus: ad.isOnline ? 1 : 4,
+      surplusAmount: '0',
+    }));
   } catch (error: any) {
     logger.error({ error: error.message }, '❌ [MULTI-AD] Failed to fetch ads');
     return [];
@@ -97,27 +72,8 @@ async function fetchAllAds(): Promise<AdInfo[]> {
 }
 
 async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const roundedPrice = Math.round(price * 100) / 100;
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/update?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': apiKey },
-        body: JSON.stringify({ advNo, price: roundedPrice }),
-      }
-    );
-
-    const data = await res.json() as any;
-    return data.success === true || data.code === '000000';
-  } catch (error: any) {
-    logger.error({ advNo, error: error.message }, '❌ [MULTI-AD] Failed to update price');
-    return false;
-  }
+  const result = await updateAdPriceApi(advNo, price);
+  return result.success;
 }
 
 // ==================== MULTI-AD MANAGER ====================

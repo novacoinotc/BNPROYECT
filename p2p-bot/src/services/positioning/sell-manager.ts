@@ -2,12 +2,12 @@
 // SELL AD MANAGER - Manages only SELL ads independently
 // =====================================================
 
-import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
 import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
+import { fetchSellAds as fetchSellAdsApi, updateAdPrice as updateAdPriceApi, AdInfo } from '../binance-api.js';
 
 interface SellAd {
   advNo: string;
@@ -25,97 +25,26 @@ interface SellManagerConfig {
   smartConfig: Partial<SmartConfig>;
 }
 
-// API helpers
-function signQuery(query: string): string {
-  const secret = process.env.BINANCE_API_SECRET || '';
-  return crypto.createHmac('sha256', secret).update(query).digest('hex');
-}
-
+// Wrapper functions using shared API helper with proxy support
 async function fetchSellAds(): Promise<SellAd[]> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-MBX-APIKEY': apiKey,
-        },
-        body: JSON.stringify({ page: 1, rows: 50 }),
-      }
-    );
-
-    const text = await res.text();
-    if (!text) return [];
-
-    const data = JSON.parse(text);
-    const allAds: any[] = [];
-
-    if (Array.isArray(data.data)) {
-      allAds.push(...data.data);
-    } else if (data.data?.sellList) {
-      allAds.push(...data.data.sellList);
-    }
-
-    // Filter only online SELL ads (advStatus === 1)
-    return allAds
-      .filter(ad => ad.tradeType === 'SELL' && ad.advStatus === 1)
-      .map(ad => ({
-        advNo: ad.advNo,
-        asset: ad.asset,
-        fiat: ad.fiatUnit,
-        currentPrice: parseFloat(ad.price),
-        lastUpdate: null,
-      }));
-  } catch (error: any) {
-    logger.error(`❌ [SELL] Error fetching ads: ${error.message}`);
-    return [];
-  }
+  const ads = await fetchSellAdsApi();
+  return ads.map(ad => ({
+    advNo: ad.advNo,
+    asset: ad.asset,
+    fiat: ad.fiat,
+    currentPrice: ad.currentPrice,
+    lastUpdate: null,
+  }));
 }
 
 async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const roundedPrice = Math.round(price * 100) / 100;
-  const ts = Date.now();
-  const query = `timestamp=${ts}`;
-
-  const requestBody = { advNo, price: roundedPrice };
-
-  try {
-    const res = await fetch(
-      `https://api.binance.com/sapi/v1/c2c/ads/update?${query}&signature=${signQuery(query)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-MBX-APIKEY': apiKey },
-        body: JSON.stringify(requestBody),
-      }
-    );
-
-    const text = await res.text();
-
-    if (!text) {
-      logger.warn(`⚠️ [SELL] Empty API response for advNo=${advNo}`);
-      return false;
-    }
-
-    const data = JSON.parse(text);
-    const success = data.success === true || data.code === '000000';
-
-    if (success) {
-      logger.info(`✅ [SELL] API Update OK: advNo=${advNo} → $${roundedPrice}`);
-    } else {
-      logger.warn(`⚠️ [SELL] API Update FAILED: code=${data.code} msg=${data.msg || data.message || JSON.stringify(data)}`);
-    }
-
-    return success;
-  } catch (error: any) {
-    logger.error(`❌ [SELL] API Error: ${error.message}`);
-    return false;
+  const result = await updateAdPriceApi(advNo, price);
+  if (result.success) {
+    logger.info(`✅ [SELL] API Update OK: advNo=${advNo} → $${(Math.round(price * 100) / 100).toFixed(2)}`);
+  } else {
+    logger.warn(`⚠️ [SELL] API Update FAILED: ${result.message || 'Unknown error'}`);
   }
+  return result.success;
 }
 
 export class SellAdManager extends EventEmitter {
