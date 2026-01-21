@@ -3,6 +3,7 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { MerchantSelector } from './MerchantSelector';
 
 export function UserHeader() {
   const { data: session } = useSession();
@@ -26,6 +27,9 @@ export function UserHeader() {
               </span>
             )}
           </div>
+
+          {/* Merchant Selector - Only for Admin */}
+          {isAdmin && <MerchantSelector />}
 
           {/* User Menu */}
           <div className="relative">

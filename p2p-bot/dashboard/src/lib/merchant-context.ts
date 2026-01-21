@@ -1,4 +1,5 @@
 import { getServerSession } from 'next-auth';
+import { cookies, headers } from 'next/headers';
 import { authOptions } from './auth';
 
 export interface MerchantContext {
@@ -6,10 +7,14 @@ export interface MerchantContext {
   isAdmin: boolean;
   email: string;
   name: string;
+  // When admin is viewing as a merchant
+  isViewingAs?: boolean;
+  viewingMerchantName?: string;
 }
 
 /**
  * Get the current merchant context from the session
+ * For admins, checks if they have selected a specific merchant to view
  * Returns null if not authenticated
  */
 export async function getMerchantContext(): Promise<MerchantContext | null> {
@@ -19,12 +24,43 @@ export async function getMerchantContext(): Promise<MerchantContext | null> {
     return null;
   }
 
-  return {
+  const baseContext: MerchantContext = {
     merchantId: session.user.id,
     isAdmin: session.user.isAdmin,
     email: session.user.email,
     name: session.user.name,
   };
+
+  // If admin, check for selected merchant override
+  if (session.user.isAdmin) {
+    try {
+      // Check header first (set by client)
+      const headersList = await headers();
+      const selectedMerchantId = headersList.get('x-selected-merchant-id');
+      const selectedMerchantName = headersList.get('x-selected-merchant-name');
+
+      // Also check cookie as fallback
+      const cookieStore = await cookies();
+      const cookieMerchantId = cookieStore.get('selectedMerchantId')?.value;
+      const cookieMerchantName = cookieStore.get('selectedMerchantName')?.value;
+
+      const finalMerchantId = selectedMerchantId || cookieMerchantId;
+      const finalMerchantName = selectedMerchantName || cookieMerchantName;
+
+      if (finalMerchantId && finalMerchantId !== session.user.id) {
+        return {
+          ...baseContext,
+          merchantId: finalMerchantId,
+          isViewingAs: true,
+          viewingMerchantName: finalMerchantName || undefined,
+        };
+      }
+    } catch {
+      // headers/cookies might not be available in some contexts
+    }
+  }
+
+  return baseContext;
 }
 
 /**
