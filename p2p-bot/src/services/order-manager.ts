@@ -271,10 +271,38 @@ export class OrderManager extends EventEmitter {
     const existingOrder = this.activeOrders.get(order.orderNumber);
 
     if (!existingOrder) {
-      // New order detected - only track if not completed/cancelled
+      // New order detected
       if (!['COMPLETED', 'CANCELLED', 'CANCELLED_BY_SYSTEM'].includes(order.orderStatus)) {
+        // Active order - track and process fully
         await this.handleNewOrder(order);
         this.activeOrders.set(order.orderNumber, order);
+      } else {
+        // Completed/cancelled order - still fetch buyer info and save to DB
+        // This ensures we have buyerUserNo for historical orders
+        if (!order.buyer?.userNo && !(order as any).buyerUserNo) {
+          try {
+            const orderDetail = await this.client.getOrderDetail(order.orderNumber);
+            if (orderDetail.buyer?.userNo) {
+              (order as any).buyerUserNo = orderDetail.buyer.userNo;
+            }
+            if (orderDetail.buyer?.realName) {
+              (order as any).buyerRealName = orderDetail.buyer.realName;
+            }
+            logger.debug({
+              orderNumber: order.orderNumber,
+              status: order.orderStatus,
+              buyerUserNo: (order as any).buyerUserNo,
+            }, 'Fetched buyer info for completed order');
+          } catch (detailError) {
+            logger.debug({ orderNumber: order.orderNumber }, 'Could not fetch order detail for completed order');
+          }
+        }
+        // Save/update in DB (will populate buyerUserNo if fetched)
+        try {
+          await saveOrder(order);
+        } catch (dbError) {
+          logger.debug({ orderNumber: order.orderNumber }, 'Failed to save completed order');
+        }
       }
     } else if (existingOrder.orderStatus !== order.orderStatus) {
       // Status actually changed - process it
@@ -306,8 +334,9 @@ export class OrderManager extends EventEmitter {
       status: order.orderStatus,
     }, 'New order detected');
 
-    // For BUYER_PAYED orders, fetch detail BEFORE saving to get buyer info
-    if (order.orderStatus === 'BUYER_PAYED') {
+    // Fetch order detail to get buyer info (userNo, realName) for ALL orders
+    // This ensures we always have buyer identification even for completed orders
+    if (!order.buyer?.userNo && !(order as any).buyerUserNo) {
       try {
         const orderDetail = await this.client.getOrderDetail(order.orderNumber);
         if (orderDetail.buyer?.userNo) {
@@ -324,10 +353,11 @@ export class OrderManager extends EventEmitter {
         }
         logger.info({
           orderNumber: order.orderNumber,
+          status: order.orderStatus,
           counterPartNickName: order.counterPartNickName,
           buyerUserNo: (order as any).buyerUserNo,
           buyerRealName: (order as any).buyerRealName,
-        }, 'Fetched buyer info from order detail for new order');
+        }, 'Fetched buyer info from order detail');
       } catch (detailError) {
         logger.warn({ orderNumber: order.orderNumber, error: detailError }, 'Could not fetch order detail for buyer info');
       }
