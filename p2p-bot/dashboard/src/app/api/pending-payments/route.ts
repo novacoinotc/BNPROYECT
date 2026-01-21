@@ -255,3 +255,90 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+// DELETE - Bulk discard/resolve multiple payments
+export async function DELETE(request: NextRequest) {
+  try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { transactionIds, resolvedBy, reason } = body;
+
+    if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'transactionIds array is required' },
+        { status: 400 }
+      );
+    }
+
+    // Limit to 100 payments at a time to prevent abuse
+    if (transactionIds.length > 100) {
+      return NextResponse.json(
+        { success: false, error: 'Maximum 100 payments can be discarded at once' },
+        { status: 400 }
+      );
+    }
+
+    // Build merchant filter for query
+    const merchantFilter = getMerchantFilter(context);
+    const merchantCondition = merchantFilter.merchantId
+      ? `AND "merchantId" = $2`
+      : '';
+
+    // Build parameterized query for bulk update
+    // We use ANY() to match multiple transactionIds
+    const updateParams: any[] = [transactionIds];
+    if (merchantFilter.merchantId) {
+      updateParams.push(merchantFilter.merchantId);
+    }
+
+    // Update all matching payments to FAILED (resolved/ignored)
+    // Only update if they are PENDING or THIRD_PARTY (not RELEASED or MATCHED)
+    const result = await pool.query(
+      `UPDATE "Payment" SET
+        status = 'FAILED',
+        "updatedAt" = NOW()
+      WHERE "transactionId" = ANY($1)
+        AND status IN ('PENDING', 'THIRD_PARTY')
+        ${merchantCondition}
+      RETURNING "transactionId"`,
+      updateParams
+    );
+
+    const updatedCount = result.rowCount || 0;
+
+    // Create audit log entry for bulk action
+    const id = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
+    await pool.query(
+      `INSERT INTO "AuditLog" (id, action, details, success, "merchantId", "createdAt")
+       VALUES ($1, 'bulk_payment_discard', $2, true, $3, NOW())`,
+      [
+        id,
+        JSON.stringify({
+          transactionIds,
+          updatedCount,
+          resolvedBy,
+          reason: reason || 'Bulk discard',
+        }),
+        context.merchantId,
+      ]
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: `${updatedCount} payment(s) discarded successfully`,
+      discardedCount: updatedCount,
+      requestedCount: transactionIds.length,
+    });
+  } catch (error) {
+    console.error('Error bulk discarding payments:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to discard payments' },
+      { status: 500 }
+    );
+  }
+}

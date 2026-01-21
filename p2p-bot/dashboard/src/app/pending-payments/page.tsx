@@ -29,6 +29,11 @@ export default function PendingPaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkResolveModal, setShowBulkResolveModal] = useState(false);
+  const [bulkResolving, setBulkResolving] = useState(false);
+
   // Modal states
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(false);
@@ -61,6 +66,66 @@ export default function PendingPaymentsPage() {
     const interval = setInterval(fetchPayments, 30000);
     return () => clearInterval(interval);
   }, [fetchPayments]);
+
+  // Clear selection when payments change
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [payments]);
+
+  // Multi-select handlers
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === payments.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(payments.map(p => p.id)));
+    }
+  };
+
+  const handleBulkResolve = async () => {
+    if (selectedIds.size === 0) return;
+
+    setBulkResolving(true);
+    try {
+      const transactionIds = payments
+        .filter(p => selectedIds.has(p.id))
+        .map(p => p.transactionId);
+
+      const response = await fetch('/api/pending-payments', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transactionIds,
+          resolvedBy: 'Dashboard',
+          reason: 'Bulk discard',
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setShowBulkResolveModal(false);
+        setSelectedIds(new Set());
+        fetchPayments();
+      } else {
+        alert(data.error || 'Error al descartar pagos');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error');
+    } finally {
+      setBulkResolving(false);
+    }
+  };
 
   const openMatchModal = async (payment: PendingPayment) => {
     setSelectedPayment(payment);
@@ -159,12 +224,25 @@ export default function PendingPaymentsPage() {
             Pagos recibidos que no coinciden con ningun comprador conocido
           </p>
         </div>
-        <button
-          onClick={fetchPayments}
-          className="px-4 py-2 bg-dark-hover text-gray-300 rounded-lg hover:bg-dark-border transition"
-        >
-          Actualizar
-        </button>
+        <div className="flex items-center gap-3">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => setShowBulkResolveModal(true)}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Descartar ({selectedIds.size})
+            </button>
+          )}
+          <button
+            onClick={fetchPayments}
+            className="px-4 py-2 bg-dark-hover text-gray-300 rounded-lg hover:bg-dark-border transition"
+          >
+            Actualizar
+          </button>
+        </div>
       </div>
 
       {/* Info Card */}
@@ -200,6 +278,14 @@ export default function PendingPaymentsPage() {
           <table className="w-full">
             <thead className="bg-dark-hover text-gray-400 text-xs uppercase">
               <tr>
+                <th className="px-4 py-3 text-center w-12">
+                  <input
+                    type="checkbox"
+                    checked={payments.length > 0 && selectedIds.size === payments.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-600 bg-dark-bg text-primary-600 focus:ring-primary-500 cursor-pointer"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left">Monto</th>
                 <th className="px-4 py-3 text-left">Ordenante (SPEI)</th>
                 <th className="px-4 py-3 text-left">Referencia</th>
@@ -209,7 +295,18 @@ export default function PendingPaymentsPage() {
             </thead>
             <tbody className="divide-y divide-dark-border">
               {payments.map((payment) => (
-                <tr key={payment.id} className="hover:bg-dark-hover transition">
+                <tr
+                  key={payment.id}
+                  className={`hover:bg-dark-hover transition ${selectedIds.has(payment.id) ? 'bg-primary-500/10' : ''}`}
+                >
+                  <td className="px-4 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(payment.id)}
+                      onChange={() => toggleSelect(payment.id)}
+                      className="w-4 h-4 rounded border-gray-600 bg-dark-bg text-primary-600 focus:ring-primary-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <span className="text-white font-medium text-lg">
                       ${payment.amount.toLocaleString()}
@@ -419,6 +516,81 @@ export default function PendingPaymentsPage() {
                 className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
               >
                 Marcar Resuelto
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Resolve Modal */}
+      {showBulkResolveModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowBulkResolveModal(false)}
+        >
+          <div
+            className="bg-dark-card rounded-xl p-6 w-full max-w-md border border-dark-border"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Descartar Pagos Seleccionados
+            </h3>
+
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-4">
+              <p className="text-red-400">
+                Estas a punto de descartar <strong>{selectedIds.size} pago(s)</strong>.
+              </p>
+              <p className="text-red-400/80 text-sm mt-1">
+                Estos pagos seran marcados como ignorados y no podran vincularse a ninguna orden.
+              </p>
+            </div>
+
+            {/* Summary of selected payments */}
+            <div className="bg-dark-bg rounded-lg p-3 mb-4 max-h-40 overflow-y-auto">
+              <p className="text-gray-400 text-xs mb-2">Pagos seleccionados:</p>
+              {payments
+                .filter(p => selectedIds.has(p.id))
+                .map(p => (
+                  <div key={p.id} className="flex justify-between text-sm py-1 border-b border-dark-border last:border-0">
+                    <span className="text-white">${p.amount.toLocaleString()}</span>
+                    <span className="text-gray-500 truncate ml-2">{p.senderName}</span>
+                  </div>
+                ))}
+              <div className="flex justify-between text-sm pt-2 mt-2 border-t border-dark-border font-medium">
+                <span className="text-gray-400">Total:</span>
+                <span className="text-white">
+                  ${payments
+                    .filter(p => selectedIds.has(p.id))
+                    .reduce((sum, p) => sum + p.amount, 0)
+                    .toLocaleString()} MXN
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowBulkResolveModal(false)}
+                disabled={bulkResolving}
+                className="flex-1 px-4 py-2 bg-dark-hover text-gray-300 rounded-lg hover:bg-dark-border transition disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkResolve}
+                disabled={bulkResolving}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {bulkResolving ? (
+                  <>
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                    Procesando...
+                  </>
+                ) : (
+                  <>Descartar {selectedIds.size} pago(s)</>
+                )}
               </button>
             </div>
           </div>
