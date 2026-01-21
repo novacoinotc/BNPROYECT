@@ -1,11 +1,25 @@
 // =====================================================
 // BINANCE C2C API CLIENT
 // Handles authentication, signing, and API requests
+// Supports HTTP proxy for static IP (Webshare, etc.)
 // =====================================================
 
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import CryptoJS from 'crypto-js';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { logger } from '../utils/logger.js';
+
+// Create proxy agent if PROXY_URL is set
+function createProxyAgent(): HttpsProxyAgent<string> | undefined {
+  const proxyUrl = process.env.PROXY_URL;
+  if (proxyUrl) {
+    logger.info({ proxyUrl: proxyUrl.replace(/:[^:@]+@/, ':***@') }, '🌐 Using HTTP proxy for Binance API');
+    return new HttpsProxyAgent(proxyUrl);
+  }
+  return undefined;
+}
+
+const proxyAgent = createProxyAgent();
 import {
   BinanceApiResponse,
   SearchAdsRequest,
@@ -80,6 +94,8 @@ export class BinanceC2CClient {
         'X-MBX-APIKEY': this.apiKey,
         'clientType': 'web',  // Required by Binance C2C API
       },
+      // Use proxy if configured (for static IP)
+      ...(proxyAgent && { httpsAgent: proxyAgent, proxy: false }),
     });
 
     // Request interceptor for logging
@@ -185,40 +201,43 @@ export class BinanceC2CClient {
   async searchAds(request: SearchAdsRequest): Promise<AdData[]> {
     try {
       // Try the public P2P API endpoint (no auth required)
-      // Adding browser-like headers to avoid blocking by Binance
-      const response = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Origin': 'https://p2p.binance.com',
-          'Referer': 'https://p2p.binance.com/',
-        },
-        body: (() => {
-          // Use exact format from Binance P2P web interface (without null values)
-          const body = {
-            fiat: request.fiat,
-            page: request.page || 1,
-            rows: request.rows || 20,
-            tradeType: request.tradeType,
-            asset: request.asset,
-            countries: [],
-            proMerchantAds: false,
-            shieldMerchantAds: false,
-            filterType: 'all',
-            periods: [],
-            additionalKycVerifyFilter: 0,
-            payTypes: [],
-          };
-          // Debug level to reduce noise
-          logger.debug({ body }, '[SEARCH ADS] Request');
-          return JSON.stringify(body);
-        })(),
-      });
+      // Using axios with proxy support for static IP
+      const requestBody = {
+        fiat: request.fiat,
+        page: request.page || 1,
+        rows: request.rows || 20,
+        tradeType: request.tradeType,
+        asset: request.asset,
+        countries: [],
+        proMerchantAds: false,
+        shieldMerchantAds: false,
+        filterType: 'all',
+        periods: [],
+        additionalKycVerifyFilter: 0,
+        payTypes: [],
+      };
 
-      const rawData = await response.json() as {
+      logger.debug({ body: requestBody }, '[SEARCH ADS] Request');
+
+      const response = await axios.post(
+        'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search',
+        requestBody,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Origin': 'https://p2p.binance.com',
+            'Referer': 'https://p2p.binance.com/',
+          },
+          timeout: 30000,
+          // Use proxy if configured (for static IP)
+          ...(proxyAgent && { httpsAgent: proxyAgent, proxy: false }),
+        }
+      );
+
+      const rawData = response.data as {
         code?: string;
         message?: string;
         messageDetail?: string;
