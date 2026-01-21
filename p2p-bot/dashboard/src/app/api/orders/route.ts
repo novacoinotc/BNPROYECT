@@ -200,3 +200,72 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+// DELETE - Bulk dismiss orders (hide from dashboard)
+export async function DELETE(request: NextRequest) {
+  try {
+    // Get merchant context
+    const context = await getMerchantContext();
+    if (!context) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { orderNumbers } = body;
+
+    if (!orderNumbers || !Array.isArray(orderNumbers) || orderNumbers.length === 0) {
+      return NextResponse.json(
+        { error: 'orderNumbers array is required' },
+        { status: 400 }
+      );
+    }
+
+    // Limit to 100 orders at a time
+    if (orderNumbers.length > 100) {
+      return NextResponse.json(
+        { error: 'Maximum 100 orders can be dismissed at once' },
+        { status: 400 }
+      );
+    }
+
+    // Get merchant filter for security
+    const merchantFilter = getMerchantFilter(context);
+
+    // Update all matching orders
+    const result = await prisma.order.updateMany({
+      where: {
+        orderNumber: { in: orderNumbers },
+        ...merchantFilter,
+      },
+      data: { dismissed: true },
+    });
+
+    // Create audit log entry
+    const id = `c${Date.now().toString(36)}${Math.random().toString(36).substring(2, 9)}`;
+    await pool.query(
+      `INSERT INTO "AuditLog" (id, action, details, success, "merchantId", "createdAt")
+       VALUES ($1, 'bulk_order_dismiss', $2, true, $3, NOW())`,
+      [
+        id,
+        JSON.stringify({
+          orderNumbers,
+          dismissedCount: result.count,
+        }),
+        context.merchantId,
+      ]
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: `${result.count} order(s) dismissed successfully`,
+      dismissedCount: result.count,
+      requestedCount: orderNumbers.length,
+    });
+  } catch (error) {
+    console.error('Error bulk dismissing orders:', error);
+    return NextResponse.json(
+      { error: 'Failed to dismiss orders' },
+      { status: 500 }
+    );
+  }
+}

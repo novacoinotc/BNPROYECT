@@ -448,6 +448,11 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
   const [releaseOrder, setReleaseOrder] = useState<string | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
 
+  // Multi-select state
+  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [showBulkDismissModal, setShowBulkDismissModal] = useState(false);
+  const [bulkDismissing, setBulkDismissing] = useState(false);
+
   // Connect to SSE for real-time updates
   useEffect(() => {
     const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_API_URL;
@@ -488,6 +493,60 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
     onRefresh?.();
   }, [onRefresh]);
 
+  // Clear selection when orders change
+  useEffect(() => {
+    setSelectedOrders(new Set());
+  }, [orders]);
+
+  // Multi-select handlers
+  const toggleSelectOrder = (orderNumber: string) => {
+    setSelectedOrders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderNumber)) {
+        newSet.delete(orderNumber);
+      } else {
+        newSet.add(orderNumber);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedOrders.size === orders.length) {
+      setSelectedOrders(new Set());
+    } else {
+      setSelectedOrders(new Set(orders.map(o => o.orderNumber)));
+    }
+  };
+
+  const handleBulkDismiss = async () => {
+    if (selectedOrders.size === 0) return;
+
+    setBulkDismissing(true);
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderNumbers: Array.from(selectedOrders),
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setShowBulkDismissModal(false);
+        setSelectedOrders(new Set());
+        onRefresh?.();
+      } else {
+        alert(data.error || 'Error al descartar órdenes');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error');
+    } finally {
+      setBulkDismissing(false);
+    }
+  };
+
   if (orders.length === 0) {
     return (
       <div className="p-6 text-center text-gray-500">
@@ -498,11 +557,24 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
 
   return (
     <>
-      {/* SSE Connection Status */}
+      {/* SSE Connection Status + Bulk Actions */}
       <div className="px-4 py-2 border-b border-[#2d2640] flex items-center justify-between">
-        <span className="text-xs text-gray-500">
-          {orders.length} orden{orders.length !== 1 ? 'es' : ''}
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-gray-500">
+            {orders.length} orden{orders.length !== 1 ? 'es' : ''}
+          </span>
+          {selectedOrders.size > 0 && (
+            <button
+              onClick={() => setShowBulkDismissModal(true)}
+              className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Descartar ({selectedOrders.size})
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-green-500' : 'bg-gray-500'}`}></span>
           <span className="text-xs text-gray-500">
@@ -515,6 +587,14 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
         <table className="w-full">
           <thead className="bg-[#2d2640] text-gray-400 text-xs uppercase">
             <tr>
+              <th className="px-3 py-3 text-center w-10">
+                <input
+                  type="checkbox"
+                  checked={orders.length > 0 && selectedOrders.size === orders.length}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-gray-600 bg-[#13111c] text-primary-600 focus:ring-primary-500 cursor-pointer"
+                />
+              </th>
               <th className="px-4 py-3 text-left">Order</th>
               <th className="px-4 py-3 text-left">Buyer</th>
               <th className="px-4 py-3 text-right">Amount</th>
@@ -528,7 +608,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
               <>
                 <tr
                   key={order.orderNumber}
-                  className="hover:bg-[#2d2640]/50 transition cursor-pointer"
+                  className={`hover:bg-[#2d2640]/50 transition cursor-pointer ${selectedOrders.has(order.orderNumber) ? 'bg-primary-500/10' : ''}`}
                   onClick={() => {
                     setExpandedOrder(
                       expandedOrder === order.orderNumber ? null : order.orderNumber
@@ -536,6 +616,14 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                     setActiveTab('verification');
                   }}
                 >
+                  <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedOrders.has(order.orderNumber)}
+                      onChange={() => toggleSelectOrder(order.orderNumber)}
+                      className="w-4 h-4 rounded border-gray-600 bg-[#13111c] text-primary-600 focus:ring-primary-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <span className="font-mono text-sm text-gray-300">
                       {order.orderNumber.slice(-8)}
@@ -588,7 +676,7 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                 {/* Expanded section with tabs */}
                 {expandedOrder === order.orderNumber && (
                   <tr key={`${order.orderNumber}-expanded`}>
-                    <td colSpan={6} className="px-4 py-4 bg-[#0f0d16]">
+                    <td colSpan={7} className="px-4 py-4 bg-[#0f0d16]">
                       <div className="space-y-4">
                         {/* Order details */}
                         <div className="flex items-center justify-between text-sm">
@@ -872,6 +960,82 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
           onClose={() => setReleaseOrder(null)}
           onSuccess={handleReleaseSuccess}
         />
+      )}
+
+      {/* Bulk Dismiss Modal */}
+      {showBulkDismissModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowBulkDismissModal(false)}
+        >
+          <div
+            className="bg-[#13111c] rounded-xl p-6 w-full max-w-md border border-[#2d2640]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Descartar Órdenes Seleccionadas
+            </h3>
+
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-4">
+              <p className="text-red-400">
+                Estás a punto de descartar <strong>{selectedOrders.size} orden(es)</strong>.
+              </p>
+              <p className="text-red-400/80 text-sm mt-1">
+                Estas órdenes se ocultarán del dashboard pero no se eliminarán de la base de datos.
+              </p>
+            </div>
+
+            {/* Summary of selected orders */}
+            <div className="bg-[#2d2640] rounded-lg p-3 mb-4 max-h-40 overflow-y-auto">
+              <p className="text-gray-400 text-xs mb-2">Órdenes seleccionadas:</p>
+              {orders
+                .filter(o => selectedOrders.has(o.orderNumber))
+                .map(o => (
+                  <div key={o.orderNumber} className="flex justify-between text-sm py-1 border-b border-[#3d3655] last:border-0">
+                    <span className="text-gray-400 font-mono">{o.orderNumber.slice(-8)}</span>
+                    <span className="text-white">${parseFloat(o.totalPrice).toLocaleString()}</span>
+                    <span className="text-gray-500 truncate ml-2 max-w-[100px]">{o.buyerNickName}</span>
+                  </div>
+                ))}
+              <div className="flex justify-between text-sm pt-2 mt-2 border-t border-[#3d3655] font-medium">
+                <span className="text-gray-400">Total:</span>
+                <span className="text-white">
+                  ${orders
+                    .filter(o => selectedOrders.has(o.orderNumber))
+                    .reduce((sum, o) => sum + parseFloat(o.totalPrice), 0)
+                    .toLocaleString()} MXN
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowBulkDismissModal(false)}
+                disabled={bulkDismissing}
+                className="flex-1 px-4 py-2 bg-[#2d2640] text-gray-300 rounded-lg hover:bg-[#3d3655] transition disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkDismiss}
+                disabled={bulkDismissing}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {bulkDismissing ? (
+                  <>
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                    Procesando...
+                  </>
+                ) : (
+                  <>Descartar {selectedOrders.size} orden(es)</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
