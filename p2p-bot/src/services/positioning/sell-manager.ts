@@ -61,19 +61,9 @@ async function fetchSellAds(): Promise<SellAd[]> {
       allAds.push(...data.data.sellList);
     }
 
-    // Debug: Log advStatus values to see what's happening
-    if (allAds.length > 0) {
-      const statusCounts = allAds.reduce((acc, ad) => {
-        const status = ad.advStatus;
-        acc[status] = (acc[status] || 0) + 1;
-        return acc;
-      }, {} as Record<number | string, number>);
-      logger.info(`📦 [SELL] advStatus distribution: ${JSON.stringify(statusCounts)}`);
-    }
-
-    // Filter only online SELL ads (advStatus can be 1 or "ONLINE")
+    // Filter only online SELL ads (advStatus === 1)
     return allAds
-      .filter(ad => ad.tradeType === 'SELL' && (ad.advStatus === 1 || ad.advStatus === '1' || ad.advStatus === 'ONLINE'))
+      .filter(ad => ad.tradeType === 'SELL' && ad.advStatus === 1)
       .map(ad => ({
         advNo: ad.advNo,
         asset: ad.asset,

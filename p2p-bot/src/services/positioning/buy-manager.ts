@@ -70,22 +70,9 @@ async function fetchBuyAds(): Promise<BuyAd[]> {
       }
     }
 
-    // Log what we found
-    const buyCount = allAds.filter(ad => ad.tradeType === 'BUY').length;
-    const sellCount = allAds.filter(ad => ad.tradeType === 'SELL').length;
-    logger.info(`📦 [BUY] API returned ${allAds.length} total ads (${buyCount} BUY, ${sellCount} SELL)`);
-
-    // Debug: Log advStatus values to see what's happening
-    const statusCounts = allAds.reduce((acc, ad) => {
-      const status = ad.advStatus;
-      acc[status] = (acc[status] || 0) + 1;
-      return acc;
-    }, {} as Record<number, number>);
-    logger.info(`📦 [BUY] advStatus distribution: ${JSON.stringify(statusCounts)}`);
-
-    // Filter only online BUY ads (advStatus can be 1 or "ONLINE")
+    // Filter only online BUY ads (advStatus === 1)
     const filtered = allAds
-      .filter(ad => ad.tradeType === 'BUY' && (ad.advStatus === 1 || ad.advStatus === '1' || ad.advStatus === 'ONLINE'))
+      .filter(ad => ad.tradeType === 'BUY' && ad.advStatus === 1)
       .map(ad => ({
         advNo: ad.advNo,
         asset: ad.asset,
@@ -93,8 +80,6 @@ async function fetchBuyAds(): Promise<BuyAd[]> {
         currentPrice: parseFloat(ad.price),
         lastUpdate: null,
       }));
-
-    logger.info(`📦 [BUY] Found ${filtered.length} active BUY ads`);
     return filtered;
   } catch (error: any) {
     logger.error(`❌ [BUY] Error fetching ads: ${error.message}`);
