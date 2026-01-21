@@ -202,9 +202,15 @@ export async function getOrder(orderNumber: string) {
 
 export async function getRecentOrders(limit: number = 50) {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'WHERE "merchantId" = $2' : '';
+  const params = merchantId ? [limit, merchantId] : [limit];
+
   const result = await db.query(
-    'SELECT * FROM "Order" ORDER BY "binanceCreateTime" DESC LIMIT $1',
-    [limit]
+    `SELECT * FROM "Order" ${merchantFilter} ORDER BY "binanceCreateTime" DESC LIMIT $1`,
+    params
   );
   return result.rows;
 }
@@ -848,15 +854,20 @@ export async function getThirdPartyPayments(limit: number = 50): Promise<Array<{
   status: string;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const params = merchantId ? [limit, merchantId] : [limit];
 
   const result = await db.query(
     `SELECT id, "transactionId", amount, currency, "senderName", "senderAccount",
             "bankReference", "bankTimestamp", "createdAt", status
      FROM "Payment"
-     WHERE status = 'THIRD_PARTY'
+     WHERE status = 'THIRD_PARTY' ${merchantFilter}
      ORDER BY "createdAt" DESC
      LIMIT $1`,
-    [limit]
+    params
   );
 
   return result.rows.map(row => ({
@@ -883,15 +894,20 @@ export async function getPendingPayments(limit: number = 50): Promise<Array<{
   status: string;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+  const params = merchantId ? [limit, merchantId] : [limit];
 
   const result = await db.query(
     `SELECT id, "transactionId", amount, currency, "senderName", "senderAccount",
             "bankReference", "bankTimestamp", "createdAt", status
      FROM "Payment"
-     WHERE status = 'PENDING'
+     WHERE status = 'PENDING' ${merchantFilter}
      ORDER BY "createdAt" DESC
      LIMIT $1`,
-    [limit]
+    params
   );
 
   return result.rows.map(row => ({
@@ -1023,9 +1039,14 @@ export async function getOrdersForManualMatch(
   createdAt: Date;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
   const tolerance = amount * (tolerancePercent / 100);
   const minAmount = amount - tolerance;
   const maxAmount = amount + tolerance;
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $3' : '';
+  const params = merchantId ? [minAmount, maxAmount, merchantId] : [minAmount, maxAmount];
 
   const result = await db.query(
     `SELECT "orderNumber", "totalPrice", "buyerNickName", "buyerRealName", status, "createdAt"
@@ -1033,9 +1054,10 @@ export async function getOrdersForManualMatch(
      WHERE "totalPrice"::numeric BETWEEN $1 AND $2
        AND status IN ('PAID', 'COMPLETED')
        AND "createdAt" > NOW() - INTERVAL '7 days'
+       ${merchantFilter}
      ORDER BY "createdAt" DESC
      LIMIT 20`,
-    [minAmount, maxAmount]
+    params
   );
 
   return result.rows;
@@ -1379,14 +1401,20 @@ export async function getOrdersPendingVerification(): Promise<Array<{
   createdAt: Date;
 }>> {
   const db = getPool();
+  const merchantId = getMerchantId();
+
+  // Filter by merchantId if available (multi-tenant mode)
+  const merchantFilter = merchantId ? 'AND "merchantId" = $1' : '';
+  const params = merchantId ? [merchantId] : [];
 
   const result = await db.query(
     `SELECT "orderNumber", "totalPrice", "buyerNickName",
             "verificationStatus", "verificationTimeline", "binanceCreateTime" as "createdAt"
      FROM "Order"
-     WHERE status = 'PAID' AND "releasedAt" IS NULL
+     WHERE status = 'PAID' AND "releasedAt" IS NULL ${merchantFilter}
      ORDER BY "binanceCreateTime" DESC
-     LIMIT 50`
+     LIMIT 50`,
+    params
   );
 
   return result.rows;
