@@ -382,7 +382,7 @@ export class BinanceC2CClient {
       if (Array.isArray(response)) {
         const sellList = response.filter((ad: any) => ad.tradeType === 'SELL');
         const buyList = response.filter((ad: any) => ad.tradeType === 'BUY');
-        logger.info({ sellCount: sellList.length, buyCount: buyList.length }, 'listMyAds: Transformed data array');
+        logger.debug({ sellCount: sellList.length, buyCount: buyList.length }, 'listMyAds: Transformed data array');
         return {
           sellList,
           buyList,
@@ -401,7 +401,7 @@ export class BinanceC2CClient {
       );
       const transformed = transformResponse(response);
       if (transformed) {
-        logger.info({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: GET Success');
+        logger.debug({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: GET Success');
         return transformed;
       }
     } catch (error: any) {
@@ -416,7 +416,7 @@ export class BinanceC2CClient {
       );
       const transformed = transformResponse(response);
       if (transformed) {
-        logger.info({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: POST Fallback success');
+        logger.debug({ sellCount: transformed.sellList?.length || 0 }, 'listMyAds: POST Fallback success');
         return transformed;
       }
     } catch (error: any) {

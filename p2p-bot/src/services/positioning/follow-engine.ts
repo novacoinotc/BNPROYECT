@@ -64,7 +64,7 @@ export class FollowEngine {
     // - Our BUY ad → we compete with other BUYERS → search 'SELL' tab
     const searchType = this.adType === 'SELL' ? TradeType.BUY : TradeType.SELL;
 
-    logger.info(`🔍 [FOLLOW] Our ${this.adType} ad → searching '${searchType}' tab for "${this.config.targetNickName}" in ${asset}/${fiat}`);
+    logger.debug(`🔍 [FOLLOW] Searching '${searchType}' tab for "${this.config.targetNickName}" in ${asset}/${fiat}`);
 
     // Search multiple pages to find target
     let targetAd: AdData | null = null;
@@ -97,7 +97,7 @@ export class FollowEngine {
     }
 
     const targetPrice = parseFloat(targetAd.price);
-    logger.info(`✅ [FOLLOW] Found "${targetAd.advertiser.nickName}" at $${targetPrice.toFixed(2)} in ${asset}/${fiat}`);
+    logger.debug(`✅ [FOLLOW] Found "${targetAd.advertiser.nickName}" at $${targetPrice.toFixed(2)}`);
 
     // If matchPrice is true, use exact same price
     // Otherwise, undercut by the configured cents

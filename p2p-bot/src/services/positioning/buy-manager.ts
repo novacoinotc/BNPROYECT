@@ -240,9 +240,9 @@ export class BuyAdManager extends EventEmitter {
     for (const ad of buyAds) {
       const existing = this.ads.get(ad.advNo);
       if (existing) {
-        // Log if API returns different price than what we think we have
+        // Only log if price changed significantly
         if (Math.abs(existing.currentPrice - ad.currentPrice) >= 0.01) {
-          logger.info(`🔄 [BUY] ${ad.asset} API price changed: ${existing.currentPrice.toFixed(2)} → ${ad.currentPrice.toFixed(2)}`);
+          logger.info(`🔄 [BUY] ${ad.asset} price changed: $${existing.currentPrice.toFixed(2)} → $${ad.currentPrice.toFixed(2)}`);
         }
         existing.currentPrice = ad.currentPrice;
       } else {
@@ -272,15 +272,13 @@ export class BuyAdManager extends EventEmitter {
       ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
       : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, smartMinOrderCount: 10, smartMinSurplus: 100 };
 
-    // Skip if this asset is disabled
+    // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {
-      // Log at INFO level so user knows it's disabled
-      logger.info(`⏸️ [BUY] ${ad.asset} - Desactivado (enabled=false)`);
       return;
     }
 
-    // Log config used for this asset (INFO level for visibility)
-    logger.info(`🔧 [BUY] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
+    // Log config only at debug level to reduce noise
+    logger.debug(`🔧 [BUY] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';

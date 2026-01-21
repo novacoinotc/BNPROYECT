@@ -86,7 +86,7 @@ export class SmartEngine {
     // - Our BUY ad → we compete with other BUYERS → search 'SELL' tab
     const searchType = this.adType === 'SELL' ? TradeType.BUY : TradeType.SELL;
 
-    logger.info(`🔍 [SMART] Our ${this.adType} ad → searching '${searchType}' tab for ${asset}/${fiat}`);
+    logger.debug(`🔍 [SMART] Our ${this.adType} ad → searching '${searchType}' tab for ${asset}/${fiat}`);
 
     const ads = await this.client.searchAds({
       asset,
@@ -97,7 +97,7 @@ export class SmartEngine {
     });
 
     if (ads.length > 0) {
-      logger.info(`🔍 [SMART] Found ${ads.length} ads. Top 5: ${ads.slice(0, 5).map(a => `${a.advertiser.nickName}(G${a.advertiser.userGrade})@${a.price}`).join(', ')}`);
+      logger.debug(`🔍 [SMART] Found ${ads.length} ads. Top 5: ${ads.slice(0, 5).map(a => `${a.advertiser.nickName}(G${a.advertiser.userGrade})@${a.price}`).join(', ')}`);
     }
 
     if (ads.length === 0) {
@@ -124,9 +124,9 @@ export class SmartEngine {
       return this.passesFilters(ad);
     });
 
-    // Log filter results
+    // Log filter results at debug level
     const verifiedCount = ads.filter(a => a.advertiser.userGrade >= this.config.minUserGrade).length;
-    logger.info(`🔍 [SMART] Filters: ${verifiedCount} Grade${this.config.minUserGrade}+, ${qualifiedAds.length} passed all (minOrders=${this.config.minMonthOrderCount}, minVolume=${this.config.minSurplusAmount} MXN)`);
+    logger.debug(`🔍 [SMART] Filters: ${verifiedCount} Grade${this.config.minUserGrade}+, ${qualifiedAds.length} passed all (minOrders=${this.config.minMonthOrderCount}, minVolume=${this.config.minSurplusAmount} MXN)`);
 
     if (qualifiedAds.length === 0) {
       // No qualified competitors - use best available

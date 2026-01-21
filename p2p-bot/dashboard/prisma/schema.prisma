@@ -60,6 +60,9 @@ model Merchant {
   // These fields are for reference/display only - actual keys are in Railway
   binanceNickname   String?
 
+  // Bot API URL (Railway deployment URL for this merchant's bot)
+  botApiUrl         String?
+
   // Bank account for webhook routing
   clabeAccount      String?  @unique
   bankName          String?

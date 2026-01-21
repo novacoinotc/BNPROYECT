@@ -219,12 +219,14 @@ export class SellAdManager extends EventEmitter {
       }
     }
 
-    // Add or update - ALWAYS log current API price for debugging
+    // Add or update
     for (const ad of sellAds) {
       const existing = this.ads.get(ad.advNo);
       if (existing) {
-        // Always log the price from API so we can verify updates took effect
-        logger.info(`📊 [SELL] ${ad.asset} API reports: $${ad.currentPrice.toFixed(2)} (local: $${existing.currentPrice.toFixed(2)})`);
+        // Only log if price changed significantly
+        if (Math.abs(existing.currentPrice - ad.currentPrice) >= 0.01) {
+          logger.info(`🔄 [SELL] ${ad.asset} price changed: $${existing.currentPrice.toFixed(2)} → $${ad.currentPrice.toFixed(2)}`);
+        }
         existing.currentPrice = ad.currentPrice;
       } else {
         logger.info(`📌 [SELL] Discovered ad: ${ad.asset} @ ${ad.currentPrice.toFixed(2)}`);
@@ -253,15 +255,13 @@ export class SellAdManager extends EventEmitter {
       ? getPositioningConfigForAd(this.dbConfig, 'SELL', ad.asset)
       : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, smartMinOrderCount: 10, smartMinSurplus: 100 };
 
-    // Skip if this asset is disabled
+    // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {
-      // Log at INFO level so user knows it's disabled
-      logger.info(`⏸️ [SELL] ${ad.asset} - Desactivado (enabled=false)`);
       return;
     }
 
-    // Log config used for this asset (INFO level for visibility)
-    logger.info(`🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
+    // Log config only at debug level to reduce noise
+    logger.debug(`🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';

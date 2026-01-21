@@ -2,18 +2,67 @@
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+
+interface MerchantOverview {
+  id: string;
+  name: string;
+  binanceNickname: string;
+  totalOrders: string;
+  completedOrders: string;
+  activeOrders: string;
+  totalVolume: string;
+  botStatus: string;
+}
+
+interface OverviewData {
+  merchants: MerchantOverview[];
+  todayStats: { todayOrders: string; todayCompleted: string; todayVolume: string };
+  activeOrders: Record<string, number>;
+  recentAlerts: any[];
+}
 
 export default function AdminPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [overview, setOverview] = useState<OverviewData | null>(null);
 
   useEffect(() => {
     if (status === 'authenticated' && !session?.user?.isAdmin) {
       router.push('/');
     }
   }, [session, status, router]);
+
+  useEffect(() => {
+    if (session?.user?.isAdmin) {
+      fetchOverview();
+      const interval = setInterval(fetchOverview, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [session]);
+
+  async function fetchOverview() {
+    try {
+      const res = await fetch('/api/admin/overview');
+      const json = await res.json();
+      if (json.success) setOverview(json);
+    } catch (err) {
+      console.error('Failed to fetch overview:', err);
+    }
+  }
+
+  const formatCurrency = (v: string | number) => {
+    const n = typeof v === 'string' ? parseFloat(v) : v;
+    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
+  };
+
+  const getBotStatusColor = (s: string) => {
+    if (s === 'online') return 'bg-green-500';
+    if (s === 'offline') return 'bg-red-500';
+    if (s === 'error') return 'bg-yellow-500';
+    return 'bg-gray-500';
+  };
 
   if (status === 'loading') {
     return (
@@ -78,24 +127,89 @@ export default function AdminPage() {
           </div>
         </Link>
 
-        {/* System Stats */}
+        {/* Ads */}
         <Link
-          href="/admin/stats"
+          href="/admin/ads"
           className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors border border-gray-700 hover:border-purple-500"
         >
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center">
               <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
               </svg>
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-white">Estadisticas</h3>
-              <p className="text-gray-400 text-sm">Metricas del sistema</p>
+              <h3 className="text-lg font-semibold text-white">Anuncios</h3>
+              <p className="text-gray-400 text-sm">Ver anuncios de todos los merchants</p>
             </div>
           </div>
         </Link>
       </div>
+
+      {/* Real-time Stats */}
+      {overview && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <p className="text-gray-400 text-sm">Ordenes Hoy</p>
+              <p className="text-2xl font-bold text-white">{overview.todayStats.todayOrders}</p>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <p className="text-gray-400 text-sm">Completadas Hoy</p>
+              <p className="text-2xl font-bold text-green-400">{overview.todayStats.todayCompleted}</p>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <p className="text-gray-400 text-sm">Volumen Hoy</p>
+              <p className="text-2xl font-bold text-blue-400">{formatCurrency(overview.todayStats.todayVolume)}</p>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <p className="text-gray-400 text-sm">Ordenes Activas</p>
+              <p className="text-2xl font-bold text-yellow-400">
+                {Object.values(overview.activeOrders).reduce((a, b) => a + b, 0)}
+              </p>
+            </div>
+          </div>
+
+          {/* Merchants Status */}
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <h2 className="text-lg font-semibold text-white mb-4">Estado de Merchants</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {overview.merchants.map((m) => (
+                <div key={m.id} className="bg-gray-900 rounded-lg p-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-medium text-white">{m.name}</span>
+                    <span className={'w-3 h-3 rounded-full ' + getBotStatusColor(m.botStatus)}></span>
+                  </div>
+                  <p className="text-xs text-gray-400">{m.binanceNickname || 'Sin nickname'}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-gray-500">Activas:</span> <span className="text-yellow-400">{m.activeOrders}</span></div>
+                    <div><span className="text-gray-500">Completadas:</span> <span className="text-green-400">{m.completedOrders}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Recent Alerts */}
+          {overview.recentAlerts.length > 0 && (
+            <div className="bg-gray-800 rounded-lg p-6 border border-red-900">
+              <h2 className="text-lg font-semibold text-red-400 mb-4">Alertas Sin Atender ({overview.recentAlerts.length})</h2>
+              <div className="space-y-2">
+                {overview.recentAlerts.slice(0, 5).map((a: any) => (
+                  <div key={a.id} className="bg-gray-900 rounded p-3 flex justify-between items-center">
+                    <div>
+                      <span className="text-sm text-white">{a.title}</span>
+                      <span className="ml-2 text-xs text-gray-500">{a.merchantName}</span>
+                    </div>
+                    <span className="text-xs text-gray-400">{new Date(a.createdAt).toLocaleString('es-MX')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Quick Info */}
       <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
