@@ -75,9 +75,17 @@ async function fetchBuyAds(): Promise<BuyAd[]> {
     const sellCount = allAds.filter(ad => ad.tradeType === 'SELL').length;
     logger.info(`📦 [BUY] API returned ${allAds.length} total ads (${buyCount} BUY, ${sellCount} SELL)`);
 
-    // Filter only online BUY ads
+    // Debug: Log advStatus values to see what's happening
+    const statusCounts = allAds.reduce((acc, ad) => {
+      const status = ad.advStatus;
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {} as Record<number, number>);
+    logger.info(`📦 [BUY] advStatus distribution: ${JSON.stringify(statusCounts)}`);
+
+    // Filter only online BUY ads (advStatus can be 1 or "ONLINE")
     const filtered = allAds
-      .filter(ad => ad.tradeType === 'BUY' && ad.advStatus === 1)
+      .filter(ad => ad.tradeType === 'BUY' && (ad.advStatus === 1 || ad.advStatus === '1' || ad.advStatus === 'ONLINE'))
       .map(ad => ({
         advNo: ad.advNo,
         asset: ad.asset,
