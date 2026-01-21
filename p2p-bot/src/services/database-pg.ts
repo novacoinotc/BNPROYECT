@@ -1945,15 +1945,20 @@ export interface BotConfig {
   ignoredAdvertisers: string[];
 }
 
+// Cache for last successful config (per merchant)
+// Used when DB fails to prevent flip-flopping between modes
+const configCache: Map<string, BotConfig> = new Map();
+
 /**
  * Get bot configuration from database
- * Returns default config if not found
+ * Returns cached config if DB fails, or defaults if no cache exists
  */
 export async function getBotConfig(): Promise<BotConfig> {
   const merchantId = getMerchantId();
+  const cacheKey = merchantId || 'main';
 
   try {
-    return await queryWithRetry(async () => {
+    const config = await queryWithRetry(async () => {
       const db = getPool();
       // Try to get existing config for this merchant (or 'main' for backwards compatibility)
       let result;
@@ -2053,8 +2058,20 @@ export async function getBotConfig(): Promise<BotConfig> {
       ignoredAdvertisers,
     };
     });
+
+    // Cache the successful config
+    configCache.set(cacheKey, config);
+    return config;
   } catch (error) {
-    logger.warn({ error }, 'Failed to get bot config, using defaults');
+    // Check if we have a cached config to use
+    const cachedConfig = configCache.get(cacheKey);
+    if (cachedConfig) {
+      logger.warn({ error, merchantId }, 'Failed to get bot config from DB, using CACHED config (preserving current mode)');
+      return cachedConfig;
+    }
+
+    // No cache available - use defaults (only happens on first run with DB issues)
+    logger.warn({ error, merchantId }, 'Failed to get bot config, no cache available - using defaults');
     return {
       releaseEnabled: true,
       positioningEnabled: false,
