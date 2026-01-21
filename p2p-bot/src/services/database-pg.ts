@@ -29,9 +29,79 @@ function getPool(): pg.Pool {
       ssl: {
         rejectUnauthorized: false, // Required for Neon
       },
+      // Connection pool settings optimized for Neon serverless
+      max: 5,                      // Max connections in pool (Neon has limits)
+      min: 0,                      // Allow pool to shrink to 0 when idle
+      idleTimeoutMillis: 30000,    // Close idle connections after 30s
+      connectionTimeoutMillis: 10000, // Wait 10s for connection
+      allowExitOnIdle: true,       // Allow process to exit if pool is idle
+    });
+
+    // Handle pool errors gracefully
+    pool.on('error', (err) => {
+      logger.error({ errorMessage: err.message }, 'Unexpected database pool error');
     });
   }
   return pool;
+}
+
+/**
+ * Execute a database query with retry logic for transient failures
+ * Handles Neon cold starts and connection timeouts
+ */
+async function queryWithRetry<T>(
+  queryFn: () => Promise<T>,
+  maxRetries: number = 3
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await queryFn();
+    } catch (error) {
+      lastError = error as Error;
+      const errorMessage = lastError.message || '';
+      const errorCode = (error as any).code || '';
+
+      // Retry on transient errors (connection timeout, connection reset, etc.)
+      const isTransientError =
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('Connection terminated') ||
+        errorMessage.includes('Client has encountered a connection error') ||
+        errorCode === 'ECONNRESET' ||
+        errorCode === '57P01' || // admin_shutdown
+        errorCode === '57P02' || // crash_shutdown
+        errorCode === '57P03';   // cannot_connect_now
+
+      if (isTransientError && attempt < maxRetries) {
+        // Exponential backoff: 500ms, 1000ms, 2000ms
+        const delay = Math.min(500 * Math.pow(2, attempt - 1), 5000);
+        logger.warn({
+          attempt,
+          maxRetries,
+          errorMessage: errorMessage.substring(0, 100),
+          delay,
+        }, `Database query failed, retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Reset pool on connection errors to get fresh connections
+        if (pool && (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('Connection terminated'))) {
+          try {
+            await pool.end();
+          } catch {
+            // Ignore errors when ending pool
+          }
+          pool = null;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 // Generate CUID-like ID
@@ -66,10 +136,12 @@ function requireMerchantId(): string {
 
 export async function testConnection(): Promise<boolean> {
   try {
-    const db = getPool();
-    const result = await db.query('SELECT 1 as test');
-    logger.info('Database connection successful');
-    return true;
+    return await queryWithRetry(async () => {
+      const db = getPool();
+      const result = await db.query('SELECT 1 as test');
+      logger.info('Database connection successful');
+      return true;
+    });
   } catch (error) {
     const err = error as Error;
     logger.error({
@@ -83,10 +155,11 @@ export async function testConnection(): Promise<boolean> {
 // ==================== ORDER OPERATIONS ====================
 
 export async function saveOrder(order: OrderData): Promise<void> {
-  const db = getPool();
+  return queryWithRetry(async () => {
+    const db = getPool();
 
-  // Handle string status from API (e.g., "TRADING", "BUYER_PAYED")
-  const status = mapOrderStatus(order.orderStatus);
+    // Handle string status from API (e.g., "TRADING", "BUYER_PAYED")
+    const status = mapOrderStatus(order.orderStatus);
 
   // API returns counterPartNickName instead of buyer/seller objects
   // For SELL orders: counterPart is the buyer
@@ -189,6 +262,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
       throw error;
     }
   }
+  });
 }
 
 export async function getOrder(orderNumber: string) {
@@ -224,48 +298,51 @@ export async function getRecentOrders(limit: number = 50) {
 // ==================== PAYMENT OPERATIONS ====================
 
 export async function savePayment(payment: BankWebhookPayload): Promise<string> {
-  const db = getPool();
   const id = generateId();
   const merchantId = getMerchantId();
 
-  // Use ON CONFLICT DO NOTHING to make this idempotent
-  // If transactionId already exists, the insert is skipped (no error)
-  const result = await db.query(
-    `INSERT INTO "Payment" (
-      id, "transactionId", amount, currency, "senderName",
-      "senderAccount", "receiverAccount", concept, "bankReference",
-      "bankTimestamp", status, "merchantId", "createdAt", "updatedAt"
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11, NOW(), NOW())
-    ON CONFLICT ("transactionId") DO NOTHING
-    RETURNING id`,
-    [
-      id,
-      payment.transactionId,
-      payment.amount,
-      payment.currency,
-      payment.senderName,
-      payment.senderAccount || null,
-      payment.receiverAccount || null,
-      payment.concept || null,
-      payment.bankReference || null,
-      new Date(payment.timestamp),
-      merchantId,
-    ]
-  );
+  return queryWithRetry(async () => {
+    const db = getPool();
 
-  // If result has rows, it's a new payment. If no rows, it's a duplicate.
-  if (result.rows.length > 0) {
-    logger.debug({ transactionId: payment.transactionId, merchantId }, 'Payment saved');
-    return result.rows[0].id;
-  } else {
-    // Payment already exists - get existing ID
-    const existingResult = await db.query(
-      `SELECT id FROM "Payment" WHERE "transactionId" = $1`,
-      [payment.transactionId]
+    // Use ON CONFLICT DO NOTHING to make this idempotent
+    // If transactionId already exists, the insert is skipped (no error)
+    const result = await db.query(
+      `INSERT INTO "Payment" (
+        id, "transactionId", amount, currency, "senderName",
+        "senderAccount", "receiverAccount", concept, "bankReference",
+        "bankTimestamp", status, "merchantId", "createdAt", "updatedAt"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11, NOW(), NOW())
+      ON CONFLICT ("transactionId") DO NOTHING
+      RETURNING id`,
+      [
+        id,
+        payment.transactionId,
+        payment.amount,
+        payment.currency,
+        payment.senderName,
+        payment.senderAccount || null,
+        payment.receiverAccount || null,
+        payment.concept || null,
+        payment.bankReference || null,
+        new Date(payment.timestamp),
+        merchantId,
+      ]
     );
-    logger.warn({ transactionId: payment.transactionId, merchantId }, 'Duplicate payment ignored (idempotent)');
-    return existingResult.rows[0]?.id || id;
-  }
+
+    // If result has rows, it's a new payment. If no rows, it's a duplicate.
+    if (result.rows.length > 0) {
+      logger.debug({ transactionId: payment.transactionId, merchantId }, 'Payment saved');
+      return result.rows[0].id;
+    } else {
+      // Payment already exists - get existing ID
+      const existingResult = await db.query(
+        `SELECT id FROM "Payment" WHERE "transactionId" = $1`,
+        [payment.transactionId]
+      );
+      logger.warn({ transactionId: payment.transactionId, merchantId }, 'Duplicate payment ignored (idempotent)');
+      return existingResult.rows[0]?.id || id;
+    }
+  });
 }
 
 export async function matchPaymentToOrder(
@@ -275,75 +352,78 @@ export async function matchPaymentToOrder(
   ocrConfidence?: number,
   receiptUrl?: string
 ): Promise<boolean> {
-  const db = getPool();
   const merchantId = getMerchantId();
 
-  // SECURITY: Filter by merchantId to prevent cross-merchant matching
-  const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
-  const orderParams = merchantId ? [orderNumber, merchantId] : [orderNumber];
+  return queryWithRetry(async () => {
+    const db = getPool();
 
-  const orderResult = await db.query(
-    `SELECT id FROM "Order" WHERE "orderNumber" = $1 ${merchantFilter}`,
-    orderParams
-  );
+    // SECURITY: Filter by merchantId to prevent cross-merchant matching
+    const merchantFilter = merchantId ? 'AND "merchantId" = $2' : '';
+    const orderParams = merchantId ? [orderNumber, merchantId] : [orderNumber];
 
-  if (orderResult.rows.length === 0) {
-    throw new Error(`Order ${orderNumber} not found for this merchant`);
-  }
+    const orderResult = await db.query(
+      `SELECT id FROM "Order" WHERE "orderNumber" = $1 ${merchantFilter}`,
+      orderParams
+    );
 
-  const orderId = orderResult.rows[0].id;
-
-  // CRITICAL: Check if payment was already released (prevent double-spend)
-  const paymentCheck = await db.query(
-    'SELECT status, "matchedOrderId" FROM "Payment" WHERE "transactionId" = $1',
-    [transactionId]
-  );
-
-  if (paymentCheck.rows.length > 0) {
-    const payment = paymentCheck.rows[0];
-    if (payment.status === 'RELEASED') {
-      logger.warn({
-        transactionId,
-        orderNumber,
-        previousOrderId: payment.matchedOrderId,
-      }, '🚫 [DOUBLE-SPEND BLOCKED] Payment was already used for a released order!');
-      return false; // Payment already used - don't allow re-matching
+    if (orderResult.rows.length === 0) {
+      throw new Error(`Order ${orderNumber} not found for this merchant`);
     }
 
-    // SECURITY: If payment is MATCHED, only allow re-matching to SAME order (name verification retry)
-    if (payment.status === 'MATCHED' && payment.matchedOrderId !== orderId) {
-      logger.warn({
-        transactionId,
-        orderNumber,
-        currentMatchedOrderId: payment.matchedOrderId,
-        requestedOrderId: orderId,
-      }, '🚫 [MATCH BLOCKED] Payment already matched to different order!');
+    const orderId = orderResult.rows[0].id;
+
+    // CRITICAL: Check if payment was already released (prevent double-spend)
+    const paymentCheck = await db.query(
+      'SELECT status, "matchedOrderId" FROM "Payment" WHERE "transactionId" = $1',
+      [transactionId]
+    );
+
+    if (paymentCheck.rows.length > 0) {
+      const payment = paymentCheck.rows[0];
+      if (payment.status === 'RELEASED') {
+        logger.warn({
+          transactionId,
+          orderNumber,
+          previousOrderId: payment.matchedOrderId,
+        }, '🚫 [DOUBLE-SPEND BLOCKED] Payment was already used for a released order!');
+        return false; // Payment already used - don't allow re-matching
+      }
+
+      // SECURITY: If payment is MATCHED, only allow re-matching to SAME order (name verification retry)
+      if (payment.status === 'MATCHED' && payment.matchedOrderId !== orderId) {
+        logger.warn({
+          transactionId,
+          orderNumber,
+          currentMatchedOrderId: payment.matchedOrderId,
+          requestedOrderId: orderId,
+        }, '🚫 [MATCH BLOCKED] Payment already matched to different order!');
+        return false;
+      }
+    }
+
+    // Only match if payment is PENDING, or re-matching to same order when MATCHED
+    const result = await db.query(
+      `UPDATE "Payment" SET
+        status = 'MATCHED',
+        "matchedOrderId" = $1,
+        "matchedAt" = NOW(),
+        "verificationMethod" = $2,
+        "ocrConfidence" = $3,
+        "receiptUrl" = $4,
+        "updatedAt" = NOW()
+      WHERE "transactionId" = $5
+        AND (status = 'PENDING' OR (status = 'MATCHED' AND "matchedOrderId" = $1))`,
+      [orderId, method, ocrConfidence || null, receiptUrl || null, transactionId]
+    );
+
+    if (result.rowCount === 0) {
+      logger.warn({ transactionId, orderNumber }, '⚠️ Payment not matched - may already be released or matched to different order');
       return false;
     }
-  }
 
-  // Only match if payment is PENDING, or re-matching to same order when MATCHED
-  const result = await db.query(
-    `UPDATE "Payment" SET
-      status = 'MATCHED',
-      "matchedOrderId" = $1,
-      "matchedAt" = NOW(),
-      "verificationMethod" = $2,
-      "ocrConfidence" = $3,
-      "receiptUrl" = $4,
-      "updatedAt" = NOW()
-    WHERE "transactionId" = $5
-      AND (status = 'PENDING' OR (status = 'MATCHED' AND "matchedOrderId" = $1))`,
-    [orderId, method, ocrConfidence || null, receiptUrl || null, transactionId]
-  );
-
-  if (result.rowCount === 0) {
-    logger.warn({ transactionId, orderNumber }, '⚠️ Payment not matched - may already be released or matched to different order');
-    return false;
-  }
-
-  logger.info({ transactionId, orderNumber, merchantId }, 'Payment matched to order');
-  return true;
+    logger.info({ transactionId, orderNumber, merchantId }, 'Payment matched to order');
+    return true;
+  });
 }
 
 /**
@@ -1870,23 +1950,24 @@ export interface BotConfig {
  * Returns default config if not found
  */
 export async function getBotConfig(): Promise<BotConfig> {
-  const db = getPool();
   const merchantId = getMerchantId();
 
   try {
-    // Try to get existing config for this merchant (or 'main' for backwards compatibility)
-    let result;
-    if (merchantId) {
-      result = await db.query(
-        `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
-        [merchantId]
-      );
-    } else {
-      // Backwards compatibility: use id = 'main' if no merchantId
-      result = await db.query(
-        `SELECT * FROM "BotConfig" WHERE id = 'main'`
-      );
-    }
+    return await queryWithRetry(async () => {
+      const db = getPool();
+      // Try to get existing config for this merchant (or 'main' for backwards compatibility)
+      let result;
+      if (merchantId) {
+        result = await db.query(
+          `SELECT * FROM "BotConfig" WHERE "merchantId" = $1`,
+          [merchantId]
+        );
+      } else {
+        // Backwards compatibility: use id = 'main' if no merchantId
+        result = await db.query(
+          `SELECT * FROM "BotConfig" WHERE id = 'main'`
+        );
+      }
 
     // If no config exists, create default
     if (result.rows.length === 0) {
@@ -1971,6 +2052,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       // Ignored advertisers
       ignoredAdvertisers,
     };
+    });
   } catch (error) {
     logger.warn({ error }, 'Failed to get bot config, using defaults');
     return {
