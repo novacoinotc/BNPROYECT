@@ -1319,9 +1319,45 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // Check if buyer is in our trusted buyers list
     // SECURITY FIX (2026-01-19): Only match by buyerUserNo or exact nickname
     // DO NOT match by realName - different people can have the same name!
-    const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
-    const buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
-    const buyerUserNo = pending.order.buyer?.userNo || null;
+    let buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
+    let buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
+    let buyerUserNo = pending.order.buyer?.userNo || null;
+
+    // CRITICAL FIX: If buyerUserNo is missing, fetch order detail to get it
+    // This is required for TrustedBuyer verification to work correctly
+    // The minimal order created from DB smart-match doesn't include buyer.userNo
+    if (!buyerUserNo) {
+      try {
+        logger.info({ orderNumber }, '🔍 [TRUSTED BUYER CHECK] Fetching order detail to get buyer userNo...');
+        const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+
+        // Extract userNo from order detail (it's set as takerUserNo by binance-client)
+        buyerUserNo = orderDetail.buyer?.userNo || null;
+
+        // Also update other buyer info if missing
+        if (!buyerRealName) {
+          buyerRealName = (orderDetail as any).buyerRealName || null;
+        }
+        if (!buyerNickName) {
+          buyerNickName = orderDetail.buyer?.nickName || orderDetail.counterPartNickName || '';
+        }
+
+        // Update pending.order with the fetched data
+        if (pending.order) {
+          pending.order = { ...pending.order, ...orderDetail };
+        }
+
+        logger.info({
+          orderNumber,
+          buyerUserNo: buyerUserNo || '(not available)',
+          buyerNickName,
+          buyerRealName: buyerRealName || '(not available)',
+        }, '📋 [TRUSTED BUYER CHECK] Got buyer info from order detail');
+      } catch (error) {
+        logger.warn({ orderNumber, error }, '⚠️ [TRUSTED BUYER CHECK] Failed to fetch order detail for userNo');
+      }
+    }
+
     let isTrustedBuyer = false;
 
     if (buyerNickName || buyerUserNo) {
@@ -1330,7 +1366,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         isTrustedBuyer = await db.isTrustedBuyer(buyerNickName, buyerRealName, buyerUserNo);
         if (isTrustedBuyer) {
           logger.info(
-            `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" (${buyerRealName || 'no real name'}) is in trusted list - skipping risk check`
+            `⭐ [TRUSTED BUYER] Order ${orderNumber}: Buyer "${buyerNickName}" (userNo=${buyerUserNo}) is in trusted list - skipping risk check`
           );
           await db.addVerificationStep(
             orderNumber,
@@ -1339,13 +1375,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
             {
               buyerNickName,
               buyerRealName,
+              buyerUserNo,
               trustedBuyer: true,
               noteToCheck: 'Still requires name match verification',
             }
           );
         }
       } catch (error) {
-        logger.warn({ error, buyerNickName, buyerRealName }, 'Error checking trusted buyer status');
+        logger.warn({ error, buyerNickName, buyerRealName, buyerUserNo }, 'Error checking trusted buyer status');
       }
     }
 
