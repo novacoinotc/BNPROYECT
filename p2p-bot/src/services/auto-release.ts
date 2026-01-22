@@ -193,7 +193,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const senderName = payment.senderName || '';
     const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
     const hasRealName = !!buyerRealName;
-    const nameMatches = hasRealName && nameMatchScore > 0.3;
+    // SECURITY: Require at least 70% name similarity to prevent third-party payments
+    // 50% match (2/4 words) is NOT enough - different people can share a first name and one last name
+    const nameMatches = hasRealName && nameMatchScore >= 0.70;
 
     logger.info({
       orderNumber: order.orderNumber,
@@ -809,7 +811,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         }
 
         // Only match if name similarity > 30%
-        if (bestPayment && bestScore > 0.3) {
+        // SECURITY: Require at least 70% name similarity to prevent third-party payment matching
+        if (bestPayment && bestScore >= 0.70) {
           const match: OrderMatch = {
             orderNumber: order.orderNumber,
             bankTransactionId: bestPayment.transactionId,
@@ -1132,7 +1135,8 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       // Calculate name match
       const hasRealName = !!buyerRealName;
       const nameMatchScore = buyerRealName ? this.compareNames(senderName, buyerRealName) : 0;
-      nameMatches = hasRealName && nameMatchScore > 0.3;
+      // SECURITY: Require at least 70% name similarity to prevent third-party payments
+      nameMatches = hasRealName && nameMatchScore >= 0.70;
 
       // Log and save name verification result
       if (!hasRealName) {

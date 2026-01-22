@@ -630,8 +630,9 @@ export async function findOrderByAmountAndName(
     }
   }
 
-  // Only return if we have a confident match (>30% name similarity)
-  if (bestMatch && bestScore > 0.3) {
+  // SECURITY: Require at least 70% name similarity to prevent third-party payment matching
+  // 50% match (2/4 words) is NOT enough - different people can share a first name and one last name
+  if (bestMatch && bestScore >= 0.70) {
     logger.info({
       orderNumber: bestMatch.orderNumber,
       buyerRealName: bestMatch.buyerRealName,
