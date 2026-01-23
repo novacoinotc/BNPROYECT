@@ -724,12 +724,32 @@ export class BinanceC2CClient {
    * IMPORTANT: This requires 2FA verification
    */
   async releaseCoin(request: ReleaseCoinRequest): Promise<boolean> {
-    await this.signedPost<void>(
-      '/sapi/v1/c2c/orderMatch/releaseCoin',
-      request
-    );
-    logger.info({ orderNumber: request.orderNumber }, 'Crypto released successfully');
-    return true;
+    try {
+      await this.signedPost<void>(
+        '/sapi/v1/c2c/orderMatch/releaseCoin',
+        request
+      );
+      logger.info({ orderNumber: request.orderNumber }, 'Crypto released successfully');
+      return true;
+    } catch (error: any) {
+      // Log FULL error details for debugging release failures
+      const errorData = error.response?.data;
+      const httpStatus = error.response?.status;
+      const binanceCode = errorData?.code;
+      const binanceMsg = errorData?.msg || errorData?.message;
+
+      logger.error({
+        orderNumber: request.orderNumber,
+        httpStatus,
+        binanceCode,
+        binanceMsg,
+        fullErrorData: JSON.stringify(errorData),
+        errorMessage: error.message,
+        authType: request.authType,
+      }, '❌ [RELEASE COIN] Full error details for debugging');
+
+      throw error; // Re-throw to let caller handle retry logic
+    }
   }
 
   /**

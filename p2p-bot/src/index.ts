@@ -142,11 +142,30 @@ async function initializeServices(): Promise<void> {
   autoRelease.setVerificationCodeProvider(async (orderNumber, authType) => {
     // Check if TOTP is configured for automatic code generation
     if (totpService.isConfigured() && authType === AuthType.GOOGLE) {
+      const timeRemaining = totpService.getTimeRemaining();
+
+      // IMPORTANT: Use a 10-second buffer to account for clock skew between our server and Binance
+      // If the clocks are slightly out of sync, a code that looks valid here might be expired on Binance
+      // Error 200001035 "Please wait for a new..." indicates the code was in a different TOTP window
+      if (timeRemaining < 10) {
+        logger.info({
+          orderNumber,
+          timeRemaining,
+        }, '⏳ [TOTP] Time remaining too low (<10s), waiting for fresh window to avoid clock skew issues...');
+        const code = await totpService.waitForNextWindowAndGenerate();
+        logger.info({
+          orderNumber,
+          authType,
+          timeRemaining: totpService.getTimeRemaining(),
+        }, '🔐 Generated TOTP code for auto-release (after wait)');
+        return code;
+      }
+
       const code = totpService.generateCode();
       logger.info({
         orderNumber,
         authType,
-        timeRemaining: totpService.getTimeRemaining(),
+        timeRemaining,
       }, '🔐 Generated TOTP code for auto-release');
       return code;
     }
