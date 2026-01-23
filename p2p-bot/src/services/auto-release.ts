@@ -1114,21 +1114,72 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
       // VERIFY NAME - Fetch order detail to get buyer's KYC verified real name
       if (!buyerRealName) {
-        try {
-          logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] Fetching order detail to get buyer real name...');
-          const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
-          buyerRealName = (orderDetail as any).buyerRealName || null;
+        // Retry with exponential backoff (3 attempts: 0ms, 500ms, 1500ms delay)
+        const maxRetries = 3;
+        let lastError: Error | null = null;
 
-          if (pending) {
-            pending.order = { ...pending.order, ...orderDetail };
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            if (attempt === 1) {
+              logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] Fetching order detail to get buyer real name...');
+            } else {
+              logger.info({ orderNumber: order.orderNumber, attempt }, `🔄 [NAME CHECK] Retry attempt ${attempt}/${maxRetries}...`);
+            }
+
+            const orderDetail = await this.binanceClient.getOrderDetail(order.orderNumber);
+            buyerRealName = (orderDetail as any).buyerRealName || null;
+
+            if (pending) {
+              pending.order = { ...pending.order, ...orderDetail };
+            }
+
+            logger.info({
+              orderNumber: order.orderNumber,
+              buyerRealName: buyerRealName || '(not available)',
+            }, '📋 [NAME CHECK] Got buyer real name from order detail');
+            break; // Success - exit retry loop
+          } catch (error: any) {
+            lastError = error;
+            const errorData = error.response?.data;
+            const httpStatus = error.response?.status;
+            const binanceCode = errorData?.code;
+            const binanceMsg = errorData?.msg || errorData?.message;
+
+            logger.warn({
+              orderNumber: order.orderNumber,
+              attempt,
+              maxRetries,
+              httpStatus,
+              binanceCode,
+              binanceMsg,
+              errorMessage: error.message,
+            }, `⚠️ [NAME CHECK] API error on attempt ${attempt}/${maxRetries}`);
+
+            if (attempt < maxRetries) {
+              // Wait before retry: 500ms, 1500ms (exponential backoff)
+              const delay = 500 * Math.pow(2, attempt - 1);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
           }
+        }
 
-          logger.info({
-            orderNumber: order.orderNumber,
-            buyerRealName: buyerRealName || '(not available)',
-          }, '📋 [NAME CHECK] Got buyer real name from order detail');
-        } catch (error) {
-          logger.warn({ orderNumber: order.orderNumber, error }, '⚠️ [NAME CHECK] Failed to fetch order detail');
+        // If API failed after all retries, try to get buyerRealName from database
+        if (!buyerRealName && lastError) {
+          logger.info({ orderNumber: order.orderNumber }, '🔍 [NAME CHECK] API failed, trying to get buyer name from database...');
+          try {
+            const dbOrder = await db.getOrder(order.orderNumber);
+            if (dbOrder?.buyerRealName) {
+              buyerRealName = dbOrder.buyerRealName;
+              logger.info({
+                orderNumber: order.orderNumber,
+                buyerRealName,
+              }, '✅ [NAME CHECK] Found buyer real name in database (fallback)');
+            } else {
+              logger.warn({ orderNumber: order.orderNumber }, '⚠️ [NAME CHECK] Buyer name not found in database either');
+            }
+          } catch (dbError) {
+            logger.warn({ orderNumber: order.orderNumber, error: dbError }, '⚠️ [NAME CHECK] Database fallback also failed');
+          }
         }
       }
 
