@@ -7,7 +7,12 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import CryptoJS from 'crypto-js';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import JSONBigInt from 'json-bigint';
 import { logger } from '../utils/logger.js';
+
+// Configure json-bigint to convert big integers to strings
+// This prevents precision loss for large IDs like advNo, userNo, etc.
+const JSONBig = JSONBigInt({ storeAsString: true });
 
 // Create proxy agent if PROXY_URL is set
 function createProxyAgent(): HttpsProxyAgent<string> | undefined {
@@ -94,6 +99,18 @@ export class BinanceC2CClient {
         'X-MBX-APIKEY': this.apiKey,
         'clientType': 'web',  // Required by Binance C2C API
       },
+      // Use json-bigint for parsing to preserve large IDs (advNo, userNo, etc.)
+      // Without this, numbers like 13844165819849826304 get corrupted due to JS precision limits
+      transformResponse: [(data: string | unknown) => {
+        if (typeof data === 'string') {
+          try {
+            return JSONBig.parse(data);
+          } catch {
+            return data;
+          }
+        }
+        return data;
+      }],
       // Use proxy if configured (for static IP)
       ...(proxyAgent && { httpsAgent: proxyAgent, proxy: false }),
     });
