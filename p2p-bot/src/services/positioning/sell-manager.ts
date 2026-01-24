@@ -42,7 +42,12 @@ async function updateAdPrice(advNo: string, price: number): Promise<boolean> {
   if (result.success) {
     logger.info(`✅ [SELL] API Update OK: advNo=${advNo} → $${(Math.round(price * 100) / 100).toFixed(2)}`);
   } else {
-    logger.warn(`⚠️ [SELL] API Update FAILED: ${result.message || 'Unknown error'}`);
+    logger.warn({
+      advNo,
+      price,
+      binanceCode: result.code,
+      binanceMsg: result.message,
+    }, `⚠️ [SELL] API Update FAILED: [${result.code || 'NO_CODE'}] ${result.message || 'Unknown error'}`);
   }
   return result.success;
 }

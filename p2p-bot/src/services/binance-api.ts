@@ -175,18 +175,26 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
       message: data.msg || data.message,
     };
   } catch (error: any) {
-    // Log detailed error info for debugging
-    const errorDetails = {
+    // Extract Binance error details from response
+    const responseData = error.response?.data;
+    const binanceCode = responseData?.code;
+    const binanceMsg = responseData?.msg || responseData?.message;
+    const httpStatus = error.response?.status;
+
+    // Log with clear visibility of Binance error
+    logger.error({
       advNo,
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-      responseData: error.response?.data,
-    };
-    logger.error(errorDetails, '❌ [BINANCE-API] Error updating ad price');
+      httpStatus,
+      binanceCode,
+      binanceMsg,
+      axiosMessage: error.message,
+      fullResponse: JSON.stringify(responseData),
+    }, `❌ [BINANCE-API] Error updating ad price: ${binanceMsg || error.message}`);
+
     return {
       success: false,
-      message: error.message,
+      code: binanceCode,
+      message: binanceMsg || error.message,
     };
   }
 }
