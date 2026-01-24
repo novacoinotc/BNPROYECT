@@ -37,8 +37,12 @@ export class ChatHandler extends EventEmitter {
   private maxReconnectAttempts: number = 5;
   private reconnectInterval: number = 5000;
   private pingInterval: NodeJS.Timeout | null = null;
+  private pollingInterval: NodeJS.Timeout | null = null;
   private isConnected: boolean = false;
   private watchedOrders: Set<string> = new Set();
+
+  // Track last seen message ID per order to avoid duplicate processing
+  private lastSeenMessageId: Map<string, string> = new Map();
 
   // Callbacks
   private onImageCallbacks: ((image: ImageMessage) => void)[] = [];
@@ -62,10 +66,132 @@ export class ChatHandler extends EventEmitter {
       // Use polling-based chat monitoring instead
       logger.info('Using polling-based chat monitoring (WebSocket credentials not available)');
       this.isConnected = true;  // Mark as "connected" for polling mode
+
+      // Start polling for messages every 10 seconds
+      this.startPolling();
+
       this.emit('chat', { type: 'connected' } as ChatEvent);
     } catch (error) {
       logger.error({ error }, 'Failed to connect to chat');
       this.scheduleReconnect();
+    }
+  }
+
+  /**
+   * Start polling for chat messages (fallback when WebSocket unavailable)
+   */
+  private startPolling(): void {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+    }
+
+    // Poll every 10 seconds
+    this.pollingInterval = setInterval(async () => {
+      await this.pollAllWatchedOrders();
+    }, 10000);
+
+    logger.info('📡 [CHAT] Started polling for messages (every 10s)');
+  }
+
+  /**
+   * Stop polling
+   */
+  private stopPolling(): void {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
+  }
+
+  /**
+   * Poll messages for all watched orders
+   */
+  private async pollAllWatchedOrders(): Promise<void> {
+    if (this.watchedOrders.size === 0) return;
+
+    for (const orderNo of this.watchedOrders) {
+      try {
+        await this.pollOrderMessages(orderNo);
+      } catch (error) {
+        // Silent fail for individual orders to not block others
+        logger.debug({ orderNo, error }, 'Failed to poll messages for order');
+      }
+    }
+  }
+
+  /**
+   * Poll messages for a single order and emit events for new messages
+   */
+  private async pollOrderMessages(orderNo: string): Promise<void> {
+    const messages = await this.getMessages(orderNo);
+    if (messages.length === 0) return;
+
+    // Get last seen message ID for this order
+    const lastSeenId = this.lastSeenMessageId.get(orderNo);
+
+    // Find new messages (messages after the last seen one)
+    let foundLastSeen = !lastSeenId; // If no last seen, all messages are "new" on first poll
+    const newMessages: ChatMessage[] = [];
+
+    // Messages are typically returned newest first, so reverse to process oldest first
+    const sortedMessages = [...messages].sort((a, b) =>
+      new Date(a.createTime).getTime() - new Date(b.createTime).getTime()
+    );
+
+    for (const msg of sortedMessages) {
+      if (!foundLastSeen) {
+        // Compare as strings to handle both number and string IDs
+        const msgId = String(msg.id || msg.createTime);
+        if (msgId === lastSeenId) {
+          foundLastSeen = true;
+        }
+        continue;
+      }
+      // Only process messages from counterparty (not self)
+      if (!msg.self) {
+        newMessages.push(msg);
+      }
+    }
+
+    // Update last seen ID to the most recent message
+    if (sortedMessages.length > 0) {
+      const latestMsg = sortedMessages[sortedMessages.length - 1];
+      this.lastSeenMessageId.set(orderNo, String(latestMsg.id || latestMsg.createTime));
+    }
+
+    // Emit events for new messages
+    for (const msg of newMessages) {
+      if (msg.type === ChatMessageType.IMAGE && msg.imageUrl) {
+        // Image message
+        this.emit('chat', {
+          type: 'image',
+          message: msg,
+          orderNo,
+        } as ChatEvent);
+
+        // Also emit via legacy callback
+        const imageMessage: ImageMessage = {
+          orderNo: msg.orderNo,
+          imageUrl: msg.imageUrl,
+          thumbnailUrl: msg.thumbnailUrl,
+          senderId: '',
+          senderName: msg.fromNickName,
+          timestamp: new Date(msg.createTime),
+        };
+        this.onImageCallbacks.forEach(cb => cb(imageMessage));
+
+        logger.info({ orderNo, from: msg.fromNickName }, '📷 [CHAT POLL] New image received');
+      } else if (msg.type === ChatMessageType.TEXT && msg.content) {
+        // Text message
+        this.emit('chat', {
+          type: 'message',
+          message: msg,
+          orderNo,
+        } as ChatEvent);
+
+        logger.info({ orderNo, from: msg.fromNickName, content: msg.content.substring(0, 50) },
+          '💬 [CHAT POLL] New message received');
+      }
     }
   }
 
@@ -343,6 +469,7 @@ export class ChatHandler extends EventEmitter {
    */
   disconnect(): void {
     this.stopPing();
+    this.stopPolling();
 
     if (this.ws) {
       this.ws.close();
@@ -351,6 +478,7 @@ export class ChatHandler extends EventEmitter {
 
     this.isConnected = false;
     this.watchedOrders.clear();
+    this.lastSeenMessageId.clear();
 
     logger.info('Chat handler disconnected');
   }
