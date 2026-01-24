@@ -208,6 +208,20 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
     const binanceCode = responseData?.code;
     const binanceMsg = responseData?.msg || responseData?.message;
     const httpStatus = error.response?.status;
+    const requestHeaders = error.config?.headers;
+
+    // Log FULL error details on separate line for visibility
+    logger.error(`❌ [BINANCE-API] FULL ERROR DETAILS:
+      advNo: ${advNo} (type: ${typeof advNo}, length: ${advNo.length})
+      price: ${roundedPrice}
+      httpStatus: ${httpStatus}
+      binanceCode: ${binanceCode}
+      binanceMsg: ${binanceMsg}
+      fullResponse: ${JSON.stringify(responseData)}
+      requestBody: ${JSON.stringify(body)}
+      hasApiKey: ${!!requestHeaders?.['X-MBX-APIKEY']}
+      hasClientType: ${requestHeaders?.['clientType']}
+    `);
 
     // Log with clear visibility of Binance error
     logger.error({
