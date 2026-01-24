@@ -30,6 +30,7 @@ function getAxiosInstance(): AxiosInstance {
       headers: {
         'Content-Type': 'application/json',
         'X-MBX-APIKEY': process.env.BINANCE_API_KEY || '',
+        'clientType': 'web',  // Required by Binance C2C API - fixes error -9000/187049
       },
       ...(proxyAgent && { httpsAgent: proxyAgent, proxy: false }),
     });
