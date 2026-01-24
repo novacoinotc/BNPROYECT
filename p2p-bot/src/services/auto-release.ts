@@ -907,14 +907,21 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     if (!name1 || !name2) return 0;
 
     // Normalize: convert separators to spaces, remove special chars, lowercase
+    // IMPORTANT: Also normalize accented characters because Mexican banks often strip accents
+    // e.g., bank sends "PENA" but Binance has "PEÑA"
     const normalize = (s: string) => {
       return s
         .toLowerCase()
         .trim()
         // Replace common bank separators with spaces (Mexican SPEI format uses comma and slash)
         .replace(/[,\/\.\-\_\|]/g, ' ')
-        // Remove remaining special characters (keep letters, numbers, spaces, and Spanish chars)
-        .replace(/[^a-z0-9\sáéíóúüñ]/g, '')
+        // Normalize accented characters to ASCII equivalents (critical for Mexican names)
+        // Banks often strip accents: PEÑA → PENA, GARCÍA → GARCIA, etc.
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')  // Remove combining diacritical marks
+        .replace(/ñ/g, 'n')  // Handle ñ separately as it's not a combining character
+        // Remove remaining special characters (keep letters, numbers, spaces)
+        .replace(/[^a-z0-9\s]/g, '')
         // Normalize multiple spaces to single space
         .replace(/\s+/g, ' ')
         .trim();
