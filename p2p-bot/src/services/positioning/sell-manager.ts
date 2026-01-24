@@ -110,6 +110,14 @@ export class SellAdManager extends EventEmitter {
       const oldMode = this.config.mode;
       const oldTarget = this.config.followTarget;
 
+      // Log merchant ID for debugging config loading
+      logger.debug({
+        merchantId: process.env.MERCHANT_ID || 'NOT_SET',
+        sellMode: dbConfig.sellMode,
+        sellFollowTarget: dbConfig.sellFollowTarget,
+        hasPositioningConfigs: Object.keys(dbConfig.positioningConfigs || {}).length,
+      }, '📋 [SELL] Config loaded');
+
       // Use SELL-specific config as defaults (sellMode, sellFollowTarget)
       this.config.mode = (dbConfig.sellMode as 'follow' | 'smart') || 'smart';
       this.config.followTarget = dbConfig.sellFollowTarget || null;
@@ -194,8 +202,14 @@ export class SellAdManager extends EventEmitter {
       return;
     }
 
-    // Log config only at debug level to reduce noise
-    logger.debug(`🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}, match=${assetConfig.matchPrice}, undercut=${assetConfig.undercutCents}`);
+    // Log asset config being used (temporarily at info level for debugging)
+    logger.info({
+      asset: ad.asset,
+      mode: assetConfig.mode,
+      followTarget: assetConfig.followTarget,
+      enabled: assetConfig.enabled,
+      merchantId: process.env.MERCHANT_ID || 'NOT_SET',
+    }, `🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';

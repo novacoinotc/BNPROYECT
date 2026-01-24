@@ -170,10 +170,20 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
   const query = `timestamp=${ts}`;
   const signature = signQuery(query);
 
+  // Debug: Log advNo type and value to verify precision is preserved
+  const body = { advNo, price: roundedPrice };
+  logger.info({
+    advNo,
+    advNoType: typeof advNo,
+    advNoLength: advNo.length,
+    price: roundedPrice,
+    bodyJson: JSON.stringify(body),
+  }, `📝 [BINANCE-API] Updating ad price: advNo=${advNo}`);
+
   try {
     const response = await getAxiosInstance().post(
       `/sapi/v1/c2c/ads/update?${query}&signature=${signature}`,
-      { advNo, price: roundedPrice }
+      body
     );
 
     const data = response.data;
