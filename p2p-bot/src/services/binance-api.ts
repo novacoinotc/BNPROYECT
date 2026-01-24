@@ -184,12 +184,13 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
     // Log with clear visibility of Binance error
     logger.error({
       advNo,
+      price: roundedPrice,
       httpStatus,
       binanceCode,
       binanceMsg,
       axiosMessage: error.message,
       fullResponse: JSON.stringify(responseData),
-    }, `❌ [BINANCE-API] Error updating ad price: ${binanceMsg || error.message}`);
+    }, `❌ [BINANCE-API] Error updating ad (advNo=${advNo}, price=${roundedPrice}): [${binanceCode}] ${binanceMsg || error.message}`);
 
     return {
       success: false,
