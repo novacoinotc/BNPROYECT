@@ -169,16 +169,7 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
   const ts = Date.now();
   const query = `timestamp=${ts}`;
   const signature = signQuery(query);
-
-  // Debug: Log advNo type and value to verify precision is preserved
   const body = { advNo, price: roundedPrice };
-  logger.info({
-    advNo,
-    advNoType: typeof advNo,
-    advNoLength: advNo.length,
-    price: roundedPrice,
-    bodyJson: JSON.stringify(body),
-  }, `📝 [BINANCE-API] Updating ad price: advNo=${advNo}`);
 
   try {
     const response = await getAxiosInstance().post(
@@ -208,31 +199,14 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
     const binanceCode = responseData?.code;
     const binanceMsg = responseData?.msg || responseData?.message;
     const httpStatus = error.response?.status;
-    const requestHeaders = error.config?.headers;
 
-    // Log FULL error details on separate line for visibility
-    logger.error(`❌ [BINANCE-API] FULL ERROR DETAILS:
-      advNo: ${advNo} (type: ${typeof advNo}, length: ${advNo.length})
-      price: ${roundedPrice}
-      httpStatus: ${httpStatus}
-      binanceCode: ${binanceCode}
-      binanceMsg: ${binanceMsg}
-      fullResponse: ${JSON.stringify(responseData)}
-      requestBody: ${JSON.stringify(body)}
-      hasApiKey: ${!!requestHeaders?.['X-MBX-APIKEY']}
-      hasClientType: ${requestHeaders?.['clientType']}
-    `);
-
-    // Log with clear visibility of Binance error
     logger.error({
       advNo,
       price: roundedPrice,
       httpStatus,
       binanceCode,
       binanceMsg,
-      axiosMessage: error.message,
-      fullResponse: JSON.stringify(responseData),
-    }, `❌ [BINANCE-API] Error updating ad (advNo=${advNo}, price=${roundedPrice}): [${binanceCode}] ${binanceMsg || error.message}`);
+    }, `❌ [BINANCE-API] Error updating ad: [${binanceCode}] ${binanceMsg || error.message}`);
 
     return {
       success: false,

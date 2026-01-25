@@ -202,14 +202,8 @@ export class SellAdManager extends EventEmitter {
       return;
     }
 
-    // Log asset config being used (temporarily at info level for debugging)
-    logger.info({
-      asset: ad.asset,
-      mode: assetConfig.mode,
-      followTarget: assetConfig.followTarget,
-      enabled: assetConfig.enabled,
-      merchantId: process.env.MERCHANT_ID || 'NOT_SET',
-    }, `🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}`);
+    // Log config at debug level
+    logger.debug(`🔧 [SELL] ${ad.asset}: mode=${assetConfig.mode}, target=${assetConfig.followTarget || 'N/A'}`);
 
     let targetPrice: number | null = null;
     let logInfo = '';
