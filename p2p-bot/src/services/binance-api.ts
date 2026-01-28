@@ -163,8 +163,12 @@ export interface UpdateAdResult {
 
 /**
  * Update ad price via Binance API
+ * Includes retry logic for -9000/187049 error (race condition when orders arrive)
  */
-export async function updateAdPrice(advNo: string, price: number): Promise<UpdateAdResult> {
+export async function updateAdPrice(advNo: string, price: number, retryCount: number = 0): Promise<UpdateAdResult> {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 3000; // 3 seconds between retries
+
   const roundedPrice = Math.round(price * 100) / 100;
   const ts = Date.now();
   const query = `timestamp=${ts}`;
@@ -199,6 +203,19 @@ export async function updateAdPrice(advNo: string, price: number): Promise<Updat
     const binanceCode = responseData?.code;
     const binanceMsg = responseData?.msg || responseData?.message;
     const httpStatus = error.response?.status;
+
+    // Retry on -9000/187049 error (race condition with order arrival)
+    // This error occurs when orders arrive simultaneously with ad updates
+    if (binanceCode === -9000 && (binanceMsg === '187049' || binanceMsg === 187049) && retryCount < MAX_RETRIES) {
+      logger.warn({
+        advNo,
+        retryCount: retryCount + 1,
+        maxRetries: MAX_RETRIES,
+      }, `⏳ [BINANCE-API] Error -9000/187049 (race condition), retrying in ${RETRY_DELAY_MS/1000}s...`);
+
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      return updateAdPrice(advNo, price, retryCount + 1);
+    }
 
     logger.error({
       advNo,
