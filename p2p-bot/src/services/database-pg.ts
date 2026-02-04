@@ -607,12 +607,25 @@ export async function findOrderByAmountAndName(
       .replace(/\s+/g, ' ')
       .trim();
 
-    const buyerWords = new Set(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
+    const buyerWords = new Set<string>(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
 
-    // Calculate word overlap score
+    // Calculate word overlap score (with truncation support)
     let matches = 0;
     for (const word of senderWords) {
-      if (buyerWords.has(word)) matches++;
+      if (buyerWords.has(word)) {
+        matches++;
+      } else {
+        // Check for truncated names (common in Binance/banks)
+        // e.g., "tepantzintan" should match "tepantzint" (truncated)
+        for (const buyerWord of buyerWords) {
+          if (word.length >= 6 && buyerWord.length >= 6) {
+            if (word.startsWith(buyerWord) || buyerWord.startsWith(word)) {
+              matches++;
+              break;
+            }
+          }
+        }
+      }
     }
     const totalWords = Math.max(senderWords.size, buyerWords.size);
     const score = totalWords > 0 ? matches / totalWords : 0;
@@ -942,12 +955,25 @@ export async function hasOrderWithMatchingBuyerName(
       .replace(/\s+/g, ' ')
       .trim();
 
-    const buyerWords = new Set(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
+    const buyerWords = new Set<string>(normalizedBuyer.split(/\s+/).filter((w: string) => w.length > 2));
 
-    // Calculate word overlap score
+    // Calculate word overlap score (with truncation support)
     let matches = 0;
     for (const word of senderWords) {
-      if (buyerWords.has(word)) matches++;
+      if (buyerWords.has(word)) {
+        matches++;
+      } else {
+        // Check for truncated names (common in Binance/banks)
+        // e.g., "tepantzintan" should match "tepantzint" (truncated)
+        for (const buyerWord of buyerWords) {
+          if (word.length >= 6 && buyerWord.length >= 6) {
+            if (word.startsWith(buyerWord) || buyerWord.startsWith(word)) {
+              matches++;
+              break;
+            }
+          }
+        }
+      }
     }
     const totalWords = Math.max(senderWords.size, buyerWords.size);
     const score = totalWords > 0 ? matches / totalWords : 0;

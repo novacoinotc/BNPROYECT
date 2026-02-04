@@ -943,7 +943,21 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     let matches = 0;
     for (const word of words1) {
-      if (words2.has(word)) matches++;
+      if (words2.has(word)) {
+        matches++;
+      } else {
+        // Check for truncated names (common in Binance/banks)
+        // e.g., "tepantzintan" should match "tepantzint" (truncated)
+        // Only match if both words are 6+ chars and one starts with the other
+        for (const word2 of words2) {
+          if (word.length >= 6 && word2.length >= 6) {
+            if (word.startsWith(word2) || word2.startsWith(word)) {
+              matches++;
+              break;
+            }
+          }
+        }
+      }
     }
 
     // Calculate similarity based on word overlap
