@@ -195,7 +195,7 @@ export class SellAdManager extends EventEmitter {
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'SELL', ad.asset)
-      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, smartMinOrderCount: 10, smartMinSurplus: 100 };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, smartMinOrderCount: 10, smartMinSurplus: 100 };
 
     // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {
@@ -210,16 +210,20 @@ export class SellAdManager extends EventEmitter {
 
     // Follow mode - if target not found, keep current price (NO automatic fallback to smart)
     if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
-      // Update follow engine with per-asset config (including per-asset price strategy)
+      // Update follow engine with per-asset config (including per-asset price strategy and floor)
       this.followEngine.updateConfig({
         targetNickName: assetConfig.followTarget,
         undercutCents: assetConfig.undercutCents,
         matchPrice: assetConfig.matchPrice,
+        minPrice: assetConfig.minPrice,  // Price floor
       });
       const result = await this.followEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
         targetPrice = result.targetPrice;
         logInfo = `siguiendo ${result.targetNickName}@${result.targetFoundPrice}`;
+        if (assetConfig.minPrice && targetPrice <= assetConfig.minPrice) {
+          logInfo += ` [piso: $${assetConfig.minPrice}]`;
+        }
       } else {
         // Target not found - keep current price, don't switch to smart mode
         logger.warn(`⚠️ [SELL] ${ad.asset}: Target "${assetConfig.followTarget}" no encontrado/offline - manteniendo precio actual $${ad.currentPrice.toFixed(2)}`);
@@ -229,10 +233,11 @@ export class SellAdManager extends EventEmitter {
 
     // Smart mode - only if explicitly configured as smart (not as fallback)
     if (assetConfig.mode === 'smart') {
-      // Update smart engine with per-asset config (price strategy + smart filters)
+      // Update smart engine with per-asset config (price strategy + smart filters + floor)
       this.smartEngine.updateConfig({
         undercutCents: assetConfig.undercutCents,
         matchPrice: assetConfig.matchPrice,
+        minPrice: assetConfig.minPrice,  // Price floor
         minMonthOrderCount: assetConfig.smartMinOrderCount,
         minSurplusAmount: assetConfig.smartMinSurplus,
       });
@@ -240,6 +245,9 @@ export class SellAdManager extends EventEmitter {
       if (result?.success) {
         targetPrice = result.targetPrice;
         logInfo = `smart (${result.qualifiedCount} calificados)`;
+        if (assetConfig.minPrice && targetPrice <= assetConfig.minPrice) {
+          logInfo += ` [piso: $${assetConfig.minPrice}]`;
+        }
       }
     }
 

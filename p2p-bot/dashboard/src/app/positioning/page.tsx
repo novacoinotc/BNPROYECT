@@ -18,6 +18,7 @@ interface AssetPositioningConfig {
   followTarget: string | null;
   matchPrice: boolean;
   undercutCents: number;
+  minPrice: number | null;  // Price floor - bot won't go below this (SELL only)
   // Per-asset smart filters
   smartMinOrderCount: number;
   smartMinSurplus: number;  // In FIAT (MXN) - calculated as price × crypto amount
@@ -71,6 +72,7 @@ export default function PositioningPage() {
       followTarget: null,
       matchPrice: false,
       undercutCents: 1,
+      minPrice: null,
       smartMinOrderCount: globalMinOrderCount,
       smartMinSurplus: globalMinSurplus,
     };
@@ -407,6 +409,35 @@ export default function PositioningPage() {
                     min="0"
                     step="0.5"
                   />
+                </div>
+              )}
+
+              {/* Price Floor - Only for SELL ads */}
+              {isSell && (
+                <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-red-300 font-medium">🛑 Precio Mínimo (Piso)</div>
+                      <div className="text-[10px] text-gray-500">No bajar de este precio</div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-400 text-sm">$</span>
+                      <input
+                        type="number"
+                        value={cfg.minPrice || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateAssetConfig(asset, tradeType, {
+                            minPrice: val ? parseFloat(val) : null
+                          });
+                        }}
+                        placeholder="Sin límite"
+                        className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

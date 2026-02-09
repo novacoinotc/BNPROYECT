@@ -12,6 +12,7 @@ export interface SmartConfig {
   minSurplusAmount: number;    // Minimum available volume (in FIAT, e.g., MXN)
   undercutCents: number;
   matchPrice: boolean;         // true = exact match, false = undercut
+  minPrice?: number | null;    // Price floor for SELL ads - won't go below this
   myNickName?: string;         // Our nickname to exclude from results
   minUserGrade: number;        // Minimum user grade (1=basic, 2=verified, 3+=advanced)
   ignoredAdvertisers?: string[]; // List of nicknames to always ignore
@@ -160,6 +161,34 @@ export class SmartEngine {
       ourPrice = this.adType === 'SELL'
         ? bestPrice - undercutValue
         : bestPrice + undercutValue;
+    }
+
+    // Apply price floor for SELL ads
+    if (this.adType === 'SELL' && this.config.minPrice && ourPrice < this.config.minPrice) {
+      logger.info(`🛑 [SMART] Price $${ourPrice.toFixed(2)} below floor $${this.config.minPrice.toFixed(2)} - searching for next competitor above floor`);
+
+      // Find qualified competitors ABOVE the floor
+      const competitorsAboveFloor = qualifiedAds.filter(ad => parseFloat(ad.price) >= this.config.minPrice!);
+
+      if (competitorsAboveFloor.length > 0) {
+        // Undercut the cheapest qualified competitor above floor
+        const nextBestPrice = parseFloat(competitorsAboveFloor[0].price);
+        const undercutValue = this.config.undercutCents / 100;
+        ourPrice = Math.max(nextBestPrice - undercutValue, this.config.minPrice);
+
+        logger.info(`📈 [SMART] Repositioning below competitor at $${nextBestPrice.toFixed(2)} → $${ourPrice.toFixed(2)}`);
+
+        return {
+          success: true,
+          targetPrice: Math.round(ourPrice * 100) / 100,
+          bestCompetitorPrice: nextBestPrice,
+          qualifiedCount: competitorsAboveFloor.length,
+        };
+      } else {
+        // No competitors above floor - stay at floor
+        ourPrice = this.config.minPrice;
+        logger.info(`📈 [SMART] No competitors above floor - staying at floor $${ourPrice.toFixed(2)}`);
+      }
     }
 
     return {
