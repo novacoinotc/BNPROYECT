@@ -187,7 +187,7 @@ export class BuyAdManager extends EventEmitter {
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
-      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, smartMinOrderCount: 10, smartMinSurplus: 100 };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, smartMinOrderCount: 10, smartMinSurplus: 100 };
 
     // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {

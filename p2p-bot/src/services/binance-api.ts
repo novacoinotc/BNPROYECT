@@ -106,9 +106,25 @@ export async function fetchMerchantAds(tradeType?: 'BUY' | 'SELL'): Promise<AdIn
     // Handle different API response formats
     if (Array.isArray(data.data)) {
       allAds.push(...data.data);
+      logger.debug(`📋 [BINANCE-API] Response format: array with ${data.data.length} ads`);
     } else if (data.data) {
-      if (data.data.buyList) allAds.push(...data.data.buyList);
-      if (data.data.sellList) allAds.push(...data.data.sellList);
+      if (data.data.buyList) {
+        allAds.push(...data.data.buyList);
+        logger.debug(`📋 [BINANCE-API] Found ${data.data.buyList.length} BUY ads in buyList`);
+      }
+      if (data.data.sellList) {
+        allAds.push(...data.data.sellList);
+        logger.debug(`📋 [BINANCE-API] Found ${data.data.sellList.length} SELL ads in sellList`);
+      }
+    } else {
+      logger.warn(`⚠️ [BINANCE-API] Unexpected response format: ${JSON.stringify(data).substring(0, 500)}`);
+    }
+
+    // Log all raw ads for debugging
+    if (allAds.length > 0) {
+      logger.info(`📋 [BINANCE-API] Raw ads found: ${allAds.map(a => `${a.tradeType}:${a.asset}@${a.price}(status=${a.advStatus})`).join(', ')}`);
+    } else {
+      logger.warn(`⚠️ [BINANCE-API] No ads returned from API`);
     }
 
     // Map to AdInfo and filter by tradeType if specified
@@ -123,6 +139,11 @@ export async function fetchMerchantAds(tradeType?: 'BUY' | 'SELL'): Promise<AdIn
         currentPrice: parseFloat(ad.price),
         isOnline: ad.advStatus === 1,
       }));
+
+    // Log filtered results
+    if (tradeType) {
+      logger.debug(`📋 [BINANCE-API] After filtering for ${tradeType}: ${ads.length} ads`);
+    }
 
     return ads;
   } catch (error: any) {
