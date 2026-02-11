@@ -82,14 +82,15 @@ export class SellAdManager extends EventEmitter {
     await this.loadConfig();
     await this.discoverAds();
 
+    this.isRunning = true;
+
     if (this.ads.size === 0) {
-      logger.warn('⚠️ [SELL] No active SELL ads found');
-      return;
+      logger.info('⏳ [SELL] No active SELL ads found - will keep checking for new ads');
+    } else {
+      logger.info(`🚀 [SELL] Managing ${this.ads.size} SELL ads, modo ${this.config.mode}${this.config.followTarget ? ` → ${this.config.followTarget}` : ''}`);
     }
 
-    this.isRunning = true;
-    logger.info(`🚀 [SELL] Managing ${this.ads.size} SELL ads, modo ${this.config.mode}${this.config.followTarget ? ` → ${this.config.followTarget}` : ''}`);
-
+    // Always start the interval - ads may come online later
     await this.runCycle();
     this.interval = setInterval(() => this.runCycle(), intervalMs);
   }

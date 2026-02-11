@@ -82,14 +82,15 @@ export class BuyAdManager extends EventEmitter {
     await this.loadConfig();
     await this.discoverAds();
 
+    this.isRunning = true;
+
     if (this.ads.size === 0) {
-      logger.warn('⚠️ [BUY] No active BUY ads found');
-      return;
+      logger.info('⏳ [BUY] No active BUY ads found - will keep checking for new ads');
+    } else {
+      logger.info(`🚀 [BUY] Managing ${this.ads.size} BUY ads, modo ${this.config.mode}${this.config.followTarget ? ` → ${this.config.followTarget}` : ''}`);
     }
 
-    this.isRunning = true;
-    logger.info(`🚀 [BUY] Managing ${this.ads.size} BUY ads, modo ${this.config.mode}${this.config.followTarget ? ` → ${this.config.followTarget}` : ''}`);
-
+    // Always start the interval - ads may come online later
     await this.runCycle();
     this.interval = setInterval(() => this.runCycle(), intervalMs);
   }

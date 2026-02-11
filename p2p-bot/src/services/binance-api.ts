@@ -120,11 +120,9 @@ export async function fetchMerchantAds(tradeType?: 'BUY' | 'SELL'): Promise<AdIn
       logger.warn(`⚠️ [BINANCE-API] Unexpected response format: ${JSON.stringify(data).substring(0, 500)}`);
     }
 
-    // Log all raw ads for debugging
+    // Log raw ads at debug level (reduce noise in production)
     if (allAds.length > 0) {
-      logger.info(`📋 [BINANCE-API] Raw ads found: ${allAds.map(a => `${a.tradeType}:${a.asset}@${a.price}(status=${a.advStatus})`).join(', ')}`);
-    } else {
-      logger.warn(`⚠️ [BINANCE-API] No ads returned from API`);
+      logger.debug(`📋 [BINANCE-API] Raw ads: ${allAds.map(a => `${a.tradeType}:${a.asset}(status=${a.advStatus})`).join(', ')}`);
     }
 
     // Map to AdInfo and filter by tradeType if specified
