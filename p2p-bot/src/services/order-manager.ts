@@ -755,10 +755,56 @@ export class OrderManager extends EventEmitter {
       }, 'Crypto released successfully');
 
       return true;
-    } catch (error) {
-      logger.error({ orderNumber, error }, 'Failed to release crypto');
-      return false;
+    } catch (error: any) {
+      // Extract Binance error details for the caller
+      const binanceCode = error.response?.data?.code;
+      const binanceMsg = error.response?.data?.msg || error.response?.data?.message;
+      const httpStatus = error.response?.status;
+
+      logger.error({
+        orderNumber,
+        httpStatus,
+        binanceCode,
+        binanceMsg,
+        errorMessage: error.message,
+      }, 'Failed to release crypto');
+
+      // Re-throw with Binance details so auto-release can make smart retry decisions
+      const releaseError = new Error(`Release failed: ${binanceMsg || error.message}`) as any;
+      releaseError.httpStatus = httpStatus;
+      releaseError.binanceCode = binanceCode;
+      releaseError.binanceMsg = binanceMsg;
+      releaseError.isRetryable = !this.isNonRetryableError(httpStatus, binanceCode, binanceMsg);
+      throw releaseError;
     }
+  }
+
+  /**
+   * Determine if a Binance API error is non-retryable
+   * (i.e., retrying won't help because the order state has changed)
+   */
+  private isNonRetryableError(httpStatus?: number, binanceCode?: number, binanceMsg?: string): boolean {
+    // Known non-retryable Binance error messages for releaseCoin
+    const nonRetryableMessages = [
+      'order already completed',
+      'order already cancelled',
+      'order not found',
+      'order status error',
+      'order has been completed',
+      'order has been cancelled',
+      'the order is completed',
+      'the order is cancelled',
+      'can not release',
+    ];
+
+    if (binanceMsg) {
+      const msgLower = binanceMsg.toLowerCase();
+      if (nonRetryableMessages.some(m => msgLower.includes(m))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // ==================== GETTERS ====================

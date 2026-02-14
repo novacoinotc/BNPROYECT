@@ -1748,12 +1748,56 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         this.config.authType
       );
 
-      // Release crypto
-      const success = await this.orderManager.releaseCrypto(
-        orderNumber,
-        this.config.authType,
-        verificationCode
-      );
+      // Release crypto (throws on error with Binance details)
+      let success = false;
+      try {
+        success = await this.orderManager.releaseCrypto(
+          orderNumber,
+          this.config.authType,
+          verificationCode
+        );
+      } catch (releaseError: any) {
+        // Check if error is non-retryable (order already completed/cancelled)
+        if (releaseError.isRetryable === false) {
+          logger.warn({
+            orderNumber,
+            binanceCode: releaseError.binanceCode,
+            binanceMsg: releaseError.binanceMsg,
+            httpStatus: releaseError.httpStatus,
+          }, '🚫 [RELEASE] Non-retryable error - order may already be completed/cancelled. Checking status...');
+
+          // Verify order status on Binance before giving up
+          try {
+            const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+            const currentStatus = orderDetail.orderStatus;
+            logger.info({ orderNumber, currentStatus }, '📋 [RELEASE] Current order status from Binance');
+
+            if (currentStatus === 'COMPLETED') {
+              // Order was actually released! Treat as success
+              logger.info({ orderNumber }, '✅ [RELEASE] Order is already COMPLETED on Binance - release was successful');
+              success = true;
+            } else if (currentStatus === 'CANCELLED') {
+              logger.warn({ orderNumber }, '❌ [RELEASE] Order was CANCELLED on Binance - skipping release');
+              this.pendingReleases.delete(orderNumber);
+              this.lastCheckTime.delete(orderNumber);
+              this.loggedBlockedOrders.delete(orderNumber);
+              return;
+            } else {
+              // Order is still in a releasable state but API rejected - rethrow for retry
+              logger.warn({ orderNumber, currentStatus }, '⚠️ [RELEASE] Order still active but release was rejected');
+              throw releaseError;
+            }
+          } catch (statusError: any) {
+            // If status check also fails, log and rethrow original error
+            if (statusError === releaseError) throw statusError;
+            logger.warn({ orderNumber, statusError: statusError.message }, '⚠️ [RELEASE] Could not verify order status');
+            throw releaseError;
+          }
+        } else {
+          // Retryable error (TOTP invalid, network issue, etc) - rethrow for retry
+          throw releaseError;
+        }
+      }
 
       if (success) {
         logger.info({
@@ -1803,29 +1847,106 @@ export class AutoReleaseOrchestrator extends EventEmitter {
       } else {
         throw new Error('Release API call failed');
       }
-    } catch (error) {
+    } catch (error: any) {
+      const binanceMsg = error.binanceMsg || '';
+      const binanceCode = error.binanceCode || '';
+      const httpStatus = error.httpStatus || '';
+
       logger.error({
         orderNumber,
-        error,
+        httpStatus,
+        binanceCode,
+        binanceMsg,
+        errorMessage: error.message,
         attempts: pending.attempts,
       }, 'Failed to release crypto');
 
       if (pending.attempts < 3) {
-        // Wait for next TOTP window before retrying to ensure fresh code
+        // Before retrying, verify the order is still in a releasable state
+        let shouldRetry = true;
         try {
-          const totpService = getTOTPService();
-          if (totpService.isConfigured()) {
-            logger.info({ orderNumber }, '🔄 [RETRY] Waiting for next TOTP window before retry...');
-            await totpService.waitForNextWindowAndGenerate(); // This waits and generates, we discard the code
+          const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+          const currentStatus = orderDetail.orderStatus;
+
+          if (currentStatus === 'COMPLETED') {
+            logger.info({ orderNumber, currentStatus },
+              '✅ [RETRY CHECK] Order is already COMPLETED on Binance - no retry needed');
+            shouldRetry = false;
+
+            // Treat as success - clean up
+            this.emit('release', {
+              type: 'release_success',
+              orderNumber,
+              data: {
+                amount: pending.order.totalPrice,
+                asset: pending.order.asset,
+                note: 'Detected as completed after API error',
+              },
+            } as ReleaseEvent);
+
+            this.pendingReleases.delete(orderNumber);
+            this.lastCheckTime.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+          } else if (currentStatus === 'CANCELLED') {
+            logger.warn({ orderNumber, currentStatus },
+              '❌ [RETRY CHECK] Order was CANCELLED - no retry needed');
+            shouldRetry = false;
+
+            this.pendingReleases.delete(orderNumber);
+            this.lastCheckTime.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+          } else {
+            logger.info({ orderNumber, currentStatus },
+              `🔄 [RETRY CHECK] Order still in ${currentStatus} - will retry`);
           }
-        } catch (totpError) {
-          logger.warn({ orderNumber, totpError }, 'Failed to wait for TOTP window');
+        } catch (statusError) {
+          logger.warn({ orderNumber, statusError },
+            '⚠️ [RETRY CHECK] Could not verify order status - will retry anyway');
         }
 
-        // Retry with fresh code
-        this.releaseQueue.push(orderNumber);
-        logger.info({ orderNumber, attempt: pending.attempts }, '🔄 [RETRY] Order re-queued for release with fresh TOTP code');
+        if (shouldRetry) {
+          // Wait for next TOTP window before retrying to ensure fresh code
+          try {
+            const totpService = getTOTPService();
+            if (totpService.isConfigured()) {
+              logger.info({ orderNumber }, '🔄 [RETRY] Waiting for next TOTP window before retry...');
+              await totpService.waitForNextWindowAndGenerate();
+            }
+          } catch (totpError) {
+            logger.warn({ orderNumber, totpError }, 'Failed to wait for TOTP window');
+          }
+
+          // Retry with fresh code
+          this.releaseQueue.push(orderNumber);
+          logger.info({ orderNumber, attempt: pending.attempts }, '🔄 [RETRY] Order re-queued for release with fresh TOTP code');
+        }
       } else {
+        // Max retries - but still check if order was actually released
+        try {
+          const orderDetail = await this.binanceClient.getOrderDetail(orderNumber);
+          if (orderDetail.orderStatus === 'COMPLETED') {
+            logger.info({ orderNumber },
+              '✅ [MAX RETRIES] Order is actually COMPLETED on Binance - treating as success');
+
+            this.emit('release', {
+              type: 'release_success',
+              orderNumber,
+              data: {
+                amount: pending.order.totalPrice,
+                asset: pending.order.asset,
+                note: 'Detected as completed after max retries',
+              },
+            } as ReleaseEvent);
+
+            this.pendingReleases.delete(orderNumber);
+            this.lastCheckTime.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+            return;
+          }
+        } catch (_) {
+          // Ignore - fall through to manual_required
+        }
+
         this.emit('release', {
           type: 'release_failed',
           orderNumber,
@@ -1835,7 +1956,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         this.emit('release', {
           type: 'manual_required',
           orderNumber,
-          reason: 'Max release attempts exceeded',
+          reason: `Max release attempts exceeded (last error: ${binanceMsg || error.message})`,
         } as ReleaseEvent);
       }
     }
