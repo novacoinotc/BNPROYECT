@@ -68,8 +68,8 @@ export class FollowEngine {
     logger.debug(`🔍 [FOLLOW] Searching '${searchType}' tab for "${this.config.targetNickName}" in ${asset}/${fiat}`);
 
     // Search multiple pages to find target and collect all ads (for floor fallback)
-    let targetAd: AdData | null = null;
     let allAds: AdData[] = [];
+    let targetAds: AdData[] = [];
 
     for (let page = 1; page <= 3; page++) {
       const ads = await this.client.searchAds({
@@ -83,20 +83,54 @@ export class FollowEngine {
       if (ads.length === 0) break;
       allAds.push(...ads);
 
-      // Find target by nickname (case insensitive)
-      if (!targetAd) {
-        const found = ads.find(ad =>
-          ad.advertiser.nickName.toLowerCase() === this.config.targetNickName.toLowerCase()
-        );
-        if (found) {
-          targetAd = found;
-        }
-      }
+      // Collect ALL ads from target (not just the first one)
+      const found = ads.filter(ad =>
+        ad.advertiser.nickName.toLowerCase() === this.config.targetNickName.toLowerCase()
+      );
+      targetAds.push(...found);
     }
 
-    if (!targetAd) {
+    if (targetAds.length === 0) {
       logger.warn(`⚠️ [FOLLOW] Target "${this.config.targetNickName}" NOT FOUND in ${asset}/${fiat} (searched 3 pages)`);
       return null;
+    }
+
+    // Smart target ad selection: when target has multiple ads and a price floor is set,
+    // pick the ad that gives the best competitive position ABOVE the floor.
+    // This prevents manipulation where the target places a "trap" ad at the floor.
+    let targetAd: AdData;
+
+    if (targetAds.length === 1 || !this.config.minPrice || this.adType !== 'SELL') {
+      // Single ad, no floor, or BUY ad → pick first (most competitive)
+      targetAd = targetAds[0];
+    } else {
+      // Multiple target ads + SELL + floor → evaluate each against the floor
+      const undercutValue = this.config.matchPrice ? 0 : this.config.undercutCents / 100;
+
+      const validTargetAds = targetAds
+        .map(ad => ({
+          ad,
+          price: parseFloat(ad.price),
+          ourPrice: parseFloat(ad.price) - undercutValue,
+        }))
+        .filter(entry => entry.ourPrice >= this.config.minPrice!)
+        .sort((a, b) => a.ourPrice - b.ourPrice); // Cheapest valid first
+
+      if (validTargetAds.length > 0) {
+        targetAd = validTargetAds[0].ad;
+        logger.info(
+          `🎯 [FOLLOW] Target tiene ${targetAds.length} anuncios. ` +
+          `Ignorando ${targetAds.length - validTargetAds.length} debajo del piso. ` +
+          `Siguiendo $${validTargetAds[0].price.toFixed(2)} (nuestro precio: $${validTargetAds[0].ourPrice.toFixed(2)})`
+        );
+      } else {
+        // ALL target ads put us below floor → pick cheapest, floor fallback will handle it
+        targetAd = targetAds[0];
+        logger.info(
+          `🎯 [FOLLOW] Target tiene ${targetAds.length} anuncios, TODOS debajo del piso $${this.config.minPrice.toFixed(2)}. ` +
+          `Cayendo al fallback de piso.`
+        );
+      }
     }
 
     const targetPrice = parseFloat(targetAd.price);
@@ -126,12 +160,13 @@ export class FollowEngine {
         .filter(ad => {
           const price = parseFloat(ad.price);
           const nick = ad.advertiser.nickName.toLowerCase();
-          // Exclude self and ignored advertisers
+          // Exclude self, target (trap ads), and ignored advertisers
           const isSelf = myNickName && nick === myNickName;
+          const isTarget = nick === this.config.targetNickName.toLowerCase();
           const isIgnored = this.config.ignoredAdvertisers?.some(
             ignored => ignored.toLowerCase() === nick
           );
-          return price >= this.config.minPrice! && !isSelf && !isIgnored;
+          return price >= this.config.minPrice! && !isSelf && !isTarget && !isIgnored;
         })
         .sort((a, b) => parseFloat(a.price) - parseFloat(b.price)); // Sort by price ascending
 
