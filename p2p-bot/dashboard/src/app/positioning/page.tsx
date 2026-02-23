@@ -92,7 +92,7 @@ export default function PositioningPage() {
 
     setLoadingSellers(prev => ({ ...prev, [cacheKey]: true }));
     try {
-      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${searchType}&rows=20`);
+      const response = await fetch(`/api/sellers?asset=${asset}&fiat=MXN&tradeType=${searchType}&rows=40`);
       const data = await response.json();
       if (data.success) {
         setSellersCache(prev => ({ ...prev, [cacheKey]: data.sellers }));

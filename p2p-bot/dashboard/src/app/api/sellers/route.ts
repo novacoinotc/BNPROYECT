@@ -24,59 +24,66 @@ export async function GET(request: NextRequest) {
   const rows = parseInt(searchParams.get('rows') || '20');
 
   try {
-    // Use public Binance P2P search API (no auth required)
-    const response = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        asset,
-        fiat,
-        tradeType,
-        page: 1,
-        rows,
-        payTypes: [],
-        publisherType: 'merchant', // Only verified merchants
-        transAmount: null,
-      }),
-    });
+    // Binance API max is 20 per page, so paginate if more requested
+    const perPage = 20;
+    const pages = Math.ceil(rows / perPage);
+    let allItems: Array<{
+      adv: {
+        advNo: string;
+        tradeType: string;
+        asset: string;
+        fiatUnit: string;
+        price: string;
+        surplusAmount: string;
+        minSingleTransAmount: string;
+        maxSingleTransAmount: string;
+      };
+      advertiser: {
+        userNo: string;
+        nickName: string;
+        userGrade?: number;
+        monthFinishRate?: number;
+        monthOrderCount?: number;
+        positiveRate?: number;
+        isOnline?: boolean;
+        proMerchant?: boolean;
+      };
+    }> = [];
 
-    const rawData = await response.json() as {
-      code?: string;
-      data?: Array<{
-        adv: {
-          advNo: string;
-          tradeType: string;
-          asset: string;
-          fiatUnit: string;
-          price: string;
-          surplusAmount: string;
-          minSingleTransAmount: string;
-          maxSingleTransAmount: string;
-        };
-        advertiser: {
-          userNo: string;
-          nickName: string;
-          userGrade?: number;
-          monthFinishRate?: number;
-          monthOrderCount?: number;
-          positiveRate?: number;
-          isOnline?: boolean;
-          proMerchant?: boolean;
-        };
-      }>;
-    };
+    for (let page = 1; page <= pages; page++) {
+      const response = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          asset,
+          fiat,
+          tradeType,
+          page,
+          rows: perPage,
+          payTypes: [],
+          publisherType: 'merchant',
+          transAmount: null,
+        }),
+      });
 
-    if (rawData.code !== '000000' || !rawData.data) {
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch sellers from Binance' },
-        { status: 500 }
-      );
+      const rawData = await response.json() as { code?: string; data?: typeof allItems };
+
+      if (rawData.code !== '000000' || !rawData.data) {
+        if (page === 1) {
+          return NextResponse.json(
+            { success: false, error: 'Failed to fetch sellers from Binance' },
+            { status: 500 }
+          );
+        }
+        break; // Got some data from earlier pages, use what we have
+      }
+
+      allItems.push(...rawData.data);
+      if (rawData.data.length < perPage) break; // No more pages
     }
 
     // Transform to seller list
-    const sellers: SellerData[] = rawData.data.map((item, index) => ({
+    const sellers: SellerData[] = allItems.slice(0, rows).map((item, index) => ({
       position: index + 1,
       userNo: item.advertiser.userNo,
       nickName: item.advertiser.nickName,
