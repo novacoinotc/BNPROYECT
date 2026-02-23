@@ -40,6 +40,7 @@ interface Order {
   verificationStatus: string | null;
   verificationTimeline: VerificationStep[] | null;
   payments: Payment[];
+  isTrustedBuyer?: boolean;
 }
 
 const statusColors: Record<string, string> = {
@@ -583,7 +584,146 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile card layout */}
+      <div className="sm:hidden divide-y divide-[#2d2640]">
+        {orders.map((order) => {
+          const descriptiveStatus = getDescriptiveStatus(order);
+          return (
+            <div key={`mobile-${order.orderNumber}`}>
+              <div
+                className={`p-3 cursor-pointer active:bg-[#2d2640]/50 transition ${selectedOrders.has(order.orderNumber) ? 'bg-primary-500/10' : ''}`}
+                onClick={() => {
+                  setExpandedOrder(expandedOrder === order.orderNumber ? null : order.orderNumber);
+                  setActiveTab('verification');
+                }}
+              >
+                {/* Row 1: checkbox + order ID + time */}
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedOrders.has(order.orderNumber)}
+                      onChange={() => toggleSelectOrder(order.orderNumber)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded border-gray-600 bg-[#13111c] text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="font-mono text-xs text-gray-400">#{order.orderNumber.slice(-8)}</span>
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    {new Date(order.binanceCreateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                {/* Row 2: buyer + amount */}
+                <div className="flex justify-between items-center mt-1.5">
+                  <span className="text-sm text-white truncate mr-2">
+                    {order.isTrustedBuyer && <span>⭐ </span>}{order.buyerNickName}
+                  </span>
+                  <span className="text-sm font-medium text-white whitespace-nowrap">
+                    ${parseFloat(order.totalPrice).toLocaleString()} <span className="text-xs text-gray-500">MXN</span>
+                  </span>
+                </div>
+                {/* Row 3: status + verification */}
+                <div className="flex gap-2 mt-1.5">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[order.status] || 'bg-gray-500/20 text-gray-400'}`}>
+                    {statusLabels[order.status] || order.status}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${descriptiveStatus.color}`}>
+                    {descriptiveStatus.emoji} {descriptiveStatus.label}
+                  </span>
+                </div>
+              </div>
+              {/* Expanded section (reuses same content) */}
+              {expandedOrder === order.orderNumber && (
+                <div className="px-3 pb-3 bg-[#0f0d16]">
+                  <div className="space-y-4">
+                    <div className="text-sm space-y-1">
+                      <div><span className="text-gray-400">Orden: </span><span className="text-white font-mono text-xs">{order.orderNumber}</span></div>
+                      <div><span className="text-gray-400">Comprador: </span><span className="text-white">{order.buyerRealName || order.buyerNickName}</span></div>
+                      <div><span className="text-gray-400">Monto: </span><span className="text-white">${parseFloat(order.totalPrice).toLocaleString()} MXN</span></div>
+                    </div>
+                    <div className="flex gap-2 border-b border-[#2d2640]">
+                      <button onClick={(e) => { e.stopPropagation(); setActiveTab('verification'); }} className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'verification' ? 'text-primary-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300'}`}>Verificacion</button>
+                      <button onClick={(e) => { e.stopPropagation(); setActiveTab('chat'); }} className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'chat' ? 'text-primary-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300'}`}>Chat</button>
+                    </div>
+                    {activeTab === 'verification' ? (
+                      <>
+                        {order.payments.length > 0 && (
+                          <div className="p-3 bg-[#2d2640] rounded-lg">
+                            <h4 className="text-sm font-medium text-gray-300 mb-2">Pago Bancario</h4>
+                            {order.payments.map((payment) => (
+                              <div key={payment.transactionId} className="text-sm space-y-1">
+                                <div className="flex justify-between"><span className="text-gray-400">ID:</span><span className="text-white font-mono text-xs">{payment.transactionId.slice(0, 16)}...</span></div>
+                                <div className="flex justify-between"><span className="text-gray-400">Monto:</span><span className="text-white">${parseFloat(payment.amount).toLocaleString()}</span></div>
+                                <div className="flex justify-between"><span className="text-gray-400">Nombre:</span><span className="text-white text-xs">{payment.senderName}</span></div>
+                                <div className="flex justify-between"><span className="text-gray-400">Estado:</span><span className={payment.status === 'MATCHED' ? 'text-green-400' : 'text-yellow-400'}>{payment.status}</span></div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {order.verificationTimeline && order.verificationTimeline.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium text-gray-300">Timeline</h4>
+                            {order.verificationTimeline.map((step: VerificationStep, idx: number) => (
+                              <div key={idx} className="flex items-start gap-2 text-sm">
+                                <span>{stepEmojis[step.status] || '•'}</span>
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-gray-300 break-words">{step.message}</span>
+                                  <span className="text-gray-500 text-xs ml-2">{new Date(step.timestamp).toLocaleTimeString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {['PAID', 'PENDING'].includes(order.status) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setReleaseOrder(order.orderNumber); }}
+                            className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium"
+                          >Liberar Crypto Manualmente</button>
+                        )}
+                        {order.status === 'COMPLETED' && (
+                          <div className="pt-2">
+                            {order.isTrustedBuyer ? (
+                              <div className="w-full px-4 py-2 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg font-medium flex items-center justify-center gap-2">
+                                <span>⭐</span> Ya es VIP
+                              </div>
+                            ) : (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!confirm(`Agregar "${order.buyerNickName}" a compradores confiables?`)) return;
+                                  try {
+                                    if (!order.buyerUserNo) { alert('buyerUserNo no disponible'); return; }
+                                    const response = await fetch('/api/trusted-buyers', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ counterPartNickName: order.buyerNickName, buyerUserNo: order.buyerUserNo, realName: order.buyerRealName, verifiedBy: 'Dashboard', notes: `Verificado en orden ${order.orderNumber}` }),
+                                    });
+                                    const data = await response.json();
+                                    if (data.success) { alert(`"${order.buyerNickName}" agregado a compradores confiables`); } else { alert(data.error || 'Error al agregar'); }
+                                  } catch (err: any) { alert(err.message || 'Error de conexion'); }
+                                }}
+                                className="w-full px-4 py-2 bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/30 transition font-medium flex items-center justify-center gap-2"
+                              ><span>⭐</span> Marcar Confiable</button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-300 mb-3">Chat de la Orden</h4>
+                        <ChatSection orderNumber={order.orderNumber} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table layout - simplified: merged Status+Verificacion into one column */}
+      <div className="overflow-x-auto hidden sm:block">
         <table className="w-full">
           <thead className="bg-[#2d2640] text-gray-400 text-xs uppercase">
             <tr>
@@ -595,12 +735,10 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                   className="w-4 h-4 rounded border-gray-600 bg-[#13111c] text-primary-600 focus:ring-primary-500 cursor-pointer"
                 />
               </th>
-              <th className="px-4 py-3 text-left">Order</th>
-              <th className="px-4 py-3 text-left">Buyer</th>
-              <th className="px-4 py-3 text-right">Amount</th>
-              <th className="px-4 py-3 text-center">Status</th>
-              <th className="px-4 py-3 text-center">Verificacion</th>
-              <th className="px-4 py-3 text-right">Time</th>
+              <th className="px-4 py-3 text-left">Comprador</th>
+              <th className="px-4 py-3 text-right">Monto</th>
+              <th className="px-4 py-3 text-center">Estado</th>
+              <th className="px-4 py-3 text-right">Hora</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#2d2640]">
@@ -625,28 +763,17 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <span className="font-mono text-sm text-gray-300">
-                      {order.orderNumber.slice(-8)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm text-white">
-                      {order.buyerNickName}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {order.isTrustedBuyer && <span title="Comprador VIP" className="text-xs">⭐</span>}
+                      <div>
+                        <span className="text-sm text-white">{order.buyerNickName}</span>
+                        <span className="text-xs text-gray-500 ml-2">#{order.orderNumber.slice(-8)}</span>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-sm text-white">
+                    <span className="text-sm font-medium text-white">
                       ${parseFloat(order.totalPrice).toLocaleString()}
-                    </span>
-                    <span className="text-xs text-gray-500 ml-1">MXN</span>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-medium ${
-                        statusColors[order.status] || 'bg-gray-500/20 text-gray-400'
-                      }`}
-                    >
-                      {statusLabels[order.status] || order.status}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -659,289 +786,141 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
                           >
                             {descriptiveStatus.emoji} {descriptiveStatus.label}
                           </span>
-                          {/* Tooltip with description */}
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-[#1a1625] border border-[#3d3655] rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap">
                             <p className="text-xs text-gray-300">{descriptiveStatus.description}</p>
-                            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-[#3d3655]"></div>
                           </div>
                         </div>
                       );
                     })()}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-gray-400">
-                    {new Date(order.binanceCreateTime).toLocaleTimeString()}
+                    {new Date(order.binanceCreateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </td>
                 </tr>
 
-                {/* Expanded section with tabs */}
+                {/* Expanded section - clean, no repeated info */}
                 {expandedOrder === order.orderNumber && (
                   <tr key={`${order.orderNumber}-expanded`}>
-                    <td colSpan={7} className="px-4 py-4 bg-[#0f0d16]">
-                      <div className="space-y-4">
-                        {/* Order details */}
-                        <div className="flex items-center justify-between text-sm">
-                          <div>
-                            <span className="text-gray-400">Orden: </span>
-                            <span className="text-white font-mono">{order.orderNumber}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Comprador: </span>
-                            <span className="text-white">{order.buyerRealName || order.buyerNickName}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Monto: </span>
-                            <span className="text-white">${parseFloat(order.totalPrice).toLocaleString()} MXN</span>
-                          </div>
+                    <td colSpan={5} className="px-4 py-4 bg-[#0f0d16]">
+                      <div className="space-y-3">
+                        {/* Compact order info - only show what's NOT in the row */}
+                        <div className="flex items-center gap-4 text-sm text-gray-400">
+                          <span>Orden: <span className="text-white font-mono text-xs">{order.orderNumber}</span></span>
+                          {order.buyerRealName && (
+                            <span>Nombre: <span className="text-white">{order.buyerRealName}</span></span>
+                          )}
                         </div>
 
                         {/* Tabs */}
                         <div className="flex gap-2 border-b border-[#2d2640]">
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveTab('verification');
-                            }}
-                            className={`px-4 py-2 text-sm font-medium transition ${
-                              activeTab === 'verification'
-                                ? 'text-primary-400 border-b-2 border-yellow-400'
-                                : 'text-gray-400 hover:text-gray-300'
-                            }`}
-                          >
-                            Verificacion
-                          </button>
+                            onClick={(e) => { e.stopPropagation(); setActiveTab('verification'); }}
+                            className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'verification' ? 'text-primary-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300'}`}
+                          >Verificacion</button>
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveTab('chat');
-                            }}
-                            className={`px-4 py-2 text-sm font-medium transition ${
-                              activeTab === 'chat'
-                                ? 'text-primary-400 border-b-2 border-yellow-400'
-                                : 'text-gray-400 hover:text-gray-300'
-                            }`}
-                          >
-                            Chat
-                          </button>
+                            onClick={(e) => { e.stopPropagation(); setActiveTab('chat'); }}
+                            className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'chat' ? 'text-primary-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300'}`}
+                          >Chat</button>
                         </div>
 
-                        {/* Tab content */}
                         {activeTab === 'verification' ? (
                           <>
-                            {/* Payment info */}
+                            {/* Payment info - compact */}
                             {order.payments.length > 0 && (
-                              <div className="p-3 bg-[#2d2640] rounded-lg">
-                                <h4 className="text-sm font-medium text-gray-300 mb-2">Pago Bancario</h4>
+                              <div className="p-3 bg-[#2d2640] rounded-lg text-sm">
                                 {order.payments.map((payment) => (
-                                  <div key={payment.transactionId} className="text-sm">
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">ID:</span>
-                                      <span className="text-white font-mono">{payment.transactionId.slice(0, 20)}...</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Monto:</span>
-                                      <span className="text-white">${parseFloat(payment.amount).toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Pagador:</span>
-                                      <span className="text-white">{payment.senderName}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Estado:</span>
-                                      <span className={`${payment.status === 'MATCHED' ? 'text-green-400' : 'text-primary-400'}`}>
-                                        {payment.status}
-                                      </span>
-                                    </div>
+                                  <div key={payment.transactionId} className="flex flex-wrap gap-x-4 gap-y-1">
+                                    <span className="text-gray-400">Pago: <span className="text-white">${parseFloat(payment.amount).toLocaleString()}</span></span>
+                                    <span className="text-gray-400">De: <span className="text-white">{payment.senderName}</span></span>
+                                    <span className={payment.status === 'MATCHED' ? 'text-green-400' : 'text-yellow-400'}>{payment.status === 'MATCHED' ? 'Vinculado' : 'Pendiente'}</span>
                                   </div>
                                 ))}
                               </div>
                             )}
 
-                            {/* Verification timeline */}
-                            <div>
-                              <h4 className="text-sm font-medium text-gray-300 mb-3">Timeline de Verificacion</h4>
-                              {order.verificationTimeline && order.verificationTimeline.length > 0 ? (
-                                <div className="space-y-2">
-                                  {order.verificationTimeline.map((step, index) => (
-                                    <div
-                                      key={index}
-                                      className="flex items-start gap-3 p-2 bg-[#2d2640] rounded-lg"
-                                    >
-                                      <span className="text-lg">
-                                        {stepEmojis[step.status] || '📋'}
-                                      </span>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center justify-between">
-                                          <span className={`text-sm font-medium ${
-                                            verificationStatusColors[step.status]?.includes('green')
-                                              ? 'text-green-400'
-                                              : verificationStatusColors[step.status]?.includes('red')
-                                              ? 'text-red-400'
-                                              : 'text-white'
-                                          }`}>
-                                            {step.message}
-                                          </span>
-                                          <span className="text-xs text-gray-500">
-                                            {new Date(step.timestamp).toLocaleTimeString()}
-                                          </span>
-                                        </div>
-                                        {step.details && (
-                                          <div className="mt-1 text-xs text-gray-400 space-y-0.5">
-                                            {step.details.receivedAmount !== undefined && (
-                                              <div>Recibido: ${step.details.receivedAmount}</div>
-                                            )}
-                                            {step.details.expectedAmount !== undefined && (
-                                              <div>Esperado: ${step.details.expectedAmount}</div>
-                                            )}
-                                            {step.details.senderName && (
-                                              <div>Pagador: {step.details.senderName}</div>
-                                            )}
-                                            {step.details.buyerName && (
-                                              <div>Comprador: {step.details.buyerName}</div>
-                                            )}
-                                            {step.details.matchScore !== undefined && (
-                                              <div>Similitud nombre: {(step.details.matchScore * 100).toFixed(0)}%</div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="text-sm text-gray-500 p-3 bg-[#2d2640] rounded-lg">
-                                  No hay timeline de verificacion para esta orden
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Release Button - Only show for PAID orders */}
-                            {order.status === 'PAID' && (
-                              <div className="pt-2">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setReleaseOrder(order.orderNumber);
-                                  }}
-                                  className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium flex items-center justify-center gap-2"
-                                >
-                                  <span className="text-lg">🔓</span>
-                                  Liberar Crypto
-                                </button>
+                            {/* Timeline - compact */}
+                            {order.verificationTimeline && order.verificationTimeline.length > 0 && (
+                              <div className="space-y-1">
+                                {order.verificationTimeline.map((step, index) => (
+                                  <div key={index} className="flex items-center gap-2 text-sm py-1">
+                                    <span>{stepEmojis[step.status] || '📋'}</span>
+                                    <span className={`flex-1 ${
+                                      verificationStatusColors[step.status]?.includes('green') ? 'text-green-400' :
+                                      verificationStatusColors[step.status]?.includes('red') ? 'text-red-400' : 'text-gray-300'
+                                    }`}>{step.message}</span>
+                                    <span className="text-xs text-gray-500">{new Date(step.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  </div>
+                                ))}
                               </div>
                             )}
 
-                            {/* Recommendation */}
+                            {/* Action buttons */}
+                            {order.status === 'PAID' && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setReleaseOrder(order.orderNumber); }}
+                                className="w-full px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium flex items-center justify-center gap-2"
+                              >Liberar Crypto</button>
+                            )}
+
                             {order.verificationStatus === 'READY_TO_RELEASE' && (
-                              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-lg">🚀</span>
-                                  <span className="text-emerald-400 font-medium">
-                                    Verificacion completa - Listo para liberar
-                                  </span>
-                                </div>
-                                <p className="text-sm text-gray-400 mt-1">
-                                  Usa el boton de arriba para liberar manualmente.
-                                </p>
+                              <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-sm text-emerald-400 text-center">
+                                Verificacion completa - Listo para liberar
                               </div>
                             )}
 
                             {order.verificationStatus === 'MANUAL_REVIEW' && (
-                              <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-lg">👤</span>
-                                  <span className="text-orange-400 font-medium">
-                                    Requiere revision manual
-                                  </span>
-                                </div>
-                                <p className="text-sm text-gray-400 mt-1">
-                                  Revisa los detalles arriba antes de liberar.
-                                </p>
+                              <div className="p-2 bg-orange-500/10 border border-orange-500/30 rounded-lg text-sm text-orange-400 text-center">
+                                Requiere revision manual
                               </div>
                             )}
 
-                            {/* Mark as Trusted Button - Show for COMPLETED orders */}
-                            {order.status === 'COMPLETED' && (
-                              <div className="pt-2">
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (!confirm(`Agregar "${order.buyerNickName}" a compradores confiables?`)) return;
-                                    try {
-                                      // buyerUserNo is required for security
-                                      if (!order.buyerUserNo) {
-                                        alert('buyerUserNo no disponible - la orden puede ser antigua');
-                                        return;
-                                      }
-                                      const response = await fetch('/api/trusted-buyers', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                          counterPartNickName: order.buyerNickName,
-                                          buyerUserNo: order.buyerUserNo,
-                                          realName: order.buyerRealName,
-                                          verifiedBy: 'Dashboard',
-                                          notes: `Verificado en orden ${order.orderNumber}`,
-                                        }),
-                                      });
-                                      const data = await response.json();
-                                      if (data.success) {
-                                        alert(`"${order.buyerNickName}" agregado a compradores confiables`);
-                                      } else {
-                                        alert(data.error || 'Error al agregar');
-                                      }
-                                    } catch (err: any) {
-                                      alert(err.message || 'Error de conexion');
-                                    }
-                                  }}
-                                  className="w-full px-4 py-2 bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/30 transition font-medium flex items-center justify-center gap-2"
-                                >
-                                  <span>⭐</span>
-                                  Marcar Confiable
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Dismiss Button - Hide stale orders from dashboard */}
-                            <div className="pt-2 border-t border-[#2d2640] mt-4">
+                            {/* Trusted + Dismiss - inline */}
+                            <div className="flex gap-2 pt-2 border-t border-[#2d2640]">
+                              {order.status === 'COMPLETED' && (
+                                order.isTrustedBuyer ? (
+                                  <div className="flex-1 px-3 py-2 bg-green-500/10 text-green-400 border border-green-500/30 rounded-lg text-sm flex items-center justify-center gap-1">
+                                    <span>⭐</span> VIP
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (!confirm(`Agregar "${order.buyerNickName}" a compradores confiables?`)) return;
+                                      try {
+                                        if (!order.buyerUserNo) { alert('buyerUserNo no disponible'); return; }
+                                        const response = await fetch('/api/trusted-buyers', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ counterPartNickName: order.buyerNickName, buyerUserNo: order.buyerUserNo, realName: order.buyerRealName, verifiedBy: 'Dashboard', notes: `Verificado en orden ${order.orderNumber}` }),
+                                        });
+                                        const data = await response.json();
+                                        if (data.success) { alert(`"${order.buyerNickName}" agregado como VIP`); } else { alert(data.error || 'Error'); }
+                                      } catch (err: any) { alert(err.message || 'Error'); }
+                                    }}
+                                    className="flex-1 px-3 py-2 bg-primary-500/10 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition text-sm flex items-center justify-center gap-1"
+                                  ><span>⭐</span> Marcar VIP</button>
+                                )
+                              )}
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation();
-                                  if (!confirm(`¿Descartar orden ${order.orderNumber.slice(-8)} del dashboard?`)) return;
+                                  if (!confirm(`Descartar orden #${order.orderNumber.slice(-8)}?`)) return;
                                   try {
                                     const response = await fetch('/api/orders', {
                                       method: 'PATCH',
                                       headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        orderNumber: order.orderNumber,
-                                        dismissed: true,
-                                      }),
+                                      body: JSON.stringify({ orderNumber: order.orderNumber, dismissed: true }),
                                     });
                                     const data = await response.json();
-                                    if (data.success) {
-                                      onRefresh?.();
-                                    } else {
-                                      alert(data.error || 'Error al descartar orden');
-                                    }
-                                  } catch (err: any) {
-                                    alert(err.message || 'Error de conexion');
-                                  }
+                                    if (data.success) { onRefresh?.(); } else { alert(data.error || 'Error'); }
+                                  } catch (err: any) { alert(err.message || 'Error'); }
                                 }}
-                                className="w-full px-4 py-2 bg-gray-500/10 text-gray-400 border border-gray-500/30 rounded-lg hover:bg-gray-500/20 hover:text-gray-300 transition text-sm flex items-center justify-center gap-2"
-                              >
-                                <span>🗑️</span>
-                                Descartar orden
-                              </button>
-                              <p className="text-xs text-gray-500 text-center mt-1">
-                                Oculta esta orden del dashboard (no la elimina)
-                              </p>
+                                className="px-3 py-2 bg-gray-500/10 text-gray-400 border border-gray-500/20 rounded-lg hover:bg-gray-500/20 transition text-sm"
+                              >Descartar</button>
                             </div>
                           </>
                         ) : (
-                          /* Chat tab */
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-300 mb-3">Chat de la Orden</h4>
-                            <ChatSection orderNumber={order.orderNumber} />
-                          </div>
+                          <ChatSection orderNumber={order.orderNumber} />
                         )}
                       </div>
                     </td>

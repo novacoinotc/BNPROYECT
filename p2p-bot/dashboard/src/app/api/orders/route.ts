@@ -140,7 +140,26 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(orders);
+    // Batch check which buyers are trusted (1 query, not N+1)
+    const buyerUserNos = orders.map((o: any) => o.buyerUserNo).filter(Boolean) as string[];
+    const trustedBuyers = buyerUserNos.length > 0
+      ? await prisma.trustedBuyer.findMany({
+          where: {
+            buyerUserNo: { in: buyerUserNos },
+            isActive: true,
+            ...merchantFilter,
+          },
+          select: { buyerUserNo: true },
+        })
+      : [];
+    const trustedSet = new Set(trustedBuyers.map((tb: any) => tb.buyerUserNo));
+
+    const ordersWithTrust = orders.map((o: any) => ({
+      ...o,
+      isTrustedBuyer: o.buyerUserNo ? trustedSet.has(o.buyerUserNo) : false,
+    }));
+
+    return NextResponse.json(ordersWithTrust);
   } catch (error) {
     console.error('Error fetching orders:', error);
     return NextResponse.json(
