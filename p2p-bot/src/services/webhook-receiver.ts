@@ -148,6 +148,9 @@ export class WebhookReceiver extends EventEmitter {
     // Multi-ad positioning status
     this.app.get('/api/positioning/status', this.handlePositioningStatus.bind(this));
 
+    // Debug: Explore BUY order data (temporary - for development)
+    this.app.get('/api/debug/buy-orders', this.handleDebugBuyOrders.bind(this));
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
@@ -605,6 +608,91 @@ export class WebhookReceiver extends EventEmitter {
       success: true,
       ...status,
     });
+  }
+
+  // ==================== DEBUG HANDLERS ====================
+
+  /**
+   * Debug: Explore BUY order data from Binance API
+   * Returns raw JSON to understand what fields are available
+   * GET /api/debug/buy-orders
+   */
+  private async handleDebugBuyOrders(_req: Request, res: Response): Promise<void> {
+    try {
+      const client = getBinanceClient() as any;
+      const results: any = { timestamp: new Date().toISOString() };
+
+      // 1. List pending BUY orders
+      try {
+        const pendingRaw = await client.signedPost(
+          '/sapi/v1/c2c/orderMatch/listOrders',
+          { tradeType: 'BUY', rows: 10, page: 1, orderStatusList: [1, 2, 3] }
+        );
+        results.pendingBuyOrders = pendingRaw?.data || pendingRaw || [];
+        results.pendingCount = Array.isArray(results.pendingBuyOrders) ? results.pendingBuyOrders.length : 0;
+      } catch (err: any) {
+        results.pendingError = err.message;
+      }
+
+      // 2. Recent BUY history
+      try {
+        const historyRaw = await client.signedGet(
+          '/sapi/v1/c2c/orderMatch/listUserOrderHistory',
+          { tradeType: 'BUY', rows: 5, page: 1 }
+        );
+        results.recentBuyHistory = historyRaw?.data || historyRaw || [];
+        results.historyCount = Array.isArray(results.recentBuyHistory) ? results.recentBuyHistory.length : 0;
+      } catch (err: any) {
+        results.historyError = err.message;
+      }
+
+      // 3. Get full detail of first order found
+      const allOrders = [
+        ...(Array.isArray(results.pendingBuyOrders) ? results.pendingBuyOrders : []),
+        ...(Array.isArray(results.recentBuyHistory) ? results.recentBuyHistory : []),
+      ];
+
+      if (allOrders.length > 0) {
+        const orderNo = allOrders[0].orderNumber || allOrders[0].adOrderNo;
+        try {
+          const detail = await client.signedPost(
+            '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+            { adOrderNo: orderNo }
+          );
+          results.orderDetailRaw = detail;
+          results.orderDetailOrderNo = orderNo;
+
+          // Highlight payment fields
+          const raw = detail as any;
+          results.paymentFields = {
+            payMethodName: raw.payMethodName || null,
+            payMethods: raw.payMethods || null,
+            tradeMethodList: raw.tradeMethodList || null,
+            makerPayMethodList: raw.makerPayMethodList || null,
+            takerPayMethodList: raw.takerPayMethodList || null,
+            payType: raw.payType || null,
+            payAccount: raw.payAccount || null,
+            payBank: raw.payBank || null,
+            sellerName: raw.sellerName || null,
+            sellerNickname: raw.sellerNickname || null,
+            buyerName: raw.buyerName || null,
+            buyerNickname: raw.buyerNickname || null,
+            confirmPayEndTime: raw.confirmPayEndTime || null,
+            notifyPayEndTime: raw.notifyPayEndTime || null,
+          };
+        } catch (err: any) {
+          results.orderDetailError = err.message;
+        }
+      } else {
+        results.orderDetail = 'No BUY orders found to inspect';
+      }
+
+      logger.info({ pendingCount: results.pendingCount, historyCount: results.historyCount }, '[DEBUG] BUY orders explored');
+      res.json({ success: true, ...results });
+    } catch (error: any) {
+      logger.error({ error: error.message }, '[DEBUG] Error exploring BUY orders');
+      res.json({ success: false, error: error.message });
+    }
   }
 
   // ==================== WEBHOOK HANDLERS ====================
