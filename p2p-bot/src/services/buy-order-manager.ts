@@ -636,11 +636,17 @@ export class BuyOrderManager extends EventEmitter {
    */
   private async extractFromChat(orderNumber: string, orderDetail: any, amount: number): Promise<PaymentDetails | null> {
     try {
-      const messages = await this.client.getChatMessages({ orderNo: orderNumber, rows: 30 });
+      const messages = await this.client.getChatMessages({ orderNo: orderNumber, rows: 20 });
       if (!Array.isArray(messages) || messages.length === 0) return null;
 
-      // Only look at messages from the counterparty (not self)
-      const sellerMessages = messages.filter(m => !m.self && m.content);
+      // Only look at RECENT messages from the counterparty (not self)
+      // Limit to last 5 minutes to avoid picking up old CLABEs from previous conversations
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const sellerMessages = messages.filter(m => {
+        if (m.self || !m.content) return false;
+        const msgTime = parseInt(m.createTime) || new Date(m.createTime).getTime();
+        return msgTime > fiveMinAgo;
+      });
 
       let foundAccount: string | null = null;
       let foundBank: string | null = null;
