@@ -1005,10 +1005,21 @@ export class BuyOrderManager extends EventEmitter {
   private async sendSpeiPayment(details: PaymentDetails): Promise<SpeiResult> {
     const concept = `${this.config.conceptPrefix}-${details.orderNumber.slice(-10)}`;
 
+    // Sanitize beneficiary name: if it contains non-Latin characters (Cyrillic, Chinese, etc.)
+    // use a generic name to avoid OPM/Banxico rejection
+    let safeName = details.beneficiaryName;
+    if (!/^[a-zA-ZÀ-ÿ\s.,'-]+$/.test(safeName)) {
+      logger.warn({
+        orderNumber: details.orderNumber,
+        originalName: safeName,
+      }, '[AUTO-BUY] Non-Latin beneficiary name detected, using generic name');
+      safeName = 'JUAN MENDEZ';
+    }
+
     // Build request body
     const body: Record<string, any> = {
       beneficiaryAccount: details.beneficiaryAccount,
-      beneficiaryName: details.beneficiaryName.substring(0, 40),
+      beneficiaryName: safeName.substring(0, 40),
       amount: details.amount,
       concept: concept.substring(0, 40),
       externalReference: details.orderNumber,
