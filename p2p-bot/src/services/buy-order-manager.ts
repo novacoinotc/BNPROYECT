@@ -209,7 +209,7 @@ export class BuyOrderManager extends EventEmitter {
       detail = { payMethods: [] };
     }
 
-    const chatDetails = await this.extractFromChat(dispatch.orderNumber, detail, dispatch.amount);
+    const chatDetails = await this.extractFromChat(dispatch.orderNumber, detail, dispatch.amount, true);
     if (!chatDetails) {
       return { success: false, error: 'No se encontro CLABE/tarjeta en el chat' };
     }
@@ -703,18 +703,20 @@ export class BuyOrderManager extends EventEmitter {
    * When payment fields don't have a valid account, check chat messages.
    * Sellers sometimes send their CLABE/card number in the chat.
    */
-  private async extractFromChat(orderNumber: string, orderDetail: any, amount: number): Promise<PaymentDetails | null> {
+  private async extractFromChat(orderNumber: string, orderDetail: any, amount: number, skipTimeFilter = false): Promise<PaymentDetails | null> {
     try {
       const messages = await this.client.getChatMessages({ orderNo: orderNumber, rows: 20 });
       if (!Array.isArray(messages) || messages.length === 0) return null;
 
-      // Only look at RECENT messages from the counterparty (not self)
-      // Limit to last 5 minutes to avoid picking up old CLABEs from previous conversations
-      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      // Only look at messages from the counterparty (not self)
+      // For automatic polling: limit to last 15 minutes to avoid old CLABEs
+      // For manual rescan (skipTimeFilter=true): no time limit
       const sellerMessages = messages.filter(m => {
         if (m.self || !m.content) return false;
+        if (skipTimeFilter) return true;
+        const fifteenMinAgo = Date.now() - 15 * 60 * 1000;
         const msgTime = parseInt(m.createTime) || new Date(m.createTime).getTime();
-        return msgTime > fiveMinAgo;
+        return msgTime > fifteenMinAgo;
       });
 
       let foundAccount: string | null = null;
