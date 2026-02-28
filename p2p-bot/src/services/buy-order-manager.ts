@@ -814,7 +814,7 @@ export class BuyOrderManager extends EventEmitter {
       // Afirme
       '4565': '40062',
       // Nu
-      '5230': '90638', '5355': '90638',
+      '5101': '90638', '5230': '90638', '5355': '90638',
       // Klar
       '5315': '90661',
       // Rappi (uses Arcus)
