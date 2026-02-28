@@ -443,7 +443,7 @@ export class BuyOrderManager extends EventEmitter {
       let methodName: string | null = null;
 
       // Collect ALL field values for smart scanning
-      const allFieldValues: { contentType: string; value: string }[] = [];
+      const allFieldValues: { contentType: string; fieldName: string; value: string }[] = [];
 
       for (const method of payMethods) {
         // Capture method-level name (e.g., "BBVA", "Bank Transfer", "Mercadopago")
@@ -451,18 +451,24 @@ export class BuyOrderManager extends EventEmitter {
 
         const fields = method.fields || [];
         for (const field of fields) {
-          const contentType = field.fieldContentType || '';
+          const contentType = (field.fieldContentType || '').toLowerCase();
+          const fieldName = (field.fieldName || field.fieldLabel || '').toLowerCase();
           const value = (field.fieldValue || '').trim();
-          if (value) allFieldValues.push({ contentType, value });
+          if (value) allFieldValues.push({ contentType, fieldName, value });
 
-          // Standard field extraction
-          if (contentType === 'payee' && value) {
+          // Standard field extraction (check both contentType and fieldName)
+          const isPayee = contentType === 'payee' || fieldName.includes('name');
+          const isAccount = contentType === 'pay_account' || fieldName.includes('account') || fieldName.includes('card');
+          const isBank = contentType === 'bank' || fieldName.includes('bank');
+          const isIBAN = contentType === 'iban';
+
+          if (isPayee && value && !beneficiaryName) {
             beneficiaryName = value;
-          } else if (contentType === 'pay_account' && value) {
+          } else if (isAccount && value && !beneficiaryAccount) {
             beneficiaryAccount = value;
-          } else if (contentType === 'bank' && value) {
+          } else if (isBank && value && !bankName) {
             bankName = value;
-          } else if (contentType === 'IBAN' && value && !beneficiaryAccount) {
+          } else if (isIBAN && value && !beneficiaryAccount) {
             beneficiaryAccount = value;
           }
         }
@@ -478,10 +484,6 @@ export class BuyOrderManager extends EventEmitter {
       // Users sometimes put their CLABE in DNI, Cedula, or other wrong fields
       if (!beneficiaryAccount) {
         for (const { contentType, value } of allFieldValues) {
-          // Skip fields we already checked
-          if (contentType === 'payee' || contentType === 'pay_account' || contentType === 'bank') continue;
-
-          // Check if the value is a 16 or 18 digit number (potential CLABE or card)
           const digitsOnly = value.replace(/\s|-/g, '');
           if (/^\d{16}$/.test(digitsOnly) || /^\d{18}$/.test(digitsOnly)) {
             beneficiaryAccount = digitsOnly;
@@ -495,18 +497,36 @@ export class BuyOrderManager extends EventEmitter {
         }
       }
 
-      // Also try to find beneficiary name from any text field if still missing
+      // Smart scan for beneficiary name if still missing
       if (!beneficiaryName) {
-        for (const { contentType, value } of allFieldValues) {
-          // Look for name-like fields
-          if (contentType !== 'pay_account' && contentType !== 'bank' && contentType !== 'IBAN') {
-            // If value looks like a name (has letters, not just digits)
-            if (value.length >= 5 && /[a-zA-ZÀ-ÿ]/.test(value) && !/^\d+$/.test(value)) {
-              beneficiaryName = value;
-              break;
-            }
+        for (const { value } of allFieldValues) {
+          if (value.length >= 5 && /[a-zA-ZÀ-ÿ]/.test(value) && !/^\d+$/.test(value)) {
+            beneficiaryName = value;
+            break;
           }
         }
+      }
+
+      // Smart scan for bank name: check all fields for known bank names
+      if (!bankName) {
+        const knownBanks = ['bbva', 'banamex', 'santander', 'banorte', 'hsbc', 'scotiabank', 'azteca', 'banco azteca', 'inbursa', 'banregio', 'bajio', 'banbajio', 'afirme', 'multiva', 'mifel', 'monex', 'invex', 'interacciones', 'compartamos', 'bancoppel', 'famsa', 'spin', 'nu', 'hey banco', 'klar', 'stori', 'rappi', 'mercadopago', 'oxxo'];
+        for (const { value } of allFieldValues) {
+          if (knownBanks.some(bank => value.toLowerCase().includes(bank))) {
+            bankName = value;
+            break;
+          }
+        }
+      }
+
+      // Fallback for bank name: use the payment method name (e.g., "BBVA")
+      // But NOT generic names like "Bank Transfer"
+      if (!bankName && methodName && !methodName.toLowerCase().includes('transfer')) {
+        bankName = methodName;
+      }
+
+      // Last resort for 16-digit cards: identify bank from BIN (first 6 digits)
+      if (!bankName && beneficiaryAccount.length === 16) {
+        bankName = this.getBankFromBIN(beneficiaryAccount);
       }
 
       // Log everything we found for debugging
@@ -515,8 +535,8 @@ export class BuyOrderManager extends EventEmitter {
         methodName,
         beneficiaryName: beneficiaryName || 'NOT FOUND',
         beneficiaryAccount: beneficiaryAccount ? `...${beneficiaryAccount.slice(-4)}` : 'NOT FOUND',
-        bankName: bankName || methodName || 'NOT FOUND',
-        allFields: allFieldValues.map(f => `${f.contentType}: ${f.value.length > 20 ? f.value.slice(0, 10) + '...' + f.value.slice(-4) : f.value}`),
+        bankName: bankName || 'NOT FOUND',
+        allFields: allFieldValues.map(f => `${f.contentType}/${f.fieldName}: ${f.value.length > 20 ? f.value.slice(0, 10) + '...' + f.value.slice(-4) : f.value}`),
       }, '🛒 [AUTO-BUY] Extracted fields summary');
 
       // Validate we have minimum required fields
@@ -549,6 +569,53 @@ export class BuyOrderManager extends EventEmitter {
       logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Error extracting payment details');
       return null;
     }
+  }
+
+  // ==================== BIN LOOKUP ====================
+
+  /**
+   * Identify Mexican bank from debit card BIN (first 4-6 digits)
+   * Used as last resort when bank name is not in the order data
+   */
+  private getBankFromBIN(cardNumber: string): string | null {
+    const bin6 = cardNumber.slice(0, 6);
+    const bin4 = cardNumber.slice(0, 4);
+
+    // Common Mexican debit card BINs
+    const binMap: Record<string, string> = {
+      // Banco Azteca
+      '4027': 'Banco Azteca',
+      '4741': 'Banco Azteca',
+      // BBVA
+      '4152': 'BBVA',
+      '4772': 'BBVA',
+      '4915': 'BBVA',
+      // Banamex/Citibanamex
+      '5256': 'Banamex',
+      '5474': 'Banamex',
+      // Banorte
+      '4189': 'Banorte',
+      '4413': 'Banorte',
+      '5177': 'Banorte',
+      // Santander
+      '5339': 'Santander',
+      '4217': 'Santander',
+      // HSBC
+      '4213': 'HSBC',
+      '5429': 'HSBC',
+      // Scotiabank
+      '4032': 'Scotiabank',
+      // Bancoppel
+      '6042': 'Bancoppel',
+      // Spin/Oxxo
+      '5512': 'Spin',
+      // Inbursa
+      '4000': 'Inbursa',
+      // Hey Banco / Banregio
+      '5579': 'Hey Banco',
+    };
+
+    return binMap[bin4] || binMap[bin6] || null;
   }
 
   // ==================== SPEI DISPATCH ====================
