@@ -2526,6 +2526,20 @@ export async function updateBuyDispatch(id: string, updates: Partial<{
   );
 }
 
+/**
+ * Atomically claim a dispatch: only updates if current status matches expectedStatus.
+ * Returns true if the update was applied (we claimed it), false if someone else got it first.
+ */
+export async function claimBuyDispatch(id: string, expectedStatus: string, newStatus: string): Promise<boolean> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const result = await db.query(
+    `UPDATE "BuyDispatch" SET status = $1, "updatedAt" = NOW() WHERE id = $2 AND status = $3`,
+    [newStatus, id, expectedStatus]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 export async function getBuyDispatches(status?: string): Promise<BuyDispatch[]> {
   await ensureBuyDispatchTable();
   const db = getPool();

@@ -12,6 +12,7 @@ import {
   getBotConfig,
   saveBuyDispatch,
   updateBuyDispatch,
+  claimBuyDispatch,
   getBuyDispatches,
   getBuyDispatchById,
   getBuyDispatchByOrderNumber,
@@ -129,6 +130,13 @@ export class BuyOrderManager extends EventEmitter {
     if (!dispatch) return { success: false, error: 'Dispatch not found' };
     if (dispatch.status !== 'PENDING_APPROVAL') return { success: false, error: `Cannot approve dispatch with status: ${dispatch.status}` };
 
+    // Atomic claim: only proceed if still PENDING_APPROVAL (prevents double-click)
+    const claimed = await claimBuyDispatch(dispatchId, 'PENDING_APPROVAL', 'DISPATCHING');
+    if (!claimed) {
+      logger.warn({ dispatchId }, '[AUTO-BUY] Dispatch already claimed by another action');
+      return { success: false, error: 'Esta dispersion ya esta siendo procesada' };
+    }
+
     logger.info({
       dispatchId,
       orderNumber: dispatch.orderNumber,
@@ -136,15 +144,15 @@ export class BuyOrderManager extends EventEmitter {
       beneficiary: dispatch.beneficiaryName,
     }, '🛒 [AUTO-BUY] Dispatch approved manually');
 
-    // Mark as dispatching
     await updateBuyDispatch(dispatchId, {
-      status: 'DISPATCHING',
       approvedAt: new Date(),
       approvedBy: approvedBy || 'dashboard',
     });
 
     // Execute SPEI + mark paid
-    return this.executeDispatch(dispatch);
+    const updated = await getBuyDispatchById(dispatchId);
+    if (!updated) return { success: false, error: 'Dispatch not found after claim' };
+    return this.executeDispatch(updated);
   }
 
   /**
@@ -171,6 +179,13 @@ export class BuyOrderManager extends EventEmitter {
     if (!dispatch) return { success: false, error: 'Dispatch not found' };
     if (dispatch.status !== 'FAILED') return { success: false, error: `Cannot retry dispatch with status: ${dispatch.status}` };
 
+    // Atomic claim: prevents double-click sending two SPEIs
+    const claimed = await claimBuyDispatch(dispatchId, 'FAILED', 'DISPATCHING');
+    if (!claimed) {
+      logger.warn({ dispatchId }, '[AUTO-BUY] Retry already in progress');
+      return { success: false, error: 'Esta dispersion ya esta siendo procesada' };
+    }
+
     logger.info({
       dispatchId,
       orderNumber: dispatch.orderNumber,
@@ -193,25 +208,23 @@ export class BuyOrderManager extends EventEmitter {
             bankName: paymentDetails.bankName,
             beneficiaryName: paymentDetails.beneficiaryName,
             selectedPayId: paymentDetails.selectedPayId,
-            status: 'DISPATCHING',
             error: null as any,
           });
           const updated = await getBuyDispatchById(dispatchId);
           if (!updated) return { success: false, error: 'Failed to update dispatch' };
           return this.executeDispatch(updated);
         } else {
+          await updateBuyDispatch(dispatchId, { status: 'FAILED', error: 'No se encontro cuenta valida al re-extraer de Binance' });
           return { success: false, error: 'No se encontro cuenta valida al re-extraer de Binance' };
         }
       } catch (e: any) {
+        await updateBuyDispatch(dispatchId, { status: 'FAILED', error: e.message });
         return { success: false, error: `Error re-extrayendo de Binance: ${e.message}` };
       }
     }
 
     // Account is valid, just retry with existing data
-    await updateBuyDispatch(dispatchId, {
-      status: 'DISPATCHING',
-      error: null as any,
-    });
+    await updateBuyDispatch(dispatchId, { error: null as any });
 
     const updated = await getBuyDispatchById(dispatchId);
     if (!updated) return { success: false, error: 'Failed to read dispatch' };
@@ -226,6 +239,13 @@ export class BuyOrderManager extends EventEmitter {
     const dispatch = await getBuyDispatchById(dispatchId);
     if (!dispatch) return { success: false, error: 'Dispatch not found' };
     if (dispatch.status !== 'FAILED') return { success: false, error: `Cannot rescan dispatch with status: ${dispatch.status}` };
+
+    // Atomic claim: prevents double-click sending two SPEIs
+    const claimed = await claimBuyDispatch(dispatchId, 'FAILED', 'DISPATCHING');
+    if (!claimed) {
+      logger.warn({ dispatchId }, '[AUTO-BUY] Rescan already in progress');
+      return { success: false, error: 'Esta dispersion ya esta siendo procesada' };
+    }
 
     logger.info({ dispatchId, orderNumber: dispatch.orderNumber }, '🛒 [AUTO-BUY] Re-scanning chat for account...');
 
@@ -242,6 +262,8 @@ export class BuyOrderManager extends EventEmitter {
 
     const chatDetails = await this.extractFromChat(dispatch.orderNumber, detail, dispatch.amount, true);
     if (!chatDetails) {
+      // Return to FAILED so user can try again
+      await updateBuyDispatch(dispatchId, { status: 'FAILED' });
       return { success: false, error: 'No se encontro CLABE/tarjeta en el chat' };
     }
 
@@ -252,13 +274,12 @@ export class BuyOrderManager extends EventEmitter {
       bank: chatDetails.bankName,
     }, '🛒 [AUTO-BUY] Found account in chat, updating dispatch and sending SPEI');
 
-    // Update dispatch with new data and set to DISPATCHING
+    // Update dispatch with new data (already DISPATCHING from atomic claim)
     await updateBuyDispatch(dispatchId, {
       beneficiaryAccount: chatDetails.beneficiaryAccount,
       bankName: chatDetails.bankName,
       beneficiaryName: chatDetails.beneficiaryName || dispatch.beneficiaryName,
       selectedPayId: chatDetails.selectedPayId || dispatch.selectedPayId,
-      status: 'DISPATCHING',
       error: null as any,
     });
 
@@ -1106,6 +1127,20 @@ export class BuyOrderManager extends EventEmitter {
         return {
           success: false,
           error: data.error || `HTTP ${response.status}`,
+        };
+      }
+
+      // Handle NOVACORE idempotent response: if previous attempt failed at OPM,
+      // NOVACORE returns success:true + idempotent:true + status:failed
+      // This means the SPEI was NOT actually sent
+      if (data.idempotent && data.status === 'failed') {
+        logger.warn({
+          orderNumber: details.orderNumber,
+          transactionId: data.transactionId,
+        }, '[AUTO-BUY] NOVACORE returned idempotent failed — previous attempt failed, SPEI not sent');
+        return {
+          success: false,
+          error: 'SPEI anterior fallo en OPM (idempotente) — contacta soporte para reintentar',
         };
       }
 
