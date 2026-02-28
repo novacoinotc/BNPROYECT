@@ -164,7 +164,7 @@ export class BuyOrderManager extends EventEmitter {
   }
 
   /**
-   * Retry a failed dispatch — resets to DISPATCHING and re-executes
+   * Retry a failed dispatch — if account is N/A, re-extracts from Binance first
    */
   async retryDispatch(dispatchId: string): Promise<{ success: boolean; error?: string }> {
     const dispatch = await getBuyDispatchById(dispatchId);
@@ -175,16 +175,47 @@ export class BuyOrderManager extends EventEmitter {
       dispatchId,
       orderNumber: dispatch.orderNumber,
       amount: dispatch.amount,
+      currentAccount: dispatch.beneficiaryAccount,
     }, '🛒 [AUTO-BUY] Retrying failed dispatch');
 
-    // Reset to DISPATCHING
+    // If account is N/A or invalid, re-extract from Binance order details
+    if (!dispatch.beneficiaryAccount || dispatch.beneficiaryAccount === 'N/A') {
+      logger.info({ dispatchId }, '🛒 [AUTO-BUY] Account is N/A, re-extracting from Binance...');
+      try {
+        const detail = await (this.client as any).signedPost(
+          '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+          { adOrderNo: dispatch.orderNumber }
+        );
+        const paymentDetails = this.extractPaymentDetails(detail, dispatch.orderNumber, dispatch.amount);
+        if (paymentDetails) {
+          await updateBuyDispatch(dispatchId, {
+            beneficiaryAccount: paymentDetails.beneficiaryAccount,
+            bankName: paymentDetails.bankName,
+            beneficiaryName: paymentDetails.beneficiaryName,
+            selectedPayId: paymentDetails.selectedPayId,
+            status: 'DISPATCHING',
+            error: null as any,
+          });
+          const updated = await getBuyDispatchById(dispatchId);
+          if (!updated) return { success: false, error: 'Failed to update dispatch' };
+          return this.executeDispatch(updated);
+        } else {
+          return { success: false, error: 'No se encontro cuenta valida al re-extraer de Binance' };
+        }
+      } catch (e: any) {
+        return { success: false, error: `Error re-extrayendo de Binance: ${e.message}` };
+      }
+    }
+
+    // Account is valid, just retry with existing data
     await updateBuyDispatch(dispatchId, {
       status: 'DISPATCHING',
       error: null as any,
     });
 
-    // Execute SPEI + mark paid
-    return this.executeDispatch(dispatch);
+    const updated = await getBuyDispatchById(dispatchId);
+    if (!updated) return { success: false, error: 'Failed to read dispatch' };
+    return this.executeDispatch(updated);
   }
 
   /**
