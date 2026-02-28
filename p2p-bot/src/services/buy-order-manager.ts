@@ -292,6 +292,73 @@ export class BuyOrderManager extends EventEmitter {
 
   // ==================== POLLING ====================
 
+  // ==================== BACKGROUND CHAT SCAN ====================
+
+  /**
+   * Runs in background (fire-and-forget) — scans chat for CLABE/card every 30s up to 5 min.
+   * If found, atomically claims the dispatch and sends SPEI.
+   * Does NOT block the polling loop.
+   */
+  private backgroundChatScan(dispatchId: string, orderNumber: string, orderDetail: any, amount: number): void {
+    const MAX_ATTEMPTS = 10;
+    const DELAY_MS = 30_000; // 30 seconds between attempts
+
+    // Fire and forget — no await
+    (async () => {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+
+        // Check if dispatch is still FAILED (not already claimed by manual button)
+        const current = await getBuyDispatchById(dispatchId);
+        if (!current || current.status !== 'FAILED') {
+          logger.info({ dispatchId, orderNumber, status: current?.status }, '🛒 [AUTO-BUY] Background chat scan stopped — dispatch no longer FAILED');
+          return;
+        }
+
+        const chatDetails = await this.extractFromChat(orderNumber, orderDetail, amount);
+        if (chatDetails) {
+          logger.info({
+            orderNumber,
+            attempt,
+            account: `...${chatDetails.beneficiaryAccount.slice(-4)}`,
+          }, '🛒 [AUTO-BUY] Background chat scan found account!');
+
+          // Atomic claim to prevent race with manual buttons
+          const claimed = await claimBuyDispatch(dispatchId, 'FAILED', 'DISPATCHING');
+          if (!claimed) {
+            logger.info({ dispatchId }, '🛒 [AUTO-BUY] Background chat scan — dispatch already claimed');
+            return;
+          }
+
+          await updateBuyDispatch(dispatchId, {
+            beneficiaryAccount: chatDetails.beneficiaryAccount,
+            bankName: chatDetails.bankName,
+            beneficiaryName: chatDetails.beneficiaryName || current.beneficiaryName,
+            selectedPayId: chatDetails.selectedPayId || current.selectedPayId,
+            error: null as any,
+          });
+
+          const updated = await getBuyDispatchById(dispatchId);
+          if (updated) await this.executeDispatch(updated);
+          return;
+        }
+
+        logger.info({ orderNumber, attempt, max: MAX_ATTEMPTS }, '🛒 [AUTO-BUY] Background chat scan — no account yet');
+      }
+
+      // All attempts exhausted
+      const current = await getBuyDispatchById(dispatchId);
+      if (current && current.status === 'FAILED') {
+        await updateBuyDispatch(dispatchId, {
+          error: 'No se encontro cuenta en campos ni en chat (~5 min) - usa "Buscar en chat" manualmente',
+        });
+      }
+      logger.info({ orderNumber }, '🛒 [AUTO-BUY] Background chat scan exhausted — no account found');
+    })().catch(err => {
+      logger.error({ orderNumber, error: err.message }, '[AUTO-BUY] Background chat scan error');
+    });
+  }
+
   private async pollBuyOrders(): Promise<void> {
     if (!this.isRunning || this.isPolling) return;
     this.isPolling = true;
@@ -385,27 +452,11 @@ export class BuyOrderManager extends EventEmitter {
 
       let paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
 
-      // If no valid account in payment fields, try a single quick chat check (non-blocking)
-      // then save as FAILED — user can use "Buscar en chat" button manually
+      // If no valid account in payment fields, save dispatch and start background chat scan
       if (!paymentDetails) {
-        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, doing single chat check...');
-
-        // One quick attempt — don't block polling with retries
-        const chatDetails = await this.extractFromChat(orderNumber, detail, amount);
-        if (chatDetails) {
-          paymentDetails = chatDetails;
-          logger.info({
-            orderNumber,
-            account: chatDetails.beneficiaryAccount.slice(-4).padStart(chatDetails.beneficiaryAccount.length, '*'),
-          }, '🛒 [AUTO-BUY] Found account in chat messages!');
-        }
-      }
-
-      if (!paymentDetails) {
-        // Save as FAILED — user can click "Buscar en chat" from dashboard
         const methods = detail.payMethods || [];
         const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
-        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos - usa "Buscar en chat" si el vendedor la envio por chat - metodo: ${methodName}`;
+        const errorMsg = `Buscando cuenta en chat... (metodo: ${methodName})`;
         await saveBuyDispatch({
           orderNumber,
           amount,
@@ -417,8 +468,12 @@ export class BuyOrderManager extends EventEmitter {
           status: 'FAILED',
         });
         const saved = await getBuyDispatchByOrderNumber(orderNumber);
-        if (saved) await updateBuyDispatch(saved.id, { error: errorMsg });
-        this.emit('buy_order', { type: 'failed', orderNumber, error: errorMsg });
+        if (saved) {
+          await updateBuyDispatch(saved.id, { error: errorMsg });
+          // Launch background chat scan (does NOT block polling)
+          this.backgroundChatScan(saved.id, orderNumber, detail, amount);
+        }
+        this.emit('buy_order', { type: 'pending_chat', orderNumber });
         return;
       }
 
