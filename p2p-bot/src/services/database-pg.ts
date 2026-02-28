@@ -2492,6 +2492,10 @@ export async function updateBuyDispatch(id: string, updates: Partial<{
   approvedAt: Date;
   dispatchedAt: Date;
   approvedBy: string;
+  beneficiaryAccount: string;
+  beneficiaryName: string;
+  bankName: string | null;
+  selectedPayId: number;
 }>): Promise<void> {
   await ensureBuyDispatchTable();
   const db = getPool();
@@ -2506,6 +2510,10 @@ export async function updateBuyDispatch(id: string, updates: Partial<{
   if (updates.approvedAt !== undefined) { sets.push(`"approvedAt" = $${idx++}`); values.push(updates.approvedAt); }
   if (updates.dispatchedAt !== undefined) { sets.push(`"dispatchedAt" = $${idx++}`); values.push(updates.dispatchedAt); }
   if (updates.approvedBy !== undefined) { sets.push(`"approvedBy" = $${idx++}`); values.push(updates.approvedBy); }
+  if (updates.beneficiaryAccount !== undefined) { sets.push(`"beneficiaryAccount" = $${idx++}`); values.push(updates.beneficiaryAccount); }
+  if (updates.beneficiaryName !== undefined) { sets.push(`"beneficiaryName" = $${idx++}`); values.push(updates.beneficiaryName); }
+  if (updates.bankName !== undefined) { sets.push(`"bankName" = $${idx++}`); values.push(updates.bankName); }
+  if (updates.selectedPayId !== undefined) { sets.push(`"selectedPayId" = $${idx++}`); values.push(updates.selectedPayId); }
 
   sets.push(`"updatedAt" = NOW()`);
 

@@ -187,6 +187,57 @@ export class BuyOrderManager extends EventEmitter {
     return this.executeDispatch(dispatch);
   }
 
+  /**
+   * Re-scan chat for a failed dispatch — finds CLABE/card in chat and updates dispatch data
+   * Then executes the SPEI dispatch if account found
+   */
+  async rescanChat(dispatchId: string): Promise<{ success: boolean; error?: string }> {
+    const dispatch = await getBuyDispatchById(dispatchId);
+    if (!dispatch) return { success: false, error: 'Dispatch not found' };
+    if (dispatch.status !== 'FAILED') return { success: false, error: `Cannot rescan dispatch with status: ${dispatch.status}` };
+
+    logger.info({ dispatchId, orderNumber: dispatch.orderNumber }, '🛒 [AUTO-BUY] Re-scanning chat for account...');
+
+    // Get order detail for context
+    let detail: any;
+    try {
+      detail = await (this.client as any).signedPost(
+        '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
+        { adOrderNo: dispatch.orderNumber }
+      );
+    } catch {
+      detail = { payMethods: [] };
+    }
+
+    const chatDetails = await this.extractFromChat(dispatch.orderNumber, detail, dispatch.amount);
+    if (!chatDetails) {
+      return { success: false, error: 'No se encontro CLABE/tarjeta en el chat' };
+    }
+
+    logger.info({
+      dispatchId,
+      orderNumber: dispatch.orderNumber,
+      account: `...${chatDetails.beneficiaryAccount.slice(-4)}`,
+      bank: chatDetails.bankName,
+    }, '🛒 [AUTO-BUY] Found account in chat, updating dispatch and sending SPEI');
+
+    // Update dispatch with new data and set to DISPATCHING
+    await updateBuyDispatch(dispatchId, {
+      beneficiaryAccount: chatDetails.beneficiaryAccount,
+      bankName: chatDetails.bankName,
+      beneficiaryName: chatDetails.beneficiaryName || dispatch.beneficiaryName,
+      selectedPayId: chatDetails.selectedPayId || dispatch.selectedPayId,
+      status: 'DISPATCHING',
+      error: null as any,
+    });
+
+    // Re-read updated dispatch and execute
+    const updated = await getBuyDispatchById(dispatchId);
+    if (!updated) return { success: false, error: 'Failed to update dispatch' };
+
+    return this.executeDispatch(updated);
+  }
+
   // ==================== POLLING ====================
 
   private async pollBuyOrders(): Promise<void> {
@@ -283,20 +334,19 @@ export class BuyOrderManager extends EventEmitter {
       let paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
 
       // Step 1b: If no valid account found, check chat messages with retries
-      // Seller may take 1-2 minutes to send their CLABE in the chat
+      // Seller may take several minutes to send their CLABE in the chat
       if (!paymentDetails) {
-        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, will check chat (up to 3 attempts, 30s apart)...');
+        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, will check chat (up to 10 attempts over ~10 min)...');
 
-        const MAX_CHAT_RETRIES = 3;
-        const CHAT_RETRY_DELAY_MS = 30_000; // 30 seconds between attempts
+        const MAX_CHAT_RETRIES = 10;
+        const CHAT_RETRY_DELAY_MS = 60_000; // 60 seconds between attempts
 
         for (let attempt = 1; attempt <= MAX_CHAT_RETRIES; attempt++) {
           // Wait before checking chat (give seller time to type)
-          if (attempt > 1) {
-            await new Promise(resolve => setTimeout(resolve, CHAT_RETRY_DELAY_MS));
+          if (attempt === 1) {
+            await new Promise(resolve => setTimeout(resolve, 15_000)); // 15s first
           } else {
-            // First attempt: wait 15 seconds (seller just opened the order)
-            await new Promise(resolve => setTimeout(resolve, 15_000));
+            await new Promise(resolve => setTimeout(resolve, CHAT_RETRY_DELAY_MS)); // 60s after
           }
 
           const chatDetails = await this.extractFromChat(orderNumber, detail, amount);
@@ -318,7 +368,7 @@ export class BuyOrderManager extends EventEmitter {
         // Try to identify the payment method for a better error message
         const methods = detail.payMethods || [];
         const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
-        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos ni en chat despues de ~2 min - metodo: ${methodName}`;
+        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos ni en chat despues de ~10 min - metodo: ${methodName}`;
         await saveBuyDispatch({
           orderNumber,
           amount,

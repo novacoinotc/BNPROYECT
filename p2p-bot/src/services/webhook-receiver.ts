@@ -221,6 +221,19 @@ export class WebhookReceiver extends EventEmitter {
       }
     });
 
+    this.app.post('/api/auto-buy/dispatches/:id/rescan-chat', async (req: Request, res: Response) => {
+      try {
+        const { buyOrderManager } = require('../index.js');
+        if (!buyOrderManager) {
+          return res.status(400).json({ success: false, error: 'Auto-buy module not running' });
+        }
+        const result = await buyOrderManager.rescanChat(req.params.id);
+        res.json({ success: result.success, error: result.error });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 
