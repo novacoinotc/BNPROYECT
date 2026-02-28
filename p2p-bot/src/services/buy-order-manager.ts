@@ -436,12 +436,14 @@ export class BuyOrderManager extends EventEmitter {
       }
 
       // Extract payment fields from the payMethods array
-      // The fields[] array inside payMethods contains the actual bank details
       const payMethods = orderDetail.payMethods || [];
       let beneficiaryName = '';
       let beneficiaryAccount = '';
       let bankName: string | null = null;
       let methodName: string | null = null;
+
+      // Collect ALL field values for smart scanning
+      const allFieldValues: { contentType: string; value: string }[] = [];
 
       for (const method of payMethods) {
         // Capture method-level name (e.g., "BBVA", "Bank Transfer", "Mercadopago")
@@ -450,8 +452,10 @@ export class BuyOrderManager extends EventEmitter {
         const fields = method.fields || [];
         for (const field of fields) {
           const contentType = field.fieldContentType || '';
-          const value = field.fieldValue || '';
+          const value = (field.fieldValue || '').trim();
+          if (value) allFieldValues.push({ contentType, value });
 
+          // Standard field extraction
           if (contentType === 'payee' && value) {
             beneficiaryName = value;
           } else if (contentType === 'pay_account' && value) {
@@ -459,25 +463,68 @@ export class BuyOrderManager extends EventEmitter {
           } else if (contentType === 'bank' && value) {
             bankName = value;
           } else if (contentType === 'IBAN' && value && !beneficiaryAccount) {
-            // Use IBAN as fallback if no pay_account
             beneficiaryAccount = value;
           }
         }
       }
 
-      // Fallback: also check sellerName at top level
+      // Fallback: check sellerName at top level
       if (!beneficiaryName && orderDetail.sellerName) {
         beneficiaryName = orderDetail.sellerName;
       }
 
+      // SMART SCAN: If no account found via standard fields,
+      // scan ALL field values for 16-18 digit numbers (CLABE or debit card)
+      // Users sometimes put their CLABE in DNI, Cedula, or other wrong fields
+      if (!beneficiaryAccount) {
+        for (const { contentType, value } of allFieldValues) {
+          // Skip fields we already checked
+          if (contentType === 'payee' || contentType === 'pay_account' || contentType === 'bank') continue;
+
+          // Check if the value is a 16 or 18 digit number (potential CLABE or card)
+          const digitsOnly = value.replace(/\s|-/g, '');
+          if (/^\d{16}$/.test(digitsOnly) || /^\d{18}$/.test(digitsOnly)) {
+            beneficiaryAccount = digitsOnly;
+            logger.info({
+              orderNumber,
+              foundIn: contentType,
+              accountLength: digitsOnly.length,
+            }, '🛒 [AUTO-BUY] Found account number in non-standard field');
+            break;
+          }
+        }
+      }
+
+      // Also try to find beneficiary name from any text field if still missing
+      if (!beneficiaryName) {
+        for (const { contentType, value } of allFieldValues) {
+          // Look for name-like fields
+          if (contentType !== 'pay_account' && contentType !== 'bank' && contentType !== 'IBAN') {
+            // If value looks like a name (has letters, not just digits)
+            if (value.length >= 5 && /[a-zA-ZÀ-ÿ]/.test(value) && !/^\d+$/.test(value)) {
+              beneficiaryName = value;
+              break;
+            }
+          }
+        }
+      }
+
+      // Log everything we found for debugging
+      logger.info({
+        orderNumber,
+        methodName,
+        beneficiaryName: beneficiaryName || 'NOT FOUND',
+        beneficiaryAccount: beneficiaryAccount ? `...${beneficiaryAccount.slice(-4)}` : 'NOT FOUND',
+        bankName: bankName || methodName || 'NOT FOUND',
+        allFields: allFieldValues.map(f => `${f.contentType}: ${f.value.length > 20 ? f.value.slice(0, 10) + '...' + f.value.slice(-4) : f.value}`),
+      }, '🛒 [AUTO-BUY] Extracted fields summary');
+
       // Validate we have minimum required fields
       if (!beneficiaryAccount) {
-        // Log the payment method name to understand why (e.g., Mercadopago has no bank account)
         logger.error({
           orderNumber,
           methodName,
-          fields: JSON.stringify(payMethods),
-        }, `[AUTO-BUY] No bank account found - payment method: ${methodName || 'unknown'}`);
+        }, `[AUTO-BUY] No bank account found in any field - method: ${methodName || 'unknown'}`);
         return null;
       }
       if (!beneficiaryName) {
@@ -486,7 +533,6 @@ export class BuyOrderManager extends EventEmitter {
       }
 
       // Fallback for bank name: use the payment method name (e.g., "BBVA")
-      // This handles cases where the bank is the method name, not a field
       if (!bankName && methodName) {
         bankName = methodName;
       }
