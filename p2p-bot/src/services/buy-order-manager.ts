@@ -333,42 +333,27 @@ export class BuyOrderManager extends EventEmitter {
 
       let paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
 
-      // Step 1b: If no valid account found, check chat messages with retries
-      // Seller may take several minutes to send their CLABE in the chat
+      // If no valid account in payment fields, try a single quick chat check (non-blocking)
+      // then save as FAILED — user can use "Buscar en chat" button manually
       if (!paymentDetails) {
-        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, will check chat (up to 10 attempts over ~10 min)...');
+        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, doing single chat check...');
 
-        const MAX_CHAT_RETRIES = 10;
-        const CHAT_RETRY_DELAY_MS = 60_000; // 60 seconds between attempts
-
-        for (let attempt = 1; attempt <= MAX_CHAT_RETRIES; attempt++) {
-          // Wait before checking chat (give seller time to type)
-          if (attempt === 1) {
-            await new Promise(resolve => setTimeout(resolve, 15_000)); // 15s first
-          } else {
-            await new Promise(resolve => setTimeout(resolve, CHAT_RETRY_DELAY_MS)); // 60s after
-          }
-
-          const chatDetails = await this.extractFromChat(orderNumber, detail, amount);
-          if (chatDetails) {
-            paymentDetails = chatDetails;
-            logger.info({
-              orderNumber,
-              attempt,
-              account: chatDetails.beneficiaryAccount.slice(-4).padStart(chatDetails.beneficiaryAccount.length, '*'),
-            }, '🛒 [AUTO-BUY] Found account in chat messages!');
-            break;
-          }
-
-          logger.info({ orderNumber, attempt, maxRetries: MAX_CHAT_RETRIES }, '🛒 [AUTO-BUY] No account in chat yet, waiting...');
+        // One quick attempt — don't block polling with retries
+        const chatDetails = await this.extractFromChat(orderNumber, detail, amount);
+        if (chatDetails) {
+          paymentDetails = chatDetails;
+          logger.info({
+            orderNumber,
+            account: chatDetails.beneficiaryAccount.slice(-4).padStart(chatDetails.beneficiaryAccount.length, '*'),
+          }, '🛒 [AUTO-BUY] Found account in chat messages!');
         }
       }
 
       if (!paymentDetails) {
-        // Try to identify the payment method for a better error message
+        // Save as FAILED — user can click "Buscar en chat" from dashboard
         const methods = detail.payMethods || [];
         const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
-        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos ni en chat despues de ~10 min - metodo: ${methodName}`;
+        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos - usa "Buscar en chat" si el vendedor la envio por chat - metodo: ${methodName}`;
         await saveBuyDispatch({
           orderNumber,
           amount,
