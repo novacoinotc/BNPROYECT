@@ -465,11 +465,11 @@ export class BuyOrderManager extends EventEmitter {
           if (isPayee && value && !beneficiaryName) {
             beneficiaryName = value;
           } else if (isAccount && value && !beneficiaryAccount) {
-            beneficiaryAccount = value;
+            beneficiaryAccount = value.replace(/\s|-/g, ''); // Strip spaces/dashes
           } else if (isBank && value && !bankName) {
             bankName = value;
           } else if (isIBAN && value && !beneficiaryAccount) {
-            beneficiaryAccount = value;
+            beneficiaryAccount = value.replace(/\s|-/g, ''); // Strip spaces/dashes
           }
         }
       }
