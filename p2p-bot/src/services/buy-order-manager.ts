@@ -558,11 +558,20 @@ export class BuyOrderManager extends EventEmitter {
             beneficiaryName = value;
           } else if (isAccount && value && !beneficiaryAccount) {
             const cleaned = value.replace(/\s|-/g, '');
-            // Only accept 16 or 18 digit accounts (debit card or CLABE)
+            // First try exact match (field is purely a number)
             if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
               beneficiaryAccount = cleaned;
             } else {
-              logger.warn({ orderNumber, rawAccount: cleaned, length: cleaned.length }, '[AUTO-BUY] Account field has invalid length, will try smart scan');
+              // Search within text for 16/18-digit numbers (sellers paste multiple accounts in one field)
+              const digitSequences = cleaned.match(/\d+/g) || [];
+              const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
+              if (validAccounts.length > 0) {
+                // Prefer 18-digit CLABE over 16-digit card
+                beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
+                logger.info({ orderNumber, extracted: `...${beneficiaryAccount.slice(-4)}`, fromText: value.substring(0, 50) }, '🛒 [AUTO-BUY] Extracted account from mixed-text field');
+              } else {
+                logger.warn({ orderNumber, rawAccount: cleaned, length: cleaned.length }, '[AUTO-BUY] Account field has no valid 16/18-digit number, will try smart scan');
+              }
             }
           } else if (isBank && value && !bankName) {
             bankName = value;
@@ -570,6 +579,12 @@ export class BuyOrderManager extends EventEmitter {
             const cleaned = value.replace(/\s|-/g, '');
             if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
               beneficiaryAccount = cleaned;
+            } else {
+              const digitSequences = cleaned.match(/\d+/g) || [];
+              const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
+              if (validAccounts.length > 0) {
+                beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
+              }
             }
           }
         }
@@ -583,16 +598,22 @@ export class BuyOrderManager extends EventEmitter {
       // SMART SCAN: If no account found via standard fields,
       // scan ALL field values for 16-18 digit numbers (CLABE or debit card)
       // Users sometimes put their CLABE in DNI, Cedula, or other wrong fields
+      // Also handles mixed-text fields (e.g. "Clabe: 012888... Tarjeta: 4152...")
       if (!beneficiaryAccount) {
         for (const { contentType, value } of allFieldValues) {
-          const digitsOnly = value.replace(/\s|-/g, '');
-          if (/^\d{16}$/.test(digitsOnly) || /^\d{18}$/.test(digitsOnly)) {
-            beneficiaryAccount = digitsOnly;
-            logger.info({
-              orderNumber,
-              foundIn: contentType,
-              accountLength: digitsOnly.length,
-            }, '🛒 [AUTO-BUY] Found account number in non-standard field');
+          const cleaned = value.replace(/\s|-/g, '');
+          // First try exact match
+          if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
+            beneficiaryAccount = cleaned;
+            logger.info({ orderNumber, foundIn: contentType, accountLength: cleaned.length }, '🛒 [AUTO-BUY] Found account in non-standard field');
+            break;
+          }
+          // Then search within text
+          const digitSequences = cleaned.match(/\d+/g) || [];
+          const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
+          if (validAccounts.length > 0) {
+            beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
+            logger.info({ orderNumber, foundIn: contentType, extracted: `...${beneficiaryAccount.slice(-4)}`, fromText: value.substring(0, 50) }, '🛒 [AUTO-BUY] Extracted account from mixed-text non-standard field');
             break;
           }
         }
