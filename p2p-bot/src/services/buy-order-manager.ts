@@ -524,10 +524,23 @@ export class BuyOrderManager extends EventEmitter {
         bankName = methodName;
       }
 
-      // Last resort: identify bank from account number
-      // Works for both 18-digit CLABE (prefix) and 16-digit cards (BIN)
+      // Last resort for display: identify bank from account number
       if (!bankName && beneficiaryAccount) {
-        bankName = this.getBankFromAccount(beneficiaryAccount);
+        bankName = this.getBankDisplayName(beneficiaryAccount);
+      }
+
+      // For 16-digit debit cards: resolve the SPEI code that NOVACORE/OPM requires
+      // OPM expects numeric codes like "40012" (BBVA), not names like "BBVA"
+      let speiCode: string | null = null;
+      if (beneficiaryAccount && beneficiaryAccount.length === 16) {
+        speiCode = this.resolveSpeiCodeForCard(bankName, beneficiaryAccount);
+        if (!speiCode) {
+          logger.warn({
+            orderNumber,
+            bankName,
+            cardPrefix: beneficiaryAccount.slice(0, 6),
+          }, '[AUTO-BUY] Could not resolve SPEI code for debit card - will fail at NOVACORE');
+        }
       }
 
       // Log everything we found for debugging
@@ -537,6 +550,7 @@ export class BuyOrderManager extends EventEmitter {
         beneficiaryName: beneficiaryName || 'NOT FOUND',
         beneficiaryAccount: beneficiaryAccount ? `...${beneficiaryAccount.slice(-4)}` : 'NOT FOUND',
         bankName: bankName || 'NOT FOUND',
+        speiCode: speiCode || 'N/A (CLABE or unresolved)',
         allFields: allFieldValues.map(f => `${f.contentType}/${f.fieldName}: ${f.value.length > 20 ? f.value.slice(0, 10) + '...' + f.value.slice(-4) : f.value}`),
       }, '🛒 [AUTO-BUY] Extracted fields summary');
 
@@ -556,7 +570,7 @@ export class BuyOrderManager extends EventEmitter {
       return {
         beneficiaryName,
         beneficiaryAccount,
-        bankName,
+        bankName: beneficiaryAccount.length === 16 ? (speiCode || bankName) : bankName,
         amount,
         orderNumber,
         selectedPayId,
@@ -568,242 +582,209 @@ export class BuyOrderManager extends EventEmitter {
   }
 
   // ==================== BANK LOOKUP ====================
+  // NOVACORE/OPM expects SPEI numeric codes (e.g. "40012" for BBVA)
+  // For CLABE (18 digits): NOVACORE resolves bank internally, we only need it for display
+  // For debit cards (16 digits): we MUST send the speiCode as beneficiaryBank
 
   /**
-   * Identify Mexican bank from account number.
-   * For 18-digit CLABE: first 3 digits = bank code (Banxico standard)
-   * For 16-digit debit card: first 4-6 digits = BIN
+   * Resolve SPEI code for 16-digit debit card.
+   * Tries: 1) bankName→speiCode mapping, 2) BIN lookup
+   * Returns the 5-digit SPEI code OPM expects (e.g. "40127" for Azteca)
    */
-  private getBankFromAccount(account: string): string | null {
+  private resolveSpeiCodeForCard(bankName: string | null, cardNumber: string): string | null {
+    // First try to convert the bank name we already have to a SPEI code
+    if (bankName) {
+      const code = this.bankNameToSpeiCode(bankName);
+      if (code) return code;
+    }
+    // Fallback: identify bank from BIN
+    return this.getBankFromBIN(cardNumber);
+  }
+
+  /**
+   * Convert a human-readable bank name to OPM SPEI code
+   * Handles names from Binance fields, method names, and known bank scan
+   */
+  private bankNameToSpeiCode(name: string): string | null {
+    const lower = name.toLowerCase().trim();
+
+    // Map of common bank name patterns → SPEI codes
+    // Must match NOVACORE's /lib/banks.ts BANK_CODES exactly
+    const nameToCode: Record<string, string> = {
+      // Traditional banks (40xxx)
+      'bbva': '40012',
+      'bbva mexico': '40012',
+      'bbva bancomer': '40012',
+      'bancomer': '40012',
+      'banamex': '40002',
+      'citibanamex': '40002',
+      'santander': '40014',
+      'banorte': '40072',
+      'hsbc': '40021',
+      'scotiabank': '40044',
+      'inbursa': '40036',
+      'bajio': '40030',
+      'banco del bajio': '40030',
+      'banbajio': '40030',
+      'banregio': '40058',
+      'afirme': '40062',
+      'mifel': '40042',
+      'invex': '40059',
+      'azteca': '40127',
+      'banco azteca': '40127',
+      'multiva': '40132',
+      'actinver': '40133',
+      'bancoppel': '40137',
+      'compartamos': '40130',
+      'consubanco': '40140',
+      'cibanco': '40143',
+      'autofin': '40128',
+      'bbase': '40145',
+      'bankaool': '40147',
+      'banco covalto': '40154',
+      'covalto': '40154',
+      'icbc': '40155',
+      'banco s3': '40160',
+      'hey banco': '40167',
+      'banjercito': '40019',
+      'nafin': '40135',
+      'uala': '40138',
+      // Non-bank financial institutions (90xxx)
+      'stp': '90646',
+      'mercadopago': '90722',
+      'mercado pago': '90722',
+      'spin': '90728',
+      'spin by oxxo': '90728',
+      'spin/oxxo': '90728',
+      'oxxo': '90728',
+      'klar': '90661',
+      'nu': '90638',
+      'nubank': '90638',
+      'nu mexico': '90638',
+      'fondeadora': '90699',
+      'cuenca': '90723',
+      'albo': '90721',
+      'stori': '90706', // Stori uses Arcus
+      'rappi': '90706', // RappiPay uses Arcus
+      'arcus': '90706',
+      'kuspit': '90653',
+      'transfer': '90684',
+      'opm': '90684',
+      'fincomun': '90634',
+      'libertad': '90670',
+      'cashi': '90715',
+      'nvio': '90710',
+    };
+
+    return nameToCode[lower] || null;
+  }
+
+  /**
+   * Get display name for a bank from account number (for dashboard display only)
+   * For CLABE: first 3 digits. For cards: BIN lookup.
+   */
+  private getBankDisplayName(account: string): string | null {
     if (account.length === 18) {
-      return this.getBankFromCLABE(account);
+      return this.getBankNameFromCLABE(account);
     }
     if (account.length === 16) {
-      return this.getBankFromBIN(account);
+      const speiCode = this.getBankFromBIN(account);
+      // Convert speiCode back to display name
+      if (speiCode) {
+        const displayNames: Record<string, string> = {
+          '40012': 'BBVA', '40002': 'Banamex', '40014': 'Santander',
+          '40072': 'Banorte', '40021': 'HSBC', '40044': 'Scotiabank',
+          '40036': 'Inbursa', '40030': 'Bajio', '40058': 'Banregio',
+          '40062': 'Afirme', '40127': 'Banco Azteca', '40137': 'Bancoppel',
+          '90728': 'Spin', '90638': 'Nu', '90661': 'Klar',
+          '90722': 'Mercadopago', '40167': 'Hey Banco',
+        };
+        return displayNames[speiCode] || speiCode;
+      }
     }
     return null;
   }
 
   /**
-   * Identify Mexican bank from CLABE prefix (first 3 digits)
-   * Based on Banxico's catalog of bank codes
+   * Get human-readable bank name from CLABE (for display/logging only)
    */
-  private getBankFromCLABE(clabe: string): string | null {
+  private getBankNameFromCLABE(clabe: string): string | null {
     const prefix = clabe.slice(0, 3);
-
-    const clabeMap: Record<string, string> = {
-      '002': 'BBVA',
-      '006': 'Bancomext',
-      '009': 'Banobras',
-      '012': 'BBVA',
-      '014': 'Santander',
-      '021': 'HSBC',
-      '030': 'Bajio',
-      '032': 'IXE',
-      '036': 'Inbursa',
-      '037': 'Interacciones',
-      '042': 'Mifel',
-      '044': 'Scotiabank',
-      '058': 'Banregio',
-      '059': 'Invex',
-      '060': 'Bansi',
-      '062': 'Afirme',
-      '072': 'Banorte',
-      '102': 'ABN AMRO',
-      '103': 'American Express',
-      '106': 'BAMSA',
-      '108': 'Tokyo',
-      '110': 'JP Morgan',
-      '112': 'Bmonex',
-      '113': 'Ve por Mas',
-      '116': 'ING',
-      '124': 'Deutsche',
-      '126': 'Credit Suisse',
-      '127': 'Azteca',
-      '128': 'Autofin',
-      '129': 'Barclays',
-      '130': 'Compartamos',
-      '131': 'Banco Famsa',
-      '132': 'Multiva',
-      '133': 'Actinver',
-      '134': 'Walmart',
-      '135': 'Nafin',
-      '136': 'Interbanco',
-      '137': 'Bancoppel',
-      '138': 'ABC Capital',
-      '139': 'UBS',
-      '140': 'Consubanco',
-      '141': 'Volkswagen',
-      '143': 'CIBanco',
-      '145': 'Bbase',
-      '147': 'Bankaool',
-      '148': 'PagaTodo',
-      '149': 'Inmobiliario Mexicano',
-      '150': 'NuBank',
-      '151': 'Donde',
-      '152': 'Bancrea',
-      '154': 'Banco Covalto',
-      '155': 'ICBC',
-      '156': 'Sabadell',
-      '157': 'Shinhan',
-      '158': 'Mizuho',
-      '159': 'Bank of China',
-      '160': 'Banco S3',
-      '166': 'BanBajio',
-      '168': 'Hipotecaria Federal',
-      '600': 'Monexcb',
-      '601': 'GBM',
-      '602': 'Masari',
-      '605': 'Valué',
-      '606': 'Fondos Mexicanos',
-      '608': 'CB Intercam',
-      '610': 'B&B',
-      '613': 'Multiva CBOLSA',
-      '616': 'Finamex',
-      '617': 'Valmex',
-      '618': 'Unica',
-      '619': 'MAPFRE',
-      '620': 'Profuturo',
-      '621': 'CB Actinver',
-      '622': 'Oactin',
-      '623': 'Cibanco',
-      '626': 'CBDEUTSCHE',
-      '627': 'Zurich',
-      '628': 'Zurichvi',
-      '629': 'SU Casita',
-      '630': 'CB Intercam',
-      '631': 'CI Bolsa',
-      '632': 'Bulltick CB',
-      '633': 'Sterling',
-      '634': 'Fincomun',
-      '636': 'HDI Seguros',
-      '637': 'Order',
-      '638': 'Akala',
-      '640': 'CB JP Morgan',
-      '642': 'Reforma',
-      '646': 'STP',
-      '648': 'Evercore',
-      '649': 'Skandia',
-      '651': 'Segmty',
-      '652': 'Asea',
-      '653': 'Kuspit',
-      '655': 'Sofiexpress',
-      '656': 'Unagra',
-      '659': 'ASP Integra OPC',
-      '670': 'Libertad',
-      '674': 'CASHI',
-      '677': 'Caja Pop Mexicana',
-      '679': 'Fondo de la Vivienda del ISSSTE',
-      '680': 'Cristobal Colon',
-      '683': 'Caja Telefonistas',
-      '684': 'Transfer',
-      '685': 'Fomped',
-      '686': 'Fonaes',
-      '689': 'Fondeadora',
-      '699': 'Bnuvola',
-      '703': 'Tesored',
-      '706': 'Arcus',
-      '710': 'Nvio',
-      '722': 'Mercadopago',
-      '723': 'Cuenca',
-      '728': 'Spin by Oxxo',
-      '729': 'Telegraph',
-      '730': 'Klar',
-      '901': 'CoDi Valida',
-      '902': 'Indeval',
+    const clabeDisplayNames: Record<string, string> = {
+      '002': 'Banamex', '012': 'BBVA', '014': 'Santander', '021': 'HSBC',
+      '030': 'Bajio', '036': 'Inbursa', '042': 'Mifel', '044': 'Scotiabank',
+      '058': 'Banregio', '062': 'Afirme', '072': 'Banorte', '127': 'Azteca',
+      '130': 'Compartamos', '132': 'Multiva', '137': 'Bancoppel', '140': 'Consubanco',
+      '143': 'CIBanco', '150': 'Inmobiliario', '167': 'Hey Banco',
+      '638': 'Nu', '646': 'STP', '661': 'Klar', '684': 'Transfer/OPM',
+      '689': 'Fondeadora', '699': 'Fondeadora', '706': 'Arcus', '710': 'Nvio',
+      '722': 'Mercadopago', '723': 'Cuenca', '728': 'Spin', '730': 'Swap',
     };
-
-    return clabeMap[prefix] || null;
+    return clabeDisplayNames[prefix] || null;
   }
 
   /**
    * Identify Mexican bank from debit card BIN (first 4-6 digits)
+   * Returns the 5-digit SPEI code (e.g. "40012" for BBVA)
    */
   private getBankFromBIN(cardNumber: string): string | null {
     const bin6 = cardNumber.slice(0, 6);
     const bin4 = cardNumber.slice(0, 4);
 
-    // Common Mexican debit card BINs (4-digit)
-    const binMap4: Record<string, string> = {
-      // Banco Azteca
-      '4027': 'Banco Azteca',
-      '4741': 'Banco Azteca',
-      '4576': 'Banco Azteca',
-      // BBVA
-      '4152': 'BBVA',
-      '4772': 'BBVA',
-      '4915': 'BBVA',
-      '4555': 'BBVA',
-      '4075': 'BBVA',
-      // Banamex/Citibanamex
-      '5256': 'Banamex',
-      '5474': 'Banamex',
-      '4766': 'Banamex',
-      '5204': 'Banamex',
-      // Banorte
-      '4189': 'Banorte',
-      '4413': 'Banorte',
-      '5177': 'Banorte',
-      // Santander
-      '5339': 'Santander',
-      '4217': 'Santander',
-      '5468': 'Santander',
-      // HSBC
-      '4213': 'HSBC',
-      '5429': 'HSBC',
-      '4263': 'HSBC',
-      // Scotiabank
-      '4032': 'Scotiabank',
-      '5570': 'Scotiabank',
-      // Bancoppel
-      '6042': 'Bancoppel',
-      '6372': 'Bancoppel',
-      // Spin/Oxxo
-      '5512': 'Spin',
-      // Inbursa
-      '4000': 'Inbursa',
-      '5036': 'Inbursa',
-      // Hey Banco / Banregio
-      '5579': 'Hey Banco',
-      // Banco del Bajio
-      '4093': 'Bajio',
-      // Afirme
-      '4565': 'Afirme',
-      // Nu / NuBank
-      '5230': 'Nu',
-      '5355': 'Nu',
-      // Stori
-      '5255': 'Stori',
-      // Klar
-      '5315': 'Klar',
-      // Rappi
-      '5519': 'Rappi',
+    // 6-digit BINs (higher precision, checked first) → SPEI codes
+    const binMap6: Record<string, string> = {
+      '402766': '40127', // Banco Azteca
+      '474118': '40127',
+      '457649': '40127',
+      '415231': '40012', // BBVA
+      '477298': '40012',
+      '455590': '40012',
+      '407535': '40012',
+      '525666': '40002', // Banamex
+      '547400': '40002',
+      '476612': '40002',
+      '418991': '40072', // Banorte
+      '441330': '40072',
+      '517726': '40072',
+      '604244': '40137', // Bancoppel
+      '637230': '40137',
+      '551284': '90728', // Spin
     };
 
-    // 6-digit BINs (higher precision, checked first)
-    const binMap6: Record<string, string> = {
+    // 4-digit BINs → SPEI codes
+    const binMap4: Record<string, string> = {
       // Banco Azteca
-      '402766': 'Banco Azteca',
-      '474118': 'Banco Azteca',
-      '457649': 'Banco Azteca',
+      '4027': '40127', '4741': '40127', '4576': '40127',
       // BBVA
-      '415231': 'BBVA',
-      '477298': 'BBVA',
-      '455590': 'BBVA',
-      '407535': 'BBVA',
+      '4152': '40012', '4772': '40012', '4915': '40012', '4555': '40012', '4075': '40012',
       // Banamex
-      '525666': 'Banamex',
-      '547400': 'Banamex',
-      '476612': 'Banamex',
+      '5256': '40002', '5474': '40002', '4766': '40002', '5204': '40002',
       // Banorte
-      '418991': 'Banorte',
-      '441330': 'Banorte',
-      '517726': 'Banorte',
+      '4189': '40072', '4413': '40072', '5177': '40072',
+      // Santander
+      '5339': '40014', '4217': '40014', '5468': '40014',
+      // HSBC
+      '4213': '40021', '5429': '40021', '4263': '40021',
+      // Scotiabank
+      '4032': '40044', '5570': '40044',
       // Bancoppel
-      '604244': 'Bancoppel',
-      '637230': 'Bancoppel',
-      // Spin
-      '551284': 'Spin',
+      '6042': '40137', '6372': '40137',
+      // Spin/Oxxo
+      '5512': '90728',
+      // Inbursa
+      '4000': '40036', '5036': '40036',
+      // Hey Banco
+      '5579': '40167',
+      // Bajio
+      '4093': '40030',
+      // Afirme
+      '4565': '40062',
+      // Nu
+      '5230': '90638', '5355': '90638',
+      // Klar
+      '5315': '90661',
+      // Rappi (uses Arcus)
+      '5519': '90706',
     };
 
     return binMap6[bin6] || binMap4[bin4] || null;
