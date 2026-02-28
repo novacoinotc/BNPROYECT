@@ -169,6 +169,26 @@ export default function AutoSpeiPage() {
     }
   };
 
+  const retryDispatch = async (id: string) => {
+    setActionLoading(id + '-retry');
+    setError(null);
+    try {
+      const response = await fetch(`/api/auto-buy/dispatches/${id}/retry`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        setSuccessMsg('SPEI reenviado correctamente');
+        setTimeout(() => setSuccessMsg(null), 5000);
+        await fetchDispatches();
+      } else {
+        setError(data.error || 'Error al reintentar');
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const pendingDispatches = dispatches.filter((d) => d.status === 'PENDING_APPROVAL');
   const historyDispatches = dispatches.filter((d) => d.status !== 'PENDING_APPROVAL');
   const autoMode = config?.autoBuyAutoDispatch ?? false;
@@ -333,6 +353,15 @@ export default function AutoSpeiPage() {
                   )}
                   {d.error && (
                     <p className="text-xs text-red-400 mt-1">{d.error}</p>
+                  )}
+                  {d.status === 'FAILED' && (
+                    <button
+                      onClick={() => retryDispatch(d.id)}
+                      disabled={actionLoading === d.id + '-retry'}
+                      className="mt-2 w-full py-1.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 text-xs font-bold rounded-lg transition border border-yellow-600/30 disabled:opacity-50"
+                    >
+                      {actionLoading === d.id + '-retry' ? 'Reintentando...' : 'Reintentar'}
+                    </button>
                   )}
                 </div>
               ))}

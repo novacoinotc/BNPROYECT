@@ -163,6 +163,30 @@ export class BuyOrderManager extends EventEmitter {
     return { success: true };
   }
 
+  /**
+   * Retry a failed dispatch — resets to DISPATCHING and re-executes
+   */
+  async retryDispatch(dispatchId: string): Promise<{ success: boolean; error?: string }> {
+    const dispatch = await getBuyDispatchById(dispatchId);
+    if (!dispatch) return { success: false, error: 'Dispatch not found' };
+    if (dispatch.status !== 'FAILED') return { success: false, error: `Cannot retry dispatch with status: ${dispatch.status}` };
+
+    logger.info({
+      dispatchId,
+      orderNumber: dispatch.orderNumber,
+      amount: dispatch.amount,
+    }, '🛒 [AUTO-BUY] Retrying failed dispatch');
+
+    // Reset to DISPATCHING
+    await updateBuyDispatch(dispatchId, {
+      status: 'DISPATCHING',
+      error: null as any,
+    });
+
+    // Execute SPEI + mark paid
+    return this.executeDispatch(dispatch);
+  }
+
   // ==================== POLLING ====================
 
   private async pollBuyOrders(): Promise<void> {
@@ -615,7 +639,8 @@ export class BuyOrderManager extends EventEmitter {
    * Handles names from Binance fields, method names, and known bank scan
    */
   private bankNameToSpeiCode(name: string): string | null {
-    const lower = name.toLowerCase().trim();
+    // Normalize: lowercase + strip accents (é→e, ó→o, etc.)
+    const lower = name.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
     // Map of common bank name patterns → SPEI codes
     // Must match NOVACORE's /lib/banks.ts BANK_CODES exactly
