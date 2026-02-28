@@ -151,6 +151,21 @@ export class WebhookReceiver extends EventEmitter {
     // Debug: Explore BUY order data (temporary - for development)
     this.app.get('/api/debug/buy-orders', this.handleDebugBuyOrders.bind(this));
 
+    // Auto-buy module status
+    this.app.get('/api/auto-buy/status', (_req: Request, res: Response) => {
+      try {
+        // Dynamic import to avoid circular dependency
+        const { buyOrderManager } = require('../index.js');
+        if (buyOrderManager) {
+          res.json({ success: true, ...buyOrderManager.getStatus() });
+        } else {
+          res.json({ success: true, isRunning: false, message: 'Auto-buy module not enabled' });
+        }
+      } catch {
+        res.json({ success: true, isRunning: false, message: 'Auto-buy module not available' });
+      }
+    });
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 

@@ -16,6 +16,7 @@ import { createTOTPService, TOTPService } from './services/totp-service.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from './services/database-pg.js';
 import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
 import { SellAdManager, createSellAdManager, BuyAdManager, createBuyAdManager } from './services/positioning/index.js';
+import { BuyOrderManager, createBuyOrderManager } from './services/buy-order-manager.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -54,6 +55,8 @@ let positioningCheckInterval: NodeJS.Timeout | null = null;
 // Separated managers for BUY and SELL ads
 let sellAdManager: SellAdManager | null = null;
 let buyAdManager: BuyAdManager | null = null;
+// Auto-buy module (independent from SELL flow)
+let buyOrderManager: BuyOrderManager | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -289,6 +292,13 @@ async function startServices(): Promise<void> {
   // Start positioning bot status check (checks every 30 seconds if user enabled it)
   positioningCheckInterval = setInterval(checkPositioningStatus, 30000);
   logger.info('Positioning bot check started (checks DB every 30s for activation)');
+
+  // Start auto-buy module (independent - only if enabled)
+  if (process.env.ENABLE_AUTO_BUY === 'true') {
+    buyOrderManager = createBuyOrderManager();
+    await buyOrderManager.start();
+    logger.info('🛒 Auto-buy module started');
+  }
 }
 
 // ==================== POSITIONING BOT ====================
@@ -416,6 +426,12 @@ async function shutdown(): Promise<void> {
     buyAdManager = null;
   }
 
+  // Stop auto-buy module
+  if (buyOrderManager) {
+    buyOrderManager.stop();
+    buyOrderManager = null;
+  }
+
   // Stop services
   orderManager.stop();
   pricingEngine.stopAutoUpdate();
@@ -458,5 +474,6 @@ export {
   positioningOrchestrator,
   sellAdManager,
   buyAdManager,
+  buyOrderManager,
   BOT_CONFIG,
 };
