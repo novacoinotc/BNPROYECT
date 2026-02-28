@@ -465,6 +465,9 @@ model BotConfig {
   // Ignored advertisers (JSON array)
   ignoredAdvertisers    Json?
 
+  // Auto-buy SPEI dispatch
+  autoBuyAutoDispatch   Boolean  @default(false)  // false = manual approval, true = auto
+
   // Status tracking
   releaseLastActive   DateTime?
   positioningLastActive DateTime?

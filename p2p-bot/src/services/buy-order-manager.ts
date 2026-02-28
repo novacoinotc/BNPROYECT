@@ -1,12 +1,22 @@
 // =====================================================
 // BUY ORDER MANAGER
 // Independent module for auto-paying BUY orders via SPEI
+// Supports manual approval mode and auto-dispatch mode
 // Does NOT interfere with existing SELL order processing
 // =====================================================
 
 import { EventEmitter } from 'events';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { logger } from '../utils/logger.js';
+import {
+  getBotConfig,
+  saveBuyDispatch,
+  updateBuyDispatch,
+  getBuyDispatches,
+  getBuyDispatchById,
+  getBuyDispatchByOrderNumber,
+  BuyDispatch,
+} from './database-pg.js';
 
 // ==================== INTERFACES ====================
 
@@ -34,18 +44,6 @@ interface SpeiResult {
   error?: string;
 }
 
-interface BuyOrderState {
-  orderNumber: string;
-  status: 'detected' | 'extracting' | 'sending_spei' | 'marking_paid' | 'completed' | 'failed';
-  amount: number;
-  sellerName: string | null;
-  paymentDetails: PaymentDetails | null;
-  speiResult: SpeiResult | null;
-  error: string | null;
-  detectedAt: Date;
-  completedAt: Date | null;
-}
-
 // ==================== BUY ORDER MANAGER ====================
 
 export class BuyOrderManager extends EventEmitter {
@@ -54,7 +52,7 @@ export class BuyOrderManager extends EventEmitter {
   private isRunning = false;
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
-  private processedOrders = new Map<string, BuyOrderState>();
+  private processedOrders = new Set<string>(); // Dedup within session
 
   constructor(config?: Partial<BuyOrderConfig>) {
     super();
@@ -110,11 +108,59 @@ export class BuyOrderManager extends EventEmitter {
     logger.info('[AUTO-BUY] Module stopped');
   }
 
-  getStatus(): { isRunning: boolean; processedOrders: BuyOrderState[] } {
-    return {
-      isRunning: this.isRunning,
-      processedOrders: Array.from(this.processedOrders.values()),
-    };
+  getStatus(): { isRunning: boolean } {
+    return { isRunning: this.isRunning };
+  }
+
+  // ==================== PUBLIC: DISPATCH MANAGEMENT ====================
+
+  /**
+   * Get dispatches from DB (for dashboard)
+   */
+  async getDispatches(status?: string): Promise<BuyDispatch[]> {
+    return getBuyDispatches(status);
+  }
+
+  /**
+   * Approve a pending dispatch — sends SPEI + marks as paid
+   */
+  async approveDispatch(dispatchId: string, approvedBy?: string): Promise<{ success: boolean; error?: string }> {
+    const dispatch = await getBuyDispatchById(dispatchId);
+    if (!dispatch) return { success: false, error: 'Dispatch not found' };
+    if (dispatch.status !== 'PENDING_APPROVAL') return { success: false, error: `Cannot approve dispatch with status: ${dispatch.status}` };
+
+    logger.info({
+      dispatchId,
+      orderNumber: dispatch.orderNumber,
+      amount: dispatch.amount,
+      beneficiary: dispatch.beneficiaryName,
+    }, '🛒 [AUTO-BUY] Dispatch approved manually');
+
+    // Mark as dispatching
+    await updateBuyDispatch(dispatchId, {
+      status: 'DISPATCHING',
+      approvedAt: new Date(),
+      approvedBy: approvedBy || 'dashboard',
+    });
+
+    // Execute SPEI + mark paid
+    return this.executeDispatch(dispatch);
+  }
+
+  /**
+   * Reject a pending dispatch
+   */
+  async rejectDispatch(dispatchId: string): Promise<{ success: boolean; error?: string }> {
+    const dispatch = await getBuyDispatchById(dispatchId);
+    if (!dispatch) return { success: false, error: 'Dispatch not found' };
+    if (dispatch.status !== 'PENDING_APPROVAL') return { success: false, error: `Cannot reject dispatch with status: ${dispatch.status}` };
+
+    await updateBuyDispatch(dispatchId, { status: 'REJECTED' });
+    // Remove from session dedup so it doesn't block reprocessing
+    this.processedOrders.delete(dispatch.orderNumber);
+
+    logger.info({ dispatchId, orderNumber: dispatch.orderNumber }, '🛒 [AUTO-BUY] Dispatch rejected');
+    return { success: true };
   }
 
   // ==================== POLLING ====================
@@ -137,17 +183,25 @@ export class BuyOrderManager extends EventEmitter {
         const orderNumber = order.orderNumber || order.adOrderNo;
         if (!orderNumber) continue;
 
-        // Skip if already processed or in progress
-        if (this.processedOrders.has(orderNumber)) {
-          const existing = this.processedOrders.get(orderNumber)!;
-          if (existing.status === 'completed' || existing.status === 'sending_spei' || existing.status === 'marking_paid') {
-            continue;
-          }
-          // Retry failed orders? For now skip - require manual intervention
-          if (existing.status === 'failed') continue;
+        // Skip if already processed in this session
+        if (this.processedOrders.has(orderNumber)) continue;
+
+        // Also check DB to avoid reprocessing after restart
+        const existing = await getBuyDispatchByOrderNumber(orderNumber);
+        if (existing) {
+          this.processedOrders.add(orderNumber);
+          continue;
         }
 
-        const amount = parseFloat(order.totalPrice || '0');
+        // Parse and validate amount with strict rounding
+        const rawAmount = parseFloat(order.totalPrice || '0');
+        const amount = Math.round(rawAmount * 100) / 100; // Strict 2-decimal rounding
+
+        if (!isFinite(amount) || isNaN(amount) || amount <= 0) {
+          logger.error({ orderNumber, rawAmount }, '[AUTO-BUY] Invalid amount - skipping');
+          this.processedOrders.add(orderNumber);
+          continue;
+        }
 
         // Amount check
         if (amount > this.config.maxAmount) {
@@ -156,17 +210,22 @@ export class BuyOrderManager extends EventEmitter {
             amount,
             maxAmount: this.config.maxAmount,
           }, '🛒 [AUTO-BUY] Order exceeds max amount - skipping');
-          this.processedOrders.set(orderNumber, {
+          // Save as failed in DB
+          await saveBuyDispatch({
             orderNumber,
-            status: 'failed',
             amount,
-            sellerName: order.counterPartNickName || null,
-            paymentDetails: null,
-            speiResult: null,
-            error: `Amount $${amount} exceeds max $${this.config.maxAmount}`,
-            detectedAt: new Date(),
-            completedAt: null,
+            beneficiaryName: 'N/A',
+            beneficiaryAccount: 'N/A',
+            bankName: null,
+            sellerNick: order.counterPartNickName || null,
+            selectedPayId: 0,
+            status: 'FAILED',
           });
+          await updateBuyDispatch(
+            (await getBuyDispatchByOrderNumber(orderNumber))!.id,
+            { error: `Monto $${amount} excede el máximo $${this.config.maxAmount}` }
+          );
+          this.processedOrders.add(orderNumber);
           continue;
         }
 
@@ -178,6 +237,7 @@ export class BuyOrderManager extends EventEmitter {
 
         // Process the order
         await this.processBuyOrder(orderNumber, amount, order.counterPartNickName);
+        this.processedOrders.add(orderNumber);
       }
     } catch (error: any) {
       logger.error({ error: error?.message }, '[AUTO-BUY] Poll error');
@@ -189,22 +249,8 @@ export class BuyOrderManager extends EventEmitter {
   // ==================== ORDER PROCESSING ====================
 
   private async processBuyOrder(orderNumber: string, amount: number, sellerNick: string): Promise<void> {
-    const state: BuyOrderState = {
-      orderNumber,
-      status: 'detected',
-      amount,
-      sellerName: sellerNick,
-      paymentDetails: null,
-      speiResult: null,
-      error: null,
-      detectedAt: new Date(),
-      completedAt: null,
-    };
-    this.processedOrders.set(orderNumber, state);
-
     try {
       // Step 1: Get order detail to extract payment info
-      state.status = 'extracting';
       const detail = await (this.client as any).signedPost(
         '/sapi/v1/c2c/orderMatch/getUserOrderDetail',
         { adOrderNo: orderNumber }
@@ -212,15 +258,21 @@ export class BuyOrderManager extends EventEmitter {
 
       const paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
       if (!paymentDetails) {
-        state.status = 'failed';
-        state.error = 'Could not extract payment details from order';
-        logger.error({ orderNumber }, '[AUTO-BUY] Failed to extract payment details');
-        this.emit('buy_order', { type: 'failed', orderNumber, error: state.error });
+        await saveBuyDispatch({
+          orderNumber,
+          amount,
+          beneficiaryName: 'N/A',
+          beneficiaryAccount: 'N/A',
+          bankName: null,
+          sellerNick,
+          selectedPayId: 0,
+          status: 'FAILED',
+        });
+        const saved = await getBuyDispatchByOrderNumber(orderNumber);
+        if (saved) await updateBuyDispatch(saved.id, { error: 'No se pudieron extraer los datos bancarios' });
+        this.emit('buy_order', { type: 'failed', orderNumber, error: 'Failed to extract payment details' });
         return;
       }
-
-      state.paymentDetails = paymentDetails;
-      state.sellerName = paymentDetails.beneficiaryName;
 
       logger.info({
         orderNumber,
@@ -230,71 +282,141 @@ export class BuyOrderManager extends EventEmitter {
         payId: paymentDetails.selectedPayId,
       }, '🛒 [AUTO-BUY] Payment details extracted');
 
-      // Step 2: Send SPEI via NOVACORE
-      state.status = 'sending_spei';
-      const speiResult = await this.sendSpeiPayment(paymentDetails);
-      state.speiResult = speiResult;
+      // Step 2: Check auto-dispatch mode
+      const botConfig = await getBotConfig();
+      const autoDispatch = botConfig.autoBuyAutoDispatch;
 
-      if (!speiResult.success) {
-        state.status = 'failed';
-        state.error = `SPEI failed: ${speiResult.error}`;
-        logger.error({
+      // Save dispatch to DB
+      const dispatch = await saveBuyDispatch({
+        orderNumber,
+        amount: paymentDetails.amount,
+        beneficiaryName: paymentDetails.beneficiaryName,
+        beneficiaryAccount: paymentDetails.beneficiaryAccount,
+        bankName: paymentDetails.bankName,
+        sellerNick,
+        selectedPayId: paymentDetails.selectedPayId,
+        status: autoDispatch ? 'DISPATCHING' : 'PENDING_APPROVAL',
+      });
+
+      if (autoDispatch) {
+        // Auto mode: execute immediately
+        logger.info({ orderNumber, amount: paymentDetails.amount }, '🛒 [AUTO-BUY] Auto-dispatch mode - sending SPEI immediately');
+        await this.executeDispatch(dispatch);
+      } else {
+        // Manual mode: wait for dashboard approval
+        logger.info({ orderNumber, amount: paymentDetails.amount }, '🛒 [AUTO-BUY] Manual mode - awaiting dashboard approval');
+        this.emit('buy_order', {
+          type: 'pending_approval',
           orderNumber,
-          error: speiResult.error,
-        }, '🛒 [AUTO-BUY] SPEI dispatch failed');
-        this.emit('buy_order', { type: 'failed', orderNumber, error: state.error });
-        return;
+          amount: paymentDetails.amount,
+          beneficiary: paymentDetails.beneficiaryName,
+        });
+      }
+    } catch (error: any) {
+      logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Processing error');
+      this.emit('buy_order', { type: 'failed', orderNumber, error: error.message });
+    }
+  }
+
+  // ==================== DISPATCH EXECUTION ====================
+
+  /**
+   * Execute a dispatch: send SPEI + mark order as paid on Binance
+   */
+  private async executeDispatch(dispatch: BuyDispatch): Promise<{ success: boolean; error?: string }> {
+    const { id, orderNumber, amount, beneficiaryName, beneficiaryAccount, bankName, selectedPayId } = dispatch;
+
+    try {
+      // Strict amount validation before sending money
+      const safeAmount = Math.round(amount * 100) / 100;
+      if (safeAmount !== amount || safeAmount <= 0) {
+        const error = `Amount mismatch after rounding: original=${amount}, rounded=${safeAmount}`;
+        await updateBuyDispatch(id, { status: 'FAILED', error });
+        logger.error({ orderNumber, amount, safeAmount }, `[AUTO-BUY] ${error}`);
+        return { success: false, error };
       }
 
       logger.info({
         orderNumber,
-        trackingKey: speiResult.trackingKey,
-      }, '🛒 [AUTO-BUY] SPEI sent successfully');
+        exactAmount: safeAmount,
+        beneficiary: beneficiaryName,
+        account: beneficiaryAccount.slice(-4).padStart(beneficiaryAccount.length, '*'),
+      }, '🛒 [AUTO-BUY] Sending SPEI dispatch');
 
-      // Step 3: Mark order as paid on Binance
-      state.status = 'marking_paid';
+      // Send SPEI via NOVACORE
+      const details: PaymentDetails = {
+        beneficiaryName,
+        beneficiaryAccount,
+        bankName,
+        amount: safeAmount,
+        orderNumber,
+        selectedPayId,
+      };
+
+      const speiResult = await this.sendSpeiPayment(details);
+
+      if (!speiResult.success) {
+        await updateBuyDispatch(id, { status: 'FAILED', error: `SPEI falló: ${speiResult.error}` });
+        logger.error({ orderNumber, error: speiResult.error }, '🛒 [AUTO-BUY] SPEI dispatch failed');
+        this.emit('buy_order', { type: 'failed', orderNumber, error: speiResult.error });
+        return { success: false, error: speiResult.error };
+      }
+
+      // Update dispatch with SPEI result
+      await updateBuyDispatch(id, {
+        trackingKey: speiResult.trackingKey || undefined,
+        transactionId: speiResult.transactionId || undefined,
+      });
+
+      logger.info({ orderNumber, trackingKey: speiResult.trackingKey }, '🛒 [AUTO-BUY] SPEI sent successfully');
+
+      // Mark order as paid on Binance
       try {
         await this.client.markOrderAsPaid({
           orderNumber,
-          payId: paymentDetails.selectedPayId,
+          payId: selectedPayId,
         });
 
-        state.status = 'completed';
-        state.completedAt = new Date();
+        await updateBuyDispatch(id, {
+          status: 'COMPLETED',
+          dispatchedAt: new Date(),
+        });
 
-        const elapsed = state.completedAt.getTime() - state.detectedAt.getTime();
         logger.info({
           orderNumber,
-          amount: paymentDetails.amount,
-          beneficiary: paymentDetails.beneficiaryName,
+          amount: safeAmount,
           trackingKey: speiResult.trackingKey,
-          elapsedMs: elapsed,
         }, '✅ [AUTO-BUY] Order completed - SPEI sent + marked as paid');
 
         this.emit('buy_order', {
           type: 'completed',
           orderNumber,
-          amount: paymentDetails.amount,
+          amount: safeAmount,
           trackingKey: speiResult.trackingKey,
         });
 
+        return { success: true };
+
       } catch (markError: any) {
-        // SPEI was sent but couldn't mark as paid - needs manual intervention
-        state.status = 'failed';
-        state.error = `SPEI sent but markAsPaid failed: ${markError.message}`;
+        // SPEI sent but markAsPaid failed
+        await updateBuyDispatch(id, {
+          status: 'FAILED',
+          error: `SPEI enviado pero fallo al marcar como pagada: ${markError.message}`,
+          dispatchedAt: new Date(),
+        });
         logger.error({
           orderNumber,
           trackingKey: speiResult.trackingKey,
           error: markError.message,
         }, '⚠️ [AUTO-BUY] SPEI sent but FAILED to mark as paid - MANUAL ACTION NEEDED');
-        this.emit('buy_order', { type: 'manual_required', orderNumber, error: state.error });
+        this.emit('buy_order', { type: 'manual_required', orderNumber, error: markError.message });
+        return { success: false, error: `SPEI enviado pero markAsPaid falló: ${markError.message}` };
       }
 
     } catch (error: any) {
-      state.status = 'failed';
-      state.error = error.message;
-      logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Processing error');
-      this.emit('buy_order', { type: 'failed', orderNumber, error: error.message });
+      await updateBuyDispatch(id, { status: 'FAILED', error: error.message });
+      logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Dispatch execution error');
+      return { success: false, error: error.message };
     }
   }
 
@@ -382,6 +504,13 @@ export class BuyOrderManager extends EventEmitter {
     if (details.beneficiaryAccount.length === 16 && details.bankName) {
       body.beneficiaryBank = details.bankName;
     }
+
+    logger.info({
+      orderNumber: details.orderNumber,
+      exactAmount: details.amount,
+      beneficiary: body.beneficiaryName,
+      accountLast4: details.beneficiaryAccount.slice(-4),
+    }, '🛒 [AUTO-BUY] SPEI request details');
 
     try {
       const response = await fetch(`${this.config.novacoreUrl}/api/integrations/spei-dispatch`, {

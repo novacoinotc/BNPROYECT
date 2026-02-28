@@ -154,7 +154,6 @@ export class WebhookReceiver extends EventEmitter {
     // Auto-buy module status
     this.app.get('/api/auto-buy/status', (_req: Request, res: Response) => {
       try {
-        // Dynamic import to avoid circular dependency
         const { buyOrderManager } = require('../index.js');
         if (buyOrderManager) {
           res.json({ success: true, ...buyOrderManager.getStatus() });
@@ -163,6 +162,49 @@ export class WebhookReceiver extends EventEmitter {
         }
       } catch {
         res.json({ success: true, isRunning: false, message: 'Auto-buy module not available' });
+      }
+    });
+
+    // Auto-buy dispatches: list
+    this.app.get('/api/auto-buy/dispatches', async (req: Request, res: Response) => {
+      try {
+        const { buyOrderManager } = require('../index.js');
+        if (!buyOrderManager) {
+          return res.json({ success: true, dispatches: [] });
+        }
+        const status = req.query.status as string | undefined;
+        const dispatches = await buyOrderManager.getDispatches(status);
+        res.json({ success: true, dispatches });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Auto-buy dispatches: approve
+    this.app.post('/api/auto-buy/dispatches/:id/approve', async (req: Request, res: Response) => {
+      try {
+        const { buyOrderManager } = require('../index.js');
+        if (!buyOrderManager) {
+          return res.status(400).json({ success: false, error: 'Auto-buy module not running' });
+        }
+        const result = await buyOrderManager.approveDispatch(req.params.id, req.body?.approvedBy);
+        res.json({ success: result.success, error: result.error });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Auto-buy dispatches: reject
+    this.app.post('/api/auto-buy/dispatches/:id/reject', async (req: Request, res: Response) => {
+      try {
+        const { buyOrderManager } = require('../index.js');
+        if (!buyOrderManager) {
+          return res.status(400).json({ success: false, error: 'Auto-buy module not running' });
+        }
+        const result = await buyOrderManager.rejectDispatch(req.params.id);
+        res.json({ success: result.success, error: result.error });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
       }
     });
 

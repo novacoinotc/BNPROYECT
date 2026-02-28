@@ -243,6 +243,12 @@ export async function POST(request: NextRequest) {
       values.push(JSON.stringify(body.ignoredAdvertisers));
     }
 
+    // Auto-buy SPEI dispatch mode
+    if (typeof body.autoBuyAutoDispatch === 'boolean') {
+      updates.push(`"autoBuyAutoDispatch" = $${paramIndex++}`);
+      values.push(body.autoBuyAutoDispatch);
+    }
+
     if (updates.length === 0) {
       return NextResponse.json(
         { success: false, error: 'No updates provided' },

@@ -1971,6 +1971,8 @@ export interface BotConfig {
   autoMessageText: string | null;
   // Ignored advertisers (global list)
   ignoredAdvertisers: string[];
+  // Auto-buy: auto-dispatch mode (false = manual approval, true = auto)
+  autoBuyAutoDispatch: boolean;
 }
 
 // Cache for last successful config (per merchant)
@@ -2084,6 +2086,8 @@ export async function getBotConfig(): Promise<BotConfig> {
       autoMessageText: row?.autoMessageText ?? null,
       // Ignored advertisers
       ignoredAdvertisers,
+      // Auto-buy
+      autoBuyAutoDispatch: row?.autoBuyAutoDispatch ?? false,
     };
     });
 
@@ -2122,6 +2126,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       autoMessageEnabled: false,
       autoMessageText: null,
       ignoredAdvertisers: [],
+      autoBuyAutoDispatch: false,
     };
   }
 }
@@ -2377,6 +2382,241 @@ export async function getPendingSupportRequestCount(): Promise<number> {
   );
 
   return parseInt(result.rows[0].count);
+}
+
+// ==================== BUY DISPATCH (Auto-SPEI) ====================
+
+export interface BuyDispatch {
+  id: string;
+  orderNumber: string;
+  status: string; // PENDING_APPROVAL | DISPATCHING | COMPLETED | FAILED | REJECTED
+  amount: number;
+  beneficiaryName: string;
+  beneficiaryAccount: string;
+  bankName: string | null;
+  sellerNick: string | null;
+  selectedPayId: number;
+  trackingKey: string | null;
+  transactionId: string | null;
+  error: string | null;
+  detectedAt: string;
+  approvedAt: string | null;
+  dispatchedAt: string | null;
+  approvedBy: string | null;
+  merchantId: string | null;
+}
+
+/**
+ * Ensure BuyDispatch table exists (called once on first use)
+ */
+let buyDispatchTableReady = false;
+
+async function ensureBuyDispatchTable(): Promise<void> {
+  if (buyDispatchTableReady) return;
+  const db = getPool();
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS "BuyDispatch" (
+      id TEXT PRIMARY KEY,
+      "orderNumber" TEXT UNIQUE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL',
+      amount DECIMAL(18,2) NOT NULL,
+      "beneficiaryName" TEXT NOT NULL,
+      "beneficiaryAccount" TEXT NOT NULL,
+      "bankName" TEXT,
+      "sellerNick" TEXT,
+      "selectedPayId" INTEGER NOT NULL,
+      "trackingKey" TEXT,
+      "transactionId" TEXT,
+      error TEXT,
+      "detectedAt" TIMESTAMP DEFAULT NOW(),
+      "approvedAt" TIMESTAMP,
+      "dispatchedAt" TIMESTAMP,
+      "approvedBy" TEXT,
+      "merchantId" TEXT,
+      "createdAt" TIMESTAMP DEFAULT NOW(),
+      "updatedAt" TIMESTAMP DEFAULT NOW()
+    );
+  `);
+  buyDispatchTableReady = true;
+}
+
+export async function saveBuyDispatch(dispatch: {
+  orderNumber: string;
+  amount: number;
+  beneficiaryName: string;
+  beneficiaryAccount: string;
+  bankName: string | null;
+  sellerNick: string | null;
+  selectedPayId: number;
+  status?: string;
+}): Promise<BuyDispatch> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const id = generateId();
+  const status = dispatch.status || 'PENDING_APPROVAL';
+
+  await db.query(
+    `INSERT INTO "BuyDispatch" (id, "orderNumber", status, amount, "beneficiaryName", "beneficiaryAccount", "bankName", "sellerNick", "selectedPayId", "merchantId")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT ("orderNumber") DO NOTHING`,
+    [id, dispatch.orderNumber, status, dispatch.amount, dispatch.beneficiaryName, dispatch.beneficiaryAccount, dispatch.bankName, dispatch.sellerNick, dispatch.selectedPayId, merchantId]
+  );
+
+  return {
+    id,
+    orderNumber: dispatch.orderNumber,
+    status,
+    amount: dispatch.amount,
+    beneficiaryName: dispatch.beneficiaryName,
+    beneficiaryAccount: dispatch.beneficiaryAccount,
+    bankName: dispatch.bankName,
+    sellerNick: dispatch.sellerNick,
+    selectedPayId: dispatch.selectedPayId,
+    trackingKey: null,
+    transactionId: null,
+    error: null,
+    detectedAt: new Date().toISOString(),
+    approvedAt: null,
+    dispatchedAt: null,
+    approvedBy: null,
+    merchantId,
+  };
+}
+
+export async function updateBuyDispatch(id: string, updates: Partial<{
+  status: string;
+  trackingKey: string;
+  transactionId: string;
+  error: string;
+  approvedAt: Date;
+  dispatchedAt: Date;
+  approvedBy: string;
+}>): Promise<void> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const sets: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (updates.status !== undefined) { sets.push(`status = $${idx++}`); values.push(updates.status); }
+  if (updates.trackingKey !== undefined) { sets.push(`"trackingKey" = $${idx++}`); values.push(updates.trackingKey); }
+  if (updates.transactionId !== undefined) { sets.push(`"transactionId" = $${idx++}`); values.push(updates.transactionId); }
+  if (updates.error !== undefined) { sets.push(`error = $${idx++}`); values.push(updates.error); }
+  if (updates.approvedAt !== undefined) { sets.push(`"approvedAt" = $${idx++}`); values.push(updates.approvedAt); }
+  if (updates.dispatchedAt !== undefined) { sets.push(`"dispatchedAt" = $${idx++}`); values.push(updates.dispatchedAt); }
+  if (updates.approvedBy !== undefined) { sets.push(`"approvedBy" = $${idx++}`); values.push(updates.approvedBy); }
+
+  sets.push(`"updatedAt" = NOW()`);
+
+  if (sets.length === 1) return; // Only updatedAt, nothing to update
+
+  values.push(id);
+  await db.query(
+    `UPDATE "BuyDispatch" SET ${sets.join(', ')} WHERE id = $${idx}`,
+    values
+  );
+}
+
+export async function getBuyDispatches(status?: string): Promise<BuyDispatch[]> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  let query = 'SELECT * FROM "BuyDispatch"';
+  const conditions: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (merchantId) {
+    conditions.push(`"merchantId" = $${idx++}`);
+    values.push(merchantId);
+  }
+  if (status) {
+    conditions.push(`status = $${idx++}`);
+    values.push(status);
+  }
+
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
+  }
+
+  query += ' ORDER BY "detectedAt" DESC LIMIT 100';
+
+  const result = await db.query(query, values);
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    amount: parseFloat(row.amount),
+    beneficiaryName: row.beneficiaryName,
+    beneficiaryAccount: row.beneficiaryAccount,
+    bankName: row.bankName,
+    sellerNick: row.sellerNick,
+    selectedPayId: row.selectedPayId,
+    trackingKey: row.trackingKey,
+    transactionId: row.transactionId,
+    error: row.error,
+    detectedAt: row.detectedAt?.toISOString?.() || row.detectedAt,
+    approvedAt: row.approvedAt?.toISOString?.() || row.approvedAt,
+    dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
+    approvedBy: row.approvedBy,
+    merchantId: row.merchantId,
+  }));
+}
+
+export async function getBuyDispatchById(id: string): Promise<BuyDispatch | null> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const result = await db.query('SELECT * FROM "BuyDispatch" WHERE id = $1', [id]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    amount: parseFloat(row.amount),
+    beneficiaryName: row.beneficiaryName,
+    beneficiaryAccount: row.beneficiaryAccount,
+    bankName: row.bankName,
+    sellerNick: row.sellerNick,
+    selectedPayId: row.selectedPayId,
+    trackingKey: row.trackingKey,
+    transactionId: row.transactionId,
+    error: row.error,
+    detectedAt: row.detectedAt?.toISOString?.() || row.detectedAt,
+    approvedAt: row.approvedAt?.toISOString?.() || row.approvedAt,
+    dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
+    approvedBy: row.approvedBy,
+    merchantId: row.merchantId,
+  };
+}
+
+export async function getBuyDispatchByOrderNumber(orderNumber: string): Promise<BuyDispatch | null> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const result = await db.query('SELECT * FROM "BuyDispatch" WHERE "orderNumber" = $1', [orderNumber]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    amount: parseFloat(row.amount),
+    beneficiaryName: row.beneficiaryName,
+    beneficiaryAccount: row.beneficiaryAccount,
+    bankName: row.bankName,
+    sellerNick: row.sellerNick,
+    selectedPayId: row.selectedPayId,
+    trackingKey: row.trackingKey,
+    transactionId: row.transactionId,
+    error: row.error,
+    detectedAt: row.detectedAt?.toISOString?.() || row.detectedAt,
+    approvedAt: row.approvedAt?.toISOString?.() || row.approvedAt,
+    dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
+    approvedBy: row.approvedBy,
+    merchantId: row.merchantId,
+  };
 }
 
 // ==================== CLEANUP ====================
