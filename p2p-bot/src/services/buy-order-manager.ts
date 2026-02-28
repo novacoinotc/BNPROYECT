@@ -465,11 +465,20 @@ export class BuyOrderManager extends EventEmitter {
           if (isPayee && value && !beneficiaryName) {
             beneficiaryName = value;
           } else if (isAccount && value && !beneficiaryAccount) {
-            beneficiaryAccount = value.replace(/\s|-/g, ''); // Strip spaces/dashes
+            const cleaned = value.replace(/\s|-/g, '');
+            // Only accept 16 or 18 digit accounts (debit card or CLABE)
+            if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
+              beneficiaryAccount = cleaned;
+            } else {
+              logger.warn({ orderNumber, rawAccount: cleaned, length: cleaned.length }, '[AUTO-BUY] Account field has invalid length, will try smart scan');
+            }
           } else if (isBank && value && !bankName) {
             bankName = value;
           } else if (isIBAN && value && !beneficiaryAccount) {
-            beneficiaryAccount = value.replace(/\s|-/g, ''); // Strip spaces/dashes
+            const cleaned = value.replace(/\s|-/g, '');
+            if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
+              beneficiaryAccount = cleaned;
+            }
           }
         }
       }
