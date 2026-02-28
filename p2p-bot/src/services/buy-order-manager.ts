@@ -258,10 +258,14 @@ export class BuyOrderManager extends EventEmitter {
 
       const paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
       if (!paymentDetails) {
+        // Try to identify the payment method for a better error message
+        const methods = detail.payMethods || [];
+        const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
+        const errorMsg = `Metodo de pago no compatible con SPEI: ${methodName}`;
         await saveBuyDispatch({
           orderNumber,
           amount,
-          beneficiaryName: 'N/A',
+          beneficiaryName: sellerNick || 'N/A',
           beneficiaryAccount: 'N/A',
           bankName: null,
           sellerNick,
@@ -269,8 +273,8 @@ export class BuyOrderManager extends EventEmitter {
           status: 'FAILED',
         });
         const saved = await getBuyDispatchByOrderNumber(orderNumber);
-        if (saved) await updateBuyDispatch(saved.id, { error: 'No se pudieron extraer los datos bancarios' });
-        this.emit('buy_order', { type: 'failed', orderNumber, error: 'Failed to extract payment details' });
+        if (saved) await updateBuyDispatch(saved.id, { error: errorMsg });
+        this.emit('buy_order', { type: 'failed', orderNumber, error: errorMsg });
         return;
       }
 
@@ -437,8 +441,12 @@ export class BuyOrderManager extends EventEmitter {
       let beneficiaryName = '';
       let beneficiaryAccount = '';
       let bankName: string | null = null;
+      let methodName: string | null = null;
 
       for (const method of payMethods) {
+        // Capture method-level name (e.g., "BBVA", "Bank Transfer", "Mercadopago")
+        methodName = method.tradeMethodName || method.payMethodName || method.identifier || null;
+
         const fields = method.fields || [];
         for (const field of fields) {
           const contentType = field.fieldContentType || '';
@@ -464,12 +472,23 @@ export class BuyOrderManager extends EventEmitter {
 
       // Validate we have minimum required fields
       if (!beneficiaryAccount) {
-        logger.error({ orderNumber, fields: JSON.stringify(payMethods) }, '[AUTO-BUY] No account found in payment fields');
+        // Log the payment method name to understand why (e.g., Mercadopago has no bank account)
+        logger.error({
+          orderNumber,
+          methodName,
+          fields: JSON.stringify(payMethods),
+        }, `[AUTO-BUY] No bank account found - payment method: ${methodName || 'unknown'}`);
         return null;
       }
       if (!beneficiaryName) {
         logger.error({ orderNumber }, '[AUTO-BUY] No beneficiary name found');
         return null;
+      }
+
+      // Fallback for bank name: use the payment method name (e.g., "BBVA")
+      // This handles cases where the bank is the method name, not a field
+      if (!bankName && methodName) {
+        bankName = methodName;
       }
 
       return {
