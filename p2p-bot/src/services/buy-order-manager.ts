@@ -280,12 +280,26 @@ export class BuyOrderManager extends EventEmitter {
         { adOrderNo: orderNumber }
       );
 
-      const paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
+      let paymentDetails = this.extractPaymentDetails(detail, orderNumber, amount);
+
+      // Step 1b: If no valid account found, check chat messages for CLABE/card
+      if (!paymentDetails) {
+        logger.info({ orderNumber }, '🛒 [AUTO-BUY] No valid account in fields, checking chat messages...');
+        const chatDetails = await this.extractFromChat(orderNumber, detail, amount);
+        if (chatDetails) {
+          paymentDetails = chatDetails;
+          logger.info({
+            orderNumber,
+            account: chatDetails.beneficiaryAccount.slice(-4).padStart(chatDetails.beneficiaryAccount.length, '*'),
+          }, '🛒 [AUTO-BUY] Found account in chat messages!');
+        }
+      }
+
       if (!paymentDetails) {
         // Try to identify the payment method for a better error message
         const methods = detail.payMethods || [];
         const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
-        const errorMsg = `Metodo de pago no compatible con SPEI: ${methodName}`;
+        const errorMsg = `No se encontro cuenta valida (CLABE/tarjeta) en campos ni en chat - metodo: ${methodName}`;
         await saveBuyDispatch({
           orderNumber,
           amount,
@@ -610,6 +624,106 @@ export class BuyOrderManager extends EventEmitter {
       };
     } catch (error: any) {
       logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Error extracting payment details');
+      return null;
+    }
+  }
+
+  // ==================== CHAT EXTRACTION ====================
+
+  /**
+   * When payment fields don't have a valid account, check chat messages.
+   * Sellers sometimes send their CLABE/card number in the chat.
+   */
+  private async extractFromChat(orderNumber: string, orderDetail: any, amount: number): Promise<PaymentDetails | null> {
+    try {
+      const messages = await this.client.getChatMessages({ orderNo: orderNumber, rows: 30 });
+      if (!Array.isArray(messages) || messages.length === 0) return null;
+
+      // Only look at messages from the counterparty (not self)
+      const sellerMessages = messages.filter(m => !m.self && m.content);
+
+      let foundAccount: string | null = null;
+      let foundBank: string | null = null;
+
+      // Scan messages for 16 or 18 digit numbers
+      for (const msg of sellerMessages) {
+        const text = msg.content.replace(/\s|-/g, '');
+        // Find all sequences of 16 or 18 digits
+        const matches = text.match(/\d{16,18}/g);
+        if (matches) {
+          for (const match of matches) {
+            if (match.length === 16 || match.length === 18) {
+              foundAccount = match;
+              break;
+            }
+          }
+          if (foundAccount) break;
+        }
+      }
+
+      if (!foundAccount) return null;
+
+      // Try to find bank name in chat
+      const knownBanks = ['bbva', 'banamex', 'santander', 'banorte', 'hsbc', 'scotiabank', 'azteca', 'banco azteca', 'inbursa', 'banregio', 'bajio', 'afirme', 'bancoppel', 'spin', 'nu', 'hey banco', 'klar', 'mercadopago'];
+      for (const msg of sellerMessages) {
+        const lower = msg.content.toLowerCase();
+        for (const bank of knownBanks) {
+          if (lower.includes(bank)) {
+            foundBank = msg.content; // Keep original for display
+            break;
+          }
+        }
+        if (foundBank) break;
+      }
+
+      // Resolve bank from account if not found in chat
+      if (!foundBank) {
+        foundBank = this.getBankDisplayName(foundAccount);
+      }
+
+      // Get beneficiary name from order fields or chat
+      let beneficiaryName = '';
+      const payMethods = orderDetail.payMethods || [];
+      for (const method of payMethods) {
+        for (const field of (method.fields || [])) {
+          const ct = (field.fieldContentType || '').toLowerCase();
+          const fn = (field.fieldName || field.fieldLabel || '').toLowerCase();
+          const val = (field.fieldValue || '').trim();
+          if ((ct === 'payee' || fn.includes('name')) && val) {
+            beneficiaryName = val;
+            break;
+          }
+        }
+        if (beneficiaryName) break;
+      }
+      if (!beneficiaryName) beneficiaryName = orderDetail.sellerName || 'N/A';
+
+      const selectedPayId = orderDetail.selectedPayId || 0;
+
+      // Resolve SPEI code for 16-digit cards
+      let bankForDispatch: string | null = foundBank;
+      if (foundAccount.length === 16) {
+        const speiCode = this.resolveSpeiCodeForCard(foundBank, foundAccount);
+        if (speiCode) bankForDispatch = speiCode;
+      }
+
+      logger.info({
+        orderNumber,
+        account: `...${foundAccount.slice(-4)}`,
+        bank: foundBank,
+        source: 'chat',
+      }, '🛒 [AUTO-BUY] Extracted payment details from chat');
+
+      return {
+        beneficiaryName,
+        beneficiaryAccount: foundAccount,
+        bankName: bankForDispatch,
+        amount,
+        orderNumber,
+        selectedPayId,
+      };
+    } catch (error: any) {
+      logger.error({ orderNumber, error: error.message }, '[AUTO-BUY] Error reading chat messages');
       return null;
     }
   }
