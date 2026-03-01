@@ -295,12 +295,13 @@ export class BuyOrderManager extends EventEmitter {
   // ==================== BACKGROUND CHAT SCAN ====================
 
   /**
-   * Runs in background (fire-and-forget) — scans chat for CLABE/card every 30s up to 5 min.
+   * Runs in background (fire-and-forget) — scans chat for CLABE/card every 30s up to 10 min.
+   * Updates the dispatch error field on each attempt so dashboard shows progress.
    * If found, atomically claims the dispatch and sends SPEI.
    * Does NOT block the polling loop.
    */
   private backgroundChatScan(dispatchId: string, orderNumber: string, orderDetail: any, amount: number): void {
-    const MAX_ATTEMPTS = 10;
+    const MAX_ATTEMPTS = 20;
     const DELAY_MS = 30_000; // 30 seconds between attempts
 
     // Fire and forget — no await
@@ -314,6 +315,13 @@ export class BuyOrderManager extends EventEmitter {
           logger.info({ dispatchId, orderNumber, status: current?.status }, '🛒 [AUTO-BUY] Background chat scan stopped — dispatch no longer FAILED');
           return;
         }
+
+        // Update progress in error field so dashboard shows it
+        const remainingSecs = (MAX_ATTEMPTS - attempt) * (DELAY_MS / 1000);
+        const remainingMin = Math.ceil(remainingSecs / 60);
+        await updateBuyDispatch(dispatchId, {
+          error: `Buscando cuenta en chat... (intento ${attempt}/${MAX_ATTEMPTS} — ~${remainingMin} min restantes)`,
+        });
 
         const chatDetails = await this.extractFromChat(orderNumber, orderDetail, amount);
         if (chatDetails) {
@@ -350,7 +358,7 @@ export class BuyOrderManager extends EventEmitter {
       const current = await getBuyDispatchById(dispatchId);
       if (current && current.status === 'FAILED') {
         await updateBuyDispatch(dispatchId, {
-          error: 'No se encontro cuenta en campos ni en chat (~5 min) - usa "Buscar en chat" manualmente',
+          error: 'No se encontro cuenta en campos ni en chat (~10 min) - usa "Buscar en chat" manualmente',
         });
       }
       logger.info({ orderNumber }, '🛒 [AUTO-BUY] Background chat scan exhausted — no account found');
