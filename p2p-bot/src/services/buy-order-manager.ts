@@ -456,7 +456,27 @@ export class BuyOrderManager extends EventEmitter {
       if (!paymentDetails) {
         const methods = detail.payMethods || [];
         const methodName = methods[0]?.tradeMethodName || methods[0]?.payMethodName || 'desconocido';
-        const errorMsg = `Buscando cuenta en chat... (metodo: ${methodName})`;
+
+        // Find raw account for better error message
+        let rawAccountInfo = '';
+        for (const method of methods) {
+          for (const field of (method.fields || [])) {
+            const ct = (field.fieldContentType || '').toLowerCase();
+            const fn = (field.fieldName || field.fieldLabel || '').toLowerCase();
+            if (ct === 'pay_account' || fn.includes('account') || fn.includes('card')) {
+              const raw = (field.fieldValue || '').trim();
+              const cleaned = raw.replace(/\s|-/g, '');
+              if (cleaned && /\d+/.test(cleaned)) {
+                const digits = cleaned.replace(/\D/g, '');
+                rawAccountInfo = ` — encontro "${raw}" (${digits.length} digitos, se necesitan 16 o 18)`;
+              }
+              break;
+            }
+          }
+          if (rawAccountInfo) break;
+        }
+
+        const errorMsg = `Cuenta invalida en campos${rawAccountInfo} - buscando en chat... (metodo: ${methodName})`;
         await saveBuyDispatch({
           orderNumber,
           amount,
