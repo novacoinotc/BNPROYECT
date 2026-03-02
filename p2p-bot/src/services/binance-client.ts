@@ -881,6 +881,141 @@ export class BinanceC2CClient {
     return false;
   }
 
+  // ==================== SPOT API ====================
+  // Spot API (/api/v3/*) returns response.data directly (not wrapped in .data.data like SAPI)
+
+  /**
+   * Make signed GET request to Spot API (response.data direct)
+   */
+  private async spotSignedGet<T>(endpoint: string, params: Record<string, any> = {}): Promise<T> {
+    const signedParams = this.buildSignedParams(params);
+    const response = await this.client.get<T>(`${endpoint}?${signedParams}`);
+    return response.data;
+  }
+
+  /**
+   * Make signed POST request to Spot API (response.data direct)
+   */
+  private async spotSignedPost<T>(endpoint: string, params: Record<string, any> = {}): Promise<T> {
+    const signedParams = this.buildSignedParams(params);
+    const response = await this.client.post<T>(`${endpoint}?${signedParams}`);
+    return response.data;
+  }
+
+  /**
+   * Get spot account balances
+   * GET /api/v3/account (signed)
+   */
+  async getSpotBalances(): Promise<{ asset: string; free: string; locked: string }[]> {
+    const response = await this.spotSignedGet<{ balances: { asset: string; free: string; locked: string }[] }>(
+      '/api/v3/account'
+    );
+    return response.balances;
+  }
+
+  /**
+   * Get exchange info for a symbol (lot size, filters)
+   * GET /api/v3/exchangeInfo (public, no signature needed)
+   */
+  async getExchangeInfo(symbol: string): Promise<{
+    symbol: string;
+    status: string;
+    filters: Array<{ filterType: string; minQty?: string; maxQty?: string; stepSize?: string; minNotional?: string }>;
+  }> {
+    const response = await this.client.get<{
+      symbols: Array<{
+        symbol: string;
+        status: string;
+        filters: Array<{ filterType: string; minQty?: string; maxQty?: string; stepSize?: string; minNotional?: string }>;
+      }>;
+    }>(`/api/v3/exchangeInfo?symbol=${symbol}`);
+    const info = response.data.symbols?.[0];
+    if (!info) {
+      throw new Error(`Symbol ${symbol} not found in exchange info`);
+    }
+    return info;
+  }
+
+  /**
+   * Get current ticker price
+   * GET /api/v3/ticker/price (public, no signature needed)
+   */
+  async getTickerPrice(symbol: string): Promise<string> {
+    const response = await this.client.get<{ symbol: string; price: string }>(
+      `/api/v3/ticker/price?symbol=${symbol}`
+    );
+    return response.data.price;
+  }
+
+  /**
+   * Execute a market sell order on spot
+   * POST /api/v3/order (signed)
+   */
+  async spotMarketSell(symbol: string, quantity: string): Promise<{
+    symbol: string;
+    orderId: number;
+    status: string;
+    executedQty: string;
+    cummulativeQuoteQty: string;
+    fills: Array<{ price: string; qty: string; commission: string; commissionAsset: string }>;
+  }> {
+    const response = await this.spotSignedPost<{
+      symbol: string;
+      orderId: number;
+      status: string;
+      executedQty: string;
+      cummulativeQuoteQty: string;
+      fills: Array<{ price: string; qty: string; commission: string; commissionAsset: string }>;
+    }>('/api/v3/order', {
+      symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity,
+    });
+    return response;
+  }
+
+  // ==================== FUNDING WALLET ====================
+
+  /**
+   * Get funding wallet balances
+   * POST /sapi/v1/asset/get-funding-asset (SAPI — returns response.data.data or response.data directly)
+   * When body is empty or {}, returns all assets with balance > 0
+   */
+  async getFundingBalances(): Promise<{ asset: string; free: string; locked: string; freeze: string }[]> {
+    // This SAPI endpoint wraps in .data differently — may return array directly
+    const signedParams = this.buildSignedParams({});
+    const response = await this.client.post<any>(
+      `/sapi/v1/asset/get-funding-asset?${signedParams}`,
+      {}
+    );
+    // Response can be response.data (array) or response.data.data (wrapped)
+    const data = Array.isArray(response.data) ? response.data : response.data?.data || [];
+    return data.map((b: any) => ({
+      asset: b.asset,
+      free: b.free || '0',
+      locked: b.locked || '0',
+      freeze: b.freeze || '0',
+    }));
+  }
+
+  /**
+   * Transfer between wallets (Funding ↔ Spot)
+   * POST /sapi/v1/asset/transfer
+   *
+   * type = 'FUNDING_MAIN' → Funding to Spot
+   * type = 'MAIN_FUNDING' → Spot to Funding
+   */
+  async walletTransfer(asset: string, amount: string, type: 'FUNDING_MAIN' | 'MAIN_FUNDING'): Promise<{ tranId: number }> {
+    const signedParams = this.buildSignedParams({ asset, amount, type });
+    const response = await this.client.post<any>(
+      `/sapi/v1/asset/transfer?${signedParams}`
+    );
+    // Response may be wrapped or direct
+    const data = response.data?.data || response.data;
+    return { tranId: data?.tranId || 0 };
+  }
+
   // ==================== UTILITY METHODS ====================
 
   /**

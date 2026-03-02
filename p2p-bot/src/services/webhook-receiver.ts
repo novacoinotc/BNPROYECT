@@ -234,6 +234,63 @@ export class WebhookReceiver extends EventEmitter {
       }
     });
 
+    // Auto-swap module status
+    this.app.get('/api/auto-swap/status', (_req: Request, res: Response) => {
+      try {
+        const { autoSwapManager } = require('../index.js');
+        if (autoSwapManager) {
+          res.json({ success: true, ...autoSwapManager.getStatus() });
+        } else {
+          res.json({ success: true, isRunning: false, message: 'Auto-swap module not enabled' });
+        }
+      } catch {
+        res.json({ success: true, isRunning: false, message: 'Auto-swap module not available' });
+      }
+    });
+
+    // Auto-swap records: list
+    this.app.get('/api/auto-swap/records', async (req: Request, res: Response) => {
+      try {
+        const { autoSwapManager } = require('../index.js');
+        if (!autoSwapManager) {
+          return res.json({ success: true, records: [] });
+        }
+        const limit = parseInt(req.query.limit as string) || 50;
+        const records = await autoSwapManager.getRecentSwaps(limit);
+        res.json({ success: true, records });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Auto-swap balances: current spot balances
+    this.app.get('/api/auto-swap/balances', async (_req: Request, res: Response) => {
+      try {
+        const { autoSwapManager } = require('../index.js');
+        if (!autoSwapManager) {
+          return res.json({ success: true, balances: [] });
+        }
+        const balances = await autoSwapManager.getSpotBalances();
+        res.json({ success: true, balances });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Auto-swap trigger: force a manual poll
+    this.app.post('/api/auto-swap/trigger', async (_req: Request, res: Response) => {
+      try {
+        const { autoSwapManager } = require('../index.js');
+        if (!autoSwapManager) {
+          return res.status(400).json({ success: false, error: 'Auto-swap module not running' });
+        }
+        await autoSwapManager.pollAndSwap();
+        res.json({ success: true, message: 'Manual swap check triggered' });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Bank payment webhook
     this.app.post(this.config.webhookPath, this.handlePaymentWebhook.bind(this));
 

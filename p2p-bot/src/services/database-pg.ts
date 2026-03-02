@@ -2641,6 +2641,172 @@ export async function getBuyDispatchByOrderNumber(orderNumber: string): Promise<
   };
 }
 
+// ==================== SWAP RECORD (Auto-Swap) ====================
+
+export interface SwapRecord {
+  id: string;
+  asset: string;
+  symbol: string;
+  side: string;
+  quantity: string;
+  estimatedUsdt: string | null;
+  executedQty: string | null;
+  receivedUsdt: string | null;
+  avgPrice: string | null;
+  binanceOrderId: string | null;
+  status: string; // PENDING | COMPLETED | FAILED
+  error: string | null;
+  merchantId: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Ensure SwapRecord table exists (called once on first use)
+ */
+let swapRecordTableReady = false;
+
+async function ensureSwapRecordTable(): Promise<void> {
+  if (swapRecordTableReady) return;
+  const db = getPool();
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS "SwapRecord" (
+      id TEXT PRIMARY KEY,
+      asset TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL DEFAULT 'SELL',
+      quantity TEXT NOT NULL,
+      "estimatedUsdt" TEXT,
+      "executedQty" TEXT,
+      "receivedUsdt" TEXT,
+      "avgPrice" TEXT,
+      "binanceOrderId" TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      error TEXT,
+      "merchantId" TEXT,
+      "createdAt" TIMESTAMP DEFAULT NOW(),
+      "completedAt" TIMESTAMP,
+      "updatedAt" TIMESTAMP DEFAULT NOW()
+    );
+  `);
+  swapRecordTableReady = true;
+}
+
+export async function saveSwapRecord(record: {
+  asset: string;
+  symbol: string;
+  quantity: string;
+  estimatedUsdt: string;
+}): Promise<SwapRecord> {
+  await ensureSwapRecordTable();
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const id = generateId();
+
+  await db.query(
+    `INSERT INTO "SwapRecord" (id, asset, symbol, quantity, "estimatedUsdt", status, "merchantId")
+     VALUES ($1, $2, $3, $4, $5, 'PENDING', $6)`,
+    [id, record.asset, record.symbol, record.quantity, record.estimatedUsdt, merchantId]
+  );
+
+  return {
+    id,
+    asset: record.asset,
+    symbol: record.symbol,
+    side: 'SELL',
+    quantity: record.quantity,
+    estimatedUsdt: record.estimatedUsdt,
+    executedQty: null,
+    receivedUsdt: null,
+    avgPrice: null,
+    binanceOrderId: null,
+    status: 'PENDING',
+    error: null,
+    merchantId,
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function updateSwapRecord(id: string, updates: Partial<{
+  status: string;
+  executedQty: string;
+  receivedUsdt: string;
+  avgPrice: string;
+  binanceOrderId: string;
+  error: string;
+  completedAt: Date;
+}>): Promise<void> {
+  await ensureSwapRecordTable();
+  const db = getPool();
+  const sets: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (updates.status !== undefined) { sets.push(`status = $${idx++}`); values.push(updates.status); }
+  if (updates.executedQty !== undefined) { sets.push(`"executedQty" = $${idx++}`); values.push(updates.executedQty); }
+  if (updates.receivedUsdt !== undefined) { sets.push(`"receivedUsdt" = $${idx++}`); values.push(updates.receivedUsdt); }
+  if (updates.avgPrice !== undefined) { sets.push(`"avgPrice" = $${idx++}`); values.push(updates.avgPrice); }
+  if (updates.binanceOrderId !== undefined) { sets.push(`"binanceOrderId" = $${idx++}`); values.push(updates.binanceOrderId); }
+  if (updates.error !== undefined) { sets.push(`error = $${idx++}`); values.push(updates.error); }
+  if (updates.completedAt !== undefined) { sets.push(`"completedAt" = $${idx++}`); values.push(updates.completedAt); }
+
+  sets.push(`"updatedAt" = NOW()`);
+
+  if (sets.length === 1) return; // Only updatedAt, nothing to update
+
+  values.push(id);
+  await db.query(
+    `UPDATE "SwapRecord" SET ${sets.join(', ')} WHERE id = $${idx}`,
+    values
+  );
+}
+
+export async function getSwapRecords(limit: number = 50): Promise<SwapRecord[]> {
+  await ensureSwapRecordTable();
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  let query = 'SELECT * FROM "SwapRecord"';
+  const conditions: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (merchantId) {
+    conditions.push(`"merchantId" = $${idx++}`);
+    values.push(merchantId);
+  }
+
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
+  }
+
+  values.push(limit);
+  query += ` ORDER BY "createdAt" DESC LIMIT $${idx}`;
+
+  const result = await db.query(query, values);
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    asset: row.asset,
+    symbol: row.symbol,
+    side: row.side,
+    quantity: row.quantity,
+    estimatedUsdt: row.estimatedUsdt,
+    executedQty: row.executedQty,
+    receivedUsdt: row.receivedUsdt,
+    avgPrice: row.avgPrice,
+    binanceOrderId: row.binanceOrderId,
+    status: row.status,
+    error: row.error,
+    merchantId: row.merchantId,
+    createdAt: row.createdAt?.toISOString?.() || row.createdAt,
+    completedAt: row.completedAt?.toISOString?.() || row.completedAt,
+    updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt,
+  }));
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {

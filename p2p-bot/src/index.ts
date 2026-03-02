@@ -17,6 +17,7 @@ import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from '
 import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
 import { SellAdManager, createSellAdManager, BuyAdManager, createBuyAdManager } from './services/positioning/index.js';
 import { BuyOrderManager, createBuyOrderManager } from './services/buy-order-manager.js';
+import { AutoSwapManager, createAutoSwapManager } from './services/auto-swap-manager.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -57,6 +58,8 @@ let sellAdManager: SellAdManager | null = null;
 let buyAdManager: BuyAdManager | null = null;
 // Auto-buy module (independent from SELL flow)
 let buyOrderManager: BuyOrderManager | null = null;
+// Auto-swap module (converts crypto balances to USDT)
+let autoSwapManager: AutoSwapManager | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -297,7 +300,14 @@ async function startServices(): Promise<void> {
   if (process.env.ENABLE_AUTO_BUY === 'true') {
     buyOrderManager = createBuyOrderManager();
     await buyOrderManager.start();
-    logger.info('🛒 Auto-buy module started');
+    logger.info('Auto-buy module started');
+  }
+
+  // Start auto-swap module (converts crypto to USDT - only if enabled)
+  if (process.env.ENABLE_AUTO_SWAP === 'true') {
+    autoSwapManager = createAutoSwapManager();
+    await autoSwapManager.start();
+    logger.info('Auto-swap module started');
   }
 }
 
@@ -432,6 +442,12 @@ async function shutdown(): Promise<void> {
     buyOrderManager = null;
   }
 
+  // Stop auto-swap module
+  if (autoSwapManager) {
+    autoSwapManager.stop();
+    autoSwapManager = null;
+  }
+
   // Stop services
   orderManager.stop();
   pricingEngine.stopAutoUpdate();
@@ -475,5 +491,6 @@ export {
   sellAdManager,
   buyAdManager,
   buyOrderManager,
+  autoSwapManager,
   BOT_CONFIG,
 };

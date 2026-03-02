@@ -130,14 +130,10 @@ export class SmartEngine {
     logger.debug(`🔍 [SMART] Filters: ${verifiedCount} Grade${this.config.minUserGrade}+, ${qualifiedAds.length} passed all (minOrders=${this.config.minMonthOrderCount}, minVolume=${this.config.minSurplusAmount} MXN)`);
 
     if (qualifiedAds.length === 0) {
-      // No qualified competitors - use best available
-      const bestPrice = parseFloat(ads[0].price);
-      return {
-        success: true,
-        targetPrice: bestPrice,
-        bestCompetitorPrice: bestPrice,
-        qualifiedCount: 0,
-      };
+      // No qualified competitors — don't change price
+      // Using unfiltered ads leads to matching trash accounts
+      logger.debug(`🔍 [SMART] 0 qualified competitors — keeping current price`);
+      return null;
     }
 
     // Sort by price (SELL ads sorted ascending, BUY ads sorted descending)
