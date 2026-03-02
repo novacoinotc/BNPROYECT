@@ -19,6 +19,7 @@ interface AssetPositioningConfig {
   matchPrice: boolean;
   undercutCents: number;
   minPrice: number | null;  // Price floor - bot won't go below this (SELL only)
+  spotMarginCents: number;  // Cents of margin above spot price for BUY (0 = exact spot)
   // Per-asset smart filters
   smartMinOrderCount: number;
   smartMinSurplus: number;  // In FIAT (MXN) - calculated as price × crypto amount
@@ -73,6 +74,7 @@ export default function PositioningPage() {
       matchPrice: false,
       undercutCents: 1,
       minPrice: null,
+      spotMarginCents: 0,
       smartMinOrderCount: globalMinOrderCount,
       smartMinSurplus: globalMinSurplus,
     };
@@ -373,6 +375,29 @@ export default function PositioningPage() {
                     />
                   </div>
                 </div>
+
+                {/* Spot Margin - Only for BUY USDT */}
+                {!isSell && asset === 'USDT' && (
+                  <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs text-blue-300 font-medium">📊 Margen sobre Spot</div>
+                        <div className="text-[10px] text-gray-500">Centavos arriba del spot de Bitso</div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={cfg.spotMarginCents ?? 0}
+                          onChange={(e) => updateAssetConfig(asset, tradeType, { spotMarginCents: parseFloat(e.target.value) || 0 })}
+                          className="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                          min="0"
+                          step="0.5"
+                        />
+                        <span className="text-gray-400 text-xs">¢</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -1933,6 +1933,7 @@ export interface AssetPositioningConfig {
   undercutCents: number;    // Cents to undercut competitor
   minPrice: number | null;  // Price floor - bot won't go below this (null = no limit)
   maxPrice: number | null;  // Price ceiling - bot won't go above this (null = no limit)
+  spotMarginCents: number;  // Cents of margin above/below spot price (0 = exact spot)
   // Per-asset smart filters
   smartMinOrderCount: number;  // Min monthly orders for smart mode
   smartMinSurplus: number;     // Min volume in FIAT (e.g., MXN) for smart mode
@@ -2159,6 +2160,7 @@ export function getPositioningConfigForAd(
       undercutCents: assetConfig.undercutCents ?? config.undercutCents ?? 1,
       minPrice: assetConfig.minPrice ?? null,  // Price floor (null = no limit)
       maxPrice: assetConfig.maxPrice ?? null,  // Price ceiling (null = no limit)
+      spotMarginCents: assetConfig.spotMarginCents ?? 0,
       // Per-asset smart filters (fallback to global defaults)
       smartMinOrderCount: assetConfig.smartMinOrderCount ?? config.smartMinOrderCount ?? 10,
       smartMinSurplus: assetConfig.smartMinSurplus ?? config.smartMinSurplus ?? 100,
@@ -2175,6 +2177,7 @@ export function getPositioningConfigForAd(
       undercutCents: config.undercutCents ?? 1,
       minPrice: null,  // No floor by default
       maxPrice: null,  // No ceiling by default
+      spotMarginCents: 0,
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
     };
@@ -2187,6 +2190,7 @@ export function getPositioningConfigForAd(
       undercutCents: config.undercutCents ?? 1,
       minPrice: null,  // No floor by default
       maxPrice: null,  // No ceiling by default
+      spotMarginCents: 0,
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
     };
