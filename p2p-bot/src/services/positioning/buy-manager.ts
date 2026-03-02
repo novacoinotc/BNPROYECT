@@ -334,16 +334,19 @@ export class BuyAdManager extends EventEmitter {
       return;
     }
 
-    // SPOT CEILING: never buy above Bitso spot price
-    const spotPrice = await this.getSpotPriceMxn(ad.asset);
-    if (spotPrice !== null) {
-      const spotCeiling = Math.round(spotPrice * 100) / 100;
-      if (targetPrice > spotCeiling) {
-        logger.warn(
-          `🛑 [BUY] ${ad.asset}: Precio ${targetPrice.toFixed(2)} excede spot Bitso ${spotCeiling.toFixed(2)} → capado`
-        );
-        targetPrice = spotCeiling;
-        logInfo += ` [techo spot: $${spotCeiling.toFixed(2)}]`;
+    // SPOT CEILING: only for SMART mode — never buy above Bitso spot price
+    // Follow mode is exempt: it trusts the target advertiser's price directly
+    if (assetConfig.mode === 'smart') {
+      const spotPrice = await this.getSpotPriceMxn(ad.asset);
+      if (spotPrice !== null) {
+        const spotCeiling = Math.round(spotPrice * 100) / 100;
+        if (targetPrice > spotCeiling) {
+          logger.warn(
+            `🛑 [BUY] ${ad.asset}: Precio ${targetPrice.toFixed(2)} excede spot Bitso ${spotCeiling.toFixed(2)} → capado`
+          );
+          targetPrice = spotCeiling;
+          logInfo += ` [techo spot: $${spotCeiling.toFixed(2)}]`;
+        }
       }
     }
 
