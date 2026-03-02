@@ -98,7 +98,7 @@ export class SellAdManager extends EventEmitter {
     this.smartEngine = new SmartEngine('SELL');
   }
 
-  async start(intervalMs: number = 5000): Promise<void> {
+  async start(intervalMs: number = 12000): Promise<void> {
     await this.loadConfig();
     await this.discoverAds();
 

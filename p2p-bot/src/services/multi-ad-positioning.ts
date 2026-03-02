@@ -104,7 +104,7 @@ export class MultiAdPositioningManager extends EventEmitter {
   /**
    * Start managing all active ads
    */
-  async start(fiat: string = 'MXN', intervalMs: number = 5000): Promise<void> {
+  async start(fiat: string = 'MXN', intervalMs: number = 12000): Promise<void> {
     this.fiat = fiat;
 
     // Load config from database

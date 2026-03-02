@@ -101,7 +101,7 @@ export class PositioningOrchestrator extends EventEmitter {
     asset: string = 'USDT',
     fiat: string = 'MXN',
     tradeType: TradeType = TradeType.BUY, // BUY = search sellers (for USDT sale ads)
-    intervalMs: number = 5000 // Default 5 seconds for fast market checks
+    intervalMs: number = 12000 // Default 12 seconds to reduce API rate limit pressure
   ): Promise<void> {
     if (this.mode === 'off') {
       return; // Silent - no warning

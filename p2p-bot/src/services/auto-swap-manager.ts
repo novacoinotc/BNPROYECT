@@ -51,7 +51,7 @@ export class AutoSwapManager extends EventEmitter {
     const assetsEnv = process.env.AUTO_SWAP_ASSETS || 'BTC,USDC,BNB,ETH,FDUSD,DOGE,WLD,ADA,XRP,TRUMP,SOL';
     this.config = {
       assets: assetsEnv.split(',').map(a => a.trim().toUpperCase()).filter(Boolean),
-      pollIntervalMs: parseInt(process.env.AUTO_SWAP_POLL_INTERVAL_MS || '15000'),
+      pollIntervalMs: parseInt(process.env.AUTO_SWAP_POLL_INTERVAL_MS || '30000'),
       minSwapUsdt: parseFloat(process.env.AUTO_SWAP_MIN_USDT || '5'),
       dustThreshold: parseFloat(process.env.AUTO_SWAP_DUST_THRESHOLD || '1'),
       ...config,
