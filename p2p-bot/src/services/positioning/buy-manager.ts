@@ -1,13 +1,16 @@
 // =====================================================
 // BUY AD MANAGER - Manages only BUY ads independently
+// Includes spot price ceiling from Bitso to prevent overpaying
 // =====================================================
 
 import { EventEmitter } from 'events';
+import axios from 'axios';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
 import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
 import { fetchBuyAds as fetchBuyAdsApi, updateAdPrice as updateAdPriceApi, AdInfo } from '../binance-api.js';
+import { getBinanceClient } from '../binance-client.js';
 
 interface BuyAd {
   advNo: string;
@@ -24,6 +27,20 @@ interface BuyManagerConfig {
   matchPrice: boolean;
   smartConfig: Partial<SmartConfig>;
 }
+
+// Bitso book name mapping (assets that have direct MXN pairs on Bitso)
+const BITSO_MXN_BOOKS: Record<string, string> = {
+  BTC: 'btc_mxn',
+  ETH: 'eth_mxn',
+  XRP: 'xrp_mxn',
+  SOL: 'sol_mxn',
+  LTC: 'ltc_mxn',
+  USDT: 'usdt_mxn',
+  BAT: 'bat_mxn',
+  MANA: 'mana_mxn',
+  TRX: 'trx_mxn',
+  AVAX: 'avax_mxn',
+};
 
 // Wrapper functions using shared API helper with proxy support
 async function fetchBuyAds(): Promise<BuyAd[]> {
@@ -60,6 +77,9 @@ export class BuyAdManager extends EventEmitter {
   private dbConfig: BotConfig | null = null;
   private interval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  // Spot ceiling cache: asset → { price, timestamp }
+  private spotCeilingCache = new Map<string, { price: number; ts: number }>();
+  private readonly spotCacheTtlMs = 30000; // 30s cache
 
   constructor() {
     super();
@@ -184,11 +204,84 @@ export class BuyAdManager extends EventEmitter {
     }
   }
 
+  // ==================== SPOT PRICE CEILING (Bitso) ====================
+
+  /**
+   * Get spot price in MXN for an asset.
+   * Uses Bitso API for direct MXN pairs (BTC, ETH, XRP, SOL, USDT).
+   * For others: Binance spot crypto/USDT × Bitso USDT/MXN.
+   * Cached 30s per asset to avoid hammering APIs.
+   */
+  private async getSpotPriceMxn(asset: string): Promise<number | null> {
+    // Check cache
+    const cached = this.spotCeilingCache.get(asset);
+    if (cached && Date.now() - cached.ts < this.spotCacheTtlMs) {
+      return cached.price;
+    }
+
+    try {
+      let priceMxn: number | null = null;
+
+      // Try direct Bitso MXN pair first
+      const bitsoBook = BITSO_MXN_BOOKS[asset];
+      if (bitsoBook) {
+        priceMxn = await this.fetchBitsoPrice(bitsoBook);
+      }
+
+      // Fallback: crypto/USDT from Binance × USDT/MXN from Bitso
+      if (priceMxn === null && asset !== 'USDT') {
+        const usdtMxn = await this.getSpotPriceMxn('USDT');
+        if (usdtMxn) {
+          try {
+            const client = getBinanceClient();
+            const ticker = await client.getTickerPrice(`${asset}USDT`);
+            const cryptoUsdt = parseFloat(ticker);
+            if (cryptoUsdt > 0) {
+              priceMxn = cryptoUsdt * usdtMxn;
+            }
+          } catch {
+            // Ticker not available
+          }
+        }
+      }
+
+      if (priceMxn !== null && priceMxn > 0) {
+        this.spotCeilingCache.set(asset, { price: priceMxn, ts: Date.now() });
+        return priceMxn;
+      }
+    } catch (error: any) {
+      logger.debug({ asset, error: error?.message }, '[BUY] Failed to get spot price');
+    }
+
+    // Return stale cache if fresh fetch failed
+    return cached?.price ?? null;
+  }
+
+  /**
+   * Fetch last price from Bitso public API
+   */
+  private async fetchBitsoPrice(book: string): Promise<number | null> {
+    try {
+      const response = await axios.get(`https://api.bitso.com/v3/ticker/?book=${book}`, {
+        timeout: 5000,
+      });
+      const last = response.data?.payload?.last;
+      if (last) {
+        return parseFloat(last);
+      }
+    } catch {
+      // Silent - will use fallback
+    }
+    return null;
+  }
+
+  // ==================== AD UPDATE ====================
+
   private async updateAd(ad: BuyAd): Promise<void> {
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
-      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, smartMinOrderCount: 10, smartMinSurplus: 100 };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, maxPrice: null, smartMinOrderCount: 10, smartMinSurplus: 100 };
 
     // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {
@@ -239,6 +332,19 @@ export class BuyAdManager extends EventEmitter {
     if (targetPrice === null) {
       logger.warn(`⚠️ [BUY] ${ad.asset}: No se pudo calcular precio objetivo`);
       return;
+    }
+
+    // SPOT CEILING: never buy above Bitso spot price
+    const spotPrice = await this.getSpotPriceMxn(ad.asset);
+    if (spotPrice !== null) {
+      const spotCeiling = Math.round(spotPrice * 100) / 100;
+      if (targetPrice > spotCeiling) {
+        logger.warn(
+          `🛑 [BUY] ${ad.asset}: Precio ${targetPrice.toFixed(2)} excede spot Bitso ${spotCeiling.toFixed(2)} → capado`
+        );
+        targetPrice = spotCeiling;
+        logInfo += ` [techo spot: $${spotCeiling.toFixed(2)}]`;
+      }
     }
 
     // Check if update needed (diff >= 0.01)
