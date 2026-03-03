@@ -352,15 +352,15 @@ export class WebhookReceiver extends EventEmitter {
     try {
       const client = getBinanceClient();
 
-      // Fetch pending orders (TRADING, BUYER_PAYED)
+      // Fetch pending SELL orders (TRADING, BUYER_PAYED)
       let pendingOrders: any[] = [];
       try {
         pendingOrders = await client.listPendingOrders(50);
       } catch (err: any) {
-        logger.warn({ error: err.message }, 'Failed to fetch pending orders');
+        logger.warn({ error: err.message }, 'Failed to fetch pending SELL orders');
       }
 
-      // Fetch recent order history (includes COMPLETED, CANCELLED)
+      // Fetch recent SELL order history (includes COMPLETED, CANCELLED)
       let recentOrders: any[] = [];
       try {
         recentOrders = await client.listOrderHistory({
@@ -368,12 +368,34 @@ export class WebhookReceiver extends EventEmitter {
           rows: 50,
         });
       } catch (err: any) {
-        logger.warn({ error: err.message }, 'Failed to fetch recent orders');
+        logger.warn({ error: err.message }, 'Failed to fetch recent SELL orders');
+      }
+
+      // Fetch pending BUY orders
+      let pendingBuyOrders: any[] = [];
+      try {
+        pendingBuyOrders = await client.listOrders({
+          tradeType: 'BUY' as any,
+          rows: 50,
+        });
+      } catch (err: any) {
+        logger.warn({ error: err.message }, 'Failed to fetch pending BUY orders');
+      }
+
+      // Fetch recent BUY order history
+      let recentBuyOrders: any[] = [];
+      try {
+        recentBuyOrders = await client.listOrderHistory({
+          tradeType: 'BUY' as any,
+          rows: 50,
+        });
+      } catch (err: any) {
+        logger.warn({ error: err.message }, 'Failed to fetch recent BUY orders');
       }
 
       // Combine and deduplicate
       const allOrders = new Map<string, any>();
-      for (const order of [...pendingOrders, ...recentOrders]) {
+      for (const order of [...pendingOrders, ...recentOrders, ...pendingBuyOrders, ...recentBuyOrders]) {
         allOrders.set(order.orderNumber, order);
       }
 

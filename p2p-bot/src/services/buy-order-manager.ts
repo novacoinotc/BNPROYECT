@@ -60,7 +60,7 @@ export class BuyOrderManager extends EventEmitter {
     this.client = getBinanceClient();
     this.config = {
       pollIntervalMs: parseInt(process.env.AUTO_BUY_POLL_INTERVAL_MS || '5000'),
-      maxAmount: parseFloat(process.env.AUTO_BUY_MAX_AMOUNT || '25000'),
+      maxAmount: parseFloat(process.env.AUTO_BUY_MAX_AMOUNT || '120000'),
       novacoreUrl: process.env.AUTO_BUY_NOVACORE_URL || '',
       novacoreApiKey: process.env.AUTO_BUY_NOVACORE_API_KEY || '',
       conceptPrefix: process.env.AUTO_BUY_CONCEPT_PREFIX || 'P2P',
