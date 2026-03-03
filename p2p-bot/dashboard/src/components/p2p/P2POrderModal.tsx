@@ -44,9 +44,9 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
   ];
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop flex items-end sm:items-center justify-center" onClick={onClose}>
       <div
-        className="fixed inset-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-w-lg sm:w-full sm:max-h-[90vh] sm:rounded-2xl bg-[#0d1421] flex flex-col overflow-hidden sm:border sm:border-[#1e2a3e]"
+        className="w-full max-h-[85vh] mx-2 mb-2 sm:mx-auto sm:mb-0 sm:max-w-lg rounded-2xl bg-[#0d1421] flex flex-col overflow-hidden border border-[#1e2a3e] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

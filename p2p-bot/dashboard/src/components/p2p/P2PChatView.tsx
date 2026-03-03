@@ -24,7 +24,17 @@ export const chatQueryOptions = (orderNumber: string) => ({
 export function P2PChatView({ orderNumber }: P2PChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: messages = [], isLoading, error } = useQuery(chatQueryOptions(orderNumber));
+  const { data: rawMessages = [], isLoading, error } = useQuery(chatQueryOptions(orderNumber));
+
+  // Filter out Binance system messages (raw JSON like {"type":"c2c_extend_pay_time_..."})
+  const messages = rawMessages.filter((msg) => {
+    const text = msg.content?.trim();
+    if (!text) return false;
+    if (text.startsWith('{') && text.endsWith('}')) {
+      try { const obj = JSON.parse(text); return !obj.type; } catch { return true; }
+    }
+    return true;
+  });
 
   // Auto-scroll to bottom when messages load
   useEffect(() => {
