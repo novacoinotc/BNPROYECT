@@ -264,3 +264,39 @@ select {
 .modal-backdrop {
   @apply fixed inset-0 bg-black/60 backdrop-blur-sm z-50;
 }
+
+/* P2P Dashboard styles */
+.p2p-card {
+  @apply bg-[#151d2e] rounded-xl border border-[#1e2a3e] transition-all duration-200;
+}
+
+.p2p-card:hover {
+  @apply border-[#2a3a52];
+}
+
+.p2p-modal-actions {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.75rem);
+}
+
+.p2p-template {
+  min-height: 44px;
+}
+
+/* Copy flash animation */
+@keyframes copy-flash {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.copy-flash {
+  animation: copy-flash 0.3s ease-out;
+}
