@@ -274,6 +274,12 @@ select {
   @apply border-[#2a3a52];
 }
 
+@media (max-width: 640px) {
+  .p2p-card {
+    @apply rounded-lg;
+  }
+}
+
 .p2p-modal-actions {
   padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.75rem);
 }

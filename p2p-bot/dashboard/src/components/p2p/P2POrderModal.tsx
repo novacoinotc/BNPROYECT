@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { P2POrder, getDescriptiveStatus, formatPrice, copyToClipboard, stepEmojis, VerificationStep } from '@/lib/order-utils';
-import { P2PChatView } from './P2PChatView';
+import { P2PChatView, chatQueryOptions } from './P2PChatView';
 import { P2PTemplateMessages } from './P2PTemplateMessages';
 
 type ModalTab = 'chat' | 'verificacion' | 'mensajes';
@@ -11,15 +12,22 @@ interface P2POrderModalProps {
   order: P2POrder;
   onClose: () => void;
   onRelease: (orderNumber: string) => void;
+  onReleaseAndVIP: (orderNumber: string) => void;
   onRefresh: () => void;
 }
 
-export function P2POrderModal({ order, onClose, onRelease, onRefresh }: P2POrderModalProps) {
+export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRefresh }: P2POrderModalProps) {
   const [activeTab, setActiveTab] = useState<ModalTab>('chat');
   const [orderCopied, setOrderCopied] = useState(false);
+  const queryClient = useQueryClient();
   const descriptive = getDescriptiveStatus(order);
   const isSell = order.tradeType === 'SELL';
   const canRelease = ['PAID', 'PENDING'].includes(order.status);
+
+  // Prefetch chat on modal mount
+  useEffect(() => {
+    queryClient.prefetchQuery(chatQueryOptions(order.orderNumber));
+  }, [queryClient, order.orderNumber]);
 
   const handleCopyOrderNumber = async () => {
     const ok = await copyToClipboard(order.orderNumber);
@@ -56,23 +64,9 @@ export function P2POrderModal({ order, onClose, onRelease, onRefresh }: P2POrder
               }`}>
                 {order.tradeType}
               </span>
-              <button
-                onClick={handleCopyOrderNumber}
-                className={`flex items-center gap-1 font-mono text-xs transition-colors ${
-                  orderCopied ? 'text-emerald-400' : 'text-gray-400 hover:text-white'
-                }`}
-              >
+              <span className="font-mono text-xs text-gray-400">
                 #{order.orderNumber.slice(-8)}
-                {orderCopied ? (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                )}
-              </button>
+              </span>
             </div>
             <span className={`px-2 py-1 rounded text-xs font-medium ${descriptive.color}`}>
               {descriptive.emoji} {descriptive.label}
@@ -190,43 +184,52 @@ export function P2POrderModal({ order, onClose, onRelease, onRefresh }: P2POrder
 
         {/* Sticky bottom actions */}
         <div className="shrink-0 px-4 py-3 border-t border-[#1e2a3e] bg-[#0d1421] p2p-modal-actions">
-          <div className="flex gap-3">
-            <button
-              onClick={handleCopyOrderNumber}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium transition-all text-sm ${
-                orderCopied
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                  : 'bg-[#1e2a3e] text-gray-300 hover:bg-[#2a3a52]'
-              }`}
-            >
-              {orderCopied ? (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Copiado
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  Copiar # orden
-                </>
-              )}
-            </button>
-            {canRelease && (
+          {/* Dual release buttons */}
+          {canRelease && (
+            <div className="flex gap-2 mb-2">
+              <button
+                onClick={() => onReleaseAndVIP(order.orderNumber)}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl font-medium transition-all text-sm bg-gradient-to-r from-emerald-600 to-amber-600 text-white hover:from-emerald-700 hover:to-amber-700"
+              >
+                <span>&#11088;</span>
+                Liberar+VIP
+              </button>
               <button
                 onClick={() => onRelease(order.orderNumber)}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition font-medium text-sm"
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition font-medium text-sm"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
-                Liberar Crypto
+                Liberar
               </button>
+            </div>
+          )}
+          {/* Copy order button (secondary) */}
+          <button
+            onClick={handleCopyOrderNumber}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium transition-all text-xs ${
+              orderCopied
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'bg-[#1e2a3e] text-gray-400 hover:bg-[#2a3a52]'
+            }`}
+          >
+            {orderCopied ? (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Copiado
+              </>
+            ) : (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copiar # orden
+              </>
             )}
-          </div>
+          </button>
           {/* Safe area */}
           <div className="h-[env(safe-area-inset-bottom)]" />
         </div>

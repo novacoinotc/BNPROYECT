@@ -1,38 +1,30 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ChatMessage } from '@/lib/order-utils';
 
 interface P2PChatViewProps {
   orderNumber: string;
 }
 
+async function fetchChat(orderNumber: string): Promise<ChatMessage[]> {
+  const response = await fetch(`/api/chat/${orderNumber}`);
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || 'Error al cargar chat');
+  return data.messages || [];
+}
+
+export const chatQueryOptions = (orderNumber: string) => ({
+  queryKey: ['p2p-chat', orderNumber] as const,
+  queryFn: () => fetchChat(orderNumber),
+  staleTime: 60_000,
+});
+
 export function P2PChatView({ orderNumber }: P2PChatViewProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    async function fetchChat() {
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await fetch(`/api/chat/${orderNumber}`);
-        const data = await response.json();
-        if (data.success) {
-          setMessages(data.messages || []);
-        } else {
-          setError(data.error || 'Error al cargar chat');
-        }
-      } catch (err: any) {
-        setError(err.message || 'Error de conexion');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchChat();
-  }, [orderNumber]);
+  const { data: messages = [], isLoading, error } = useQuery(chatQueryOptions(orderNumber));
 
   // Auto-scroll to bottom when messages load
   useEffect(() => {
@@ -41,7 +33,7 @@ export function P2PChatView({ orderNumber }: P2PChatViewProps) {
     }
   }, [messages]);
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="flex items-center gap-2 text-gray-400">
@@ -55,7 +47,7 @@ export function P2PChatView({ orderNumber }: P2PChatViewProps) {
   if (error) {
     return (
       <div className="p-4 text-center">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-red-400">{(error as Error).message}</p>
       </div>
     );
   }

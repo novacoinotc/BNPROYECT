@@ -17,6 +17,7 @@ export default function P2PPage() {
   const [pendingNewOrders, setPendingNewOrders] = useState<P2POrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<P2POrder | null>(null);
   const [releaseOrderNumber, setReleaseOrderNumber] = useState<string | null>(null);
+  const [pendingVIP, setPendingVIP] = useState<{ orderNumber: string; buyerNickName: string; buyerUserNo: string; realName: string | null } | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
   const isInitialLoad = useRef(true);
 
@@ -140,7 +141,39 @@ export default function P2PPage() {
     setReleaseOrderNumber(orderNumber);
   };
 
-  const handleReleaseSuccess = () => {
+  const handleReleaseAndVIP = (orderNumber: string) => {
+    const order = displayedOrders.find(o => o.orderNumber === orderNumber);
+    if (order) {
+      setPendingVIP({
+        orderNumber,
+        buyerNickName: order.buyerNickName,
+        buyerUserNo: order.buyerUserNo,
+        realName: order.buyerRealName,
+      });
+    }
+    setReleaseOrderNumber(orderNumber);
+  };
+
+  const handleReleaseSuccess = async () => {
+    // If this was a release+VIP, mark buyer as trusted
+    if (pendingVIP) {
+      try {
+        await fetch('/api/trusted-buyers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            counterPartNickName: pendingVIP.buyerNickName,
+            buyerUserNo: pendingVIP.buyerUserNo,
+            realName: pendingVIP.realName,
+            verifiedBy: 'P2P Dashboard',
+            notes: `Marcado VIP al liberar orden ${pendingVIP.orderNumber}`,
+          }),
+        });
+      } catch {
+        // VIP marking is best-effort, don't block the release flow
+      }
+      setPendingVIP(null);
+    }
     refetch();
     setReleaseOrderNumber(null);
   };
@@ -167,7 +200,7 @@ export default function P2PPage() {
       <P2PNewOrdersBanner count={pendingNewOrders.length} onShow={handleShowNewOrders} />
 
       {/* Order cards list */}
-      <div className="px-3 space-y-2 mt-2">
+      <div className="px-2 space-y-1 mt-1">
         {filteredOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-500">
             <svg className="w-12 h-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,6 +227,7 @@ export default function P2PPage() {
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
           onRelease={handleRelease}
+          onReleaseAndVIP={handleReleaseAndVIP}
           onRefresh={() => refetch()}
         />
       )}
