@@ -88,8 +88,22 @@ async function getOrderFromBinance(orderNumber: string): Promise<{ success: bool
 }
 
 // Map Binance status to our status
-function mapBinanceStatus(binanceStatus: string): string {
-  const statusMap: Record<string, string> = {
+// Binance API returns NUMERIC codes from order detail endpoint,
+// but string values from list endpoints. Handle both.
+function mapBinanceStatus(binanceStatus: string | number): string {
+  // Numeric status codes from Binance API
+  const numericMap: Record<number, string> = {
+    1: 'PENDING',       // TRADING
+    2: 'PAID',          // BUYER_PAYED
+    3: 'APPEALING',
+    4: 'COMPLETED',
+    5: 'CANCELLED_SYSTEM', // CANCELLED_BY_SYSTEM
+    6: 'CANCELLED',
+    7: 'CANCELLED_SYSTEM',
+  };
+
+  // String status names
+  const stringMap: Record<string, string> = {
     'TRADING': 'PENDING',
     'BUYER_PAYED': 'PAID',
     'COMPLETED': 'COMPLETED',
@@ -97,7 +111,19 @@ function mapBinanceStatus(binanceStatus: string): string {
     'CANCELLED_BY_SYSTEM': 'CANCELLED_SYSTEM',
     'APPEALING': 'APPEALING',
   };
-  return statusMap[binanceStatus] || binanceStatus;
+
+  // Handle numeric (Binance returns numbers from detail endpoint)
+  if (typeof binanceStatus === 'number') {
+    return numericMap[binanceStatus] || 'PENDING';
+  }
+
+  // Handle string-number like "4"
+  const asNum = parseInt(binanceStatus, 10);
+  if (!isNaN(asNum) && numericMap[asNum]) {
+    return numericMap[asNum];
+  }
+
+  return stringMap[binanceStatus] || binanceStatus;
 }
 
 export async function POST(request: NextRequest) {
