@@ -234,7 +234,7 @@ export class OrderManager extends EventEmitter {
       // Get pending orders using the working endpoint
       let pendingOrders: OrderData[] = [];
       try {
-        pendingOrders = await this.client.listPendingOrders(20);
+        pendingOrders = await this.client.listPendingOrders(50);
       } catch (pendingError) {
         logger.error({ error: pendingError }, 'Failed to get pending orders from Binance');
       }
@@ -244,7 +244,7 @@ export class OrderManager extends EventEmitter {
       try {
         recentOrders = await this.client.listOrderHistory({
           tradeType: TradeType.SELL,
-          rows: 20,
+          rows: 50,
         });
       } catch (recentError) {
         logger.error({ error: recentError }, 'Failed to get recent orders from Binance');
