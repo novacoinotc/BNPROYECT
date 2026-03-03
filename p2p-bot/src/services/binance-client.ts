@@ -587,12 +587,12 @@ export class BinanceC2CClient {
    * Uses POST /sapi/v1/c2c/orderMatch/listOrders with explicit status filter
    * to ensure we get TRADING (1), BUYER_PAYED (2), and APPEALING (3) orders
    */
-  async listPendingOrders(rows: number = 20): Promise<OrderData[]> {
+  async listPendingOrders(rows: number = 20, tradeType: 'SELL' | 'BUY' = 'SELL'): Promise<OrderData[]> {
     // Use POST with explicit status filter to get all pending statuses
     // GET /pendingOrders might only return TRADING orders
     try {
       const body = {
-        tradeType: 'SELL',
+        tradeType,
         rows,
         page: 1,
         orderStatusList: [1, 2, 3], // TRADING, BUYER_PAYED, APPEALING
@@ -612,24 +612,24 @@ export class BinanceC2CClient {
         for (const order of orders) {
           statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
         }
-        logger.debug({ count: orders.length, statusCounts }, '[PENDING ORDERS] Fetched');
+        logger.debug({ count: orders.length, tradeType, statusCounts }, '[PENDING ORDERS] Fetched');
       }
 
       return orders;
     } catch (error: any) {
-      logger.error({ error: error?.message }, 'listPendingOrders: POST failed');
+      logger.error({ error: error?.message, tradeType }, 'listPendingOrders: POST failed');
     }
 
     // Fallback to GET /pendingOrders
     try {
       const response = await this.signedGet<{ data: OrderData[] }>(
         '/sapi/v1/c2c/orderMatch/pendingOrders',
-        { tradeType: 'SELL', rows, page: 1 }
+        { tradeType, rows, page: 1 }
       );
       const orders = (response as any)?.data || response || [];
       return normalizeOrders(orders);
     } catch (error: any) {
-      logger.error({ error: error?.message }, 'listPendingOrders: All methods failed');
+      logger.error({ error: error?.message, tradeType }, 'listPendingOrders: All methods failed');
       return [];
     }
   }

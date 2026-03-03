@@ -371,13 +371,10 @@ export class WebhookReceiver extends EventEmitter {
         logger.warn({ error: err.message }, 'Failed to fetch recent SELL orders');
       }
 
-      // Fetch pending BUY orders
+      // Fetch pending BUY orders (with explicit orderStatusList: [1,2,3])
       let pendingBuyOrders: any[] = [];
       try {
-        pendingBuyOrders = await client.listOrders({
-          tradeType: 'BUY' as any,
-          rows: 50,
-        });
+        pendingBuyOrders = await client.listPendingOrders(50, 'BUY');
       } catch (err: any) {
         logger.warn({ error: err.message }, 'Failed to fetch pending BUY orders');
       }
