@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { P2POrder } from '@/lib/order-utils';
+import { P2POrder, getManualReviewReason } from '@/lib/order-utils';
 import { P2PFilterTabs } from '@/components/p2p/P2PFilterTabs';
 import { P2POrderCard } from '@/components/p2p/P2POrderCard';
 import { P2PNewOrdersBanner } from '@/components/p2p/P2PNewOrdersBanner';
@@ -133,6 +133,47 @@ export default function P2PPage() {
     buy: displayedOrders.filter(o => o.tradeType === 'BUY').length,
   };
 
+  // Classify orders into sections
+  const terminalStatuses = ['COMPLETED', 'CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT', 'APPEALING'];
+
+  const sellManual = filteredOrders.filter(o =>
+    o.tradeType === 'SELL' &&
+    (o.verificationStatus === 'MANUAL_REVIEW' || o.verificationStatus === 'NAME_MISMATCH') &&
+    !terminalStatuses.includes(o.status)
+  );
+  const sellProcess = filteredOrders.filter(o =>
+    o.tradeType === 'SELL' && !sellManual.includes(o)
+  );
+  const buyUnpaid = filteredOrders.filter(o =>
+    o.tradeType === 'BUY' && o.status === 'PENDING'
+  );
+  const buyPaid = filteredOrders.filter(o =>
+    o.tradeType === 'BUY' && o.status !== 'PENDING'
+  );
+
+  // Build sections based on active tab
+  type Section = { title: string; orders: P2POrder[]; showReasonTag?: boolean };
+  let sections: Section[] = [];
+
+  if (filter === 'SELL') {
+    sections = [
+      { title: '⚠️ Intervención manual', orders: sellManual, showReasonTag: true },
+      { title: '✅ En proceso', orders: sellProcess },
+    ];
+  } else if (filter === 'BUY') {
+    sections = [
+      { title: '⏳ Sin pagar', orders: buyUnpaid },
+      { title: '✅ Pagadas', orders: buyPaid },
+    ];
+  } else {
+    sections = [
+      { title: '⚠️ Intervención manual', orders: sellManual, showReasonTag: true },
+      { title: '⏳ Sin pagar', orders: buyUnpaid },
+      { title: '✅ En proceso', orders: sellProcess },
+      { title: '✅ Pagadas', orders: buyPaid },
+    ];
+  }
+
   const handleOrderTap = (order: P2POrder) => {
     setSelectedOrder(order);
   };
@@ -198,7 +239,7 @@ export default function P2PPage() {
       <P2PNewOrdersBanner count={pendingNewOrders.length} onShow={handleShowNewOrders} />
 
       {/* Order cards list */}
-      <div className="px-2 space-y-1 mt-1">
+      <div className="px-2 mt-1">
         {filteredOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-500">
             <svg className="w-12 h-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -209,13 +250,26 @@ export default function P2PPage() {
             </p>
           </div>
         ) : (
-          filteredOrders.map((order) => (
-            <P2POrderCard
-              key={order.orderNumber}
-              order={order}
-              onTap={handleOrderTap}
-            />
-          ))
+          sections.map((section) =>
+            section.orders.length > 0 && (
+              <div key={section.title} className="mb-2">
+                <div className="flex items-center gap-2 px-1 pt-2 pb-1">
+                  <span className="text-xs font-medium text-gray-400">{section.title}</span>
+                  <span className="text-[10px] text-gray-600 bg-gray-800/50 px-1.5 py-0.5 rounded-full">{section.orders.length}</span>
+                </div>
+                <div className="space-y-1">
+                  {section.orders.map((order) => (
+                    <P2POrderCard
+                      key={order.orderNumber}
+                      order={order}
+                      onTap={handleOrderTap}
+                      reasonTag={section.showReasonTag ? getManualReviewReason(order) : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          )
         )}
       </div>
 

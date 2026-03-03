@@ -5,9 +5,10 @@ import { P2POrder, getDescriptiveStatus, formatOrderTime, formatPrice } from '@/
 interface P2POrderCardProps {
   order: P2POrder;
   onTap: (order: P2POrder) => void;
+  reasonTag?: { tag: string; emoji: string } | null;
 }
 
-export function P2POrderCard({ order, onTap }: P2POrderCardProps) {
+export function P2POrderCard({ order, onTap, reasonTag }: P2POrderCardProps) {
   const descriptive = getDescriptiveStatus(order);
   const isSell = order.tradeType === 'SELL';
 
@@ -35,11 +36,16 @@ export function P2POrderCard({ order, onTap }: P2POrderCardProps) {
         </span>
       </div>
 
-      {/* Row 2: Status */}
-      <div className="mt-1">
+      {/* Row 2: Status + reason tag */}
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
         <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${descriptive.color}`}>
           {descriptive.emoji} {descriptive.label}
         </span>
+        {reasonTag && (
+          <span className="text-[10px] text-orange-400/80">
+            · {reasonTag.emoji} {reasonTag.tag}
+          </span>
+        )}
       </div>
     </div>
   );

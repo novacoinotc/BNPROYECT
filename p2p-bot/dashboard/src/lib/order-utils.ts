@@ -160,6 +160,40 @@ export function getDescriptiveStatus(order: P2POrder): { emoji: string; label: s
   return { emoji: '\uD83D\uDCCB', label: verificationStatus || binanceStatus, color: 'bg-gray-500/20 text-gray-400', description: 'Estado desconocido' };
 }
 
+export function getManualReviewReason(order: P2POrder): { tag: string; emoji: string } | null {
+  if (order.verificationStatus !== 'MANUAL_REVIEW' && order.verificationStatus !== 'NAME_MISMATCH') {
+    return null;
+  }
+
+  if (!order.verificationTimeline || order.verificationTimeline.length === 0) {
+    return { tag: 'Revisión manual', emoji: '🔍' };
+  }
+
+  // Find the last MANUAL_REVIEW step in the timeline
+  const manualSteps = order.verificationTimeline.filter(s => s.status === 'MANUAL_REVIEW');
+  const lastManualStep = manualSteps[manualSteps.length - 1];
+
+  if (!lastManualStep?.details) {
+    return { tag: 'Revisión manual', emoji: '🔍' };
+  }
+
+  const d = lastManualStep.details;
+
+  if (d.reason === 'exceeds_limit') {
+    return { tag: 'Supera límite', emoji: '💰' };
+  }
+
+  if (d.nameVerified === false || order.verificationStatus === 'NAME_MISMATCH') {
+    return { tag: 'Posible tercero', emoji: '👤' };
+  }
+
+  if (d.failedCriteria || d.recommendation === 'MANUAL_VERIFICATION') {
+    return { tag: 'Poco historial', emoji: '⚠️' };
+  }
+
+  return { tag: 'Revisión manual', emoji: '🔍' };
+}
+
 export function formatOrderTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
