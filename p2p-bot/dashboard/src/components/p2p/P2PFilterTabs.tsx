@@ -22,7 +22,7 @@ export function P2PFilterTabs({ active, onChange, counts }: P2PFilterTabsProps) 
   };
 
   return (
-    <div className="flex gap-2 p-3">
+    <div className="flex gap-1.5 px-3 pb-2">
       {tabs.map((tab) => {
         const isActive = active === tab.key;
         const count = countMap[tab.key];
@@ -30,13 +30,13 @@ export function P2PFilterTabs({ active, onChange, counts }: P2PFilterTabsProps) 
           <button
             key={tab.key}
             onClick={() => onChange(tab.key)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
               isActive ? tab.activeClass : 'text-gray-500 hover:text-gray-300'
             }`}
           >
             {tab.label}
             {count > 0 && (
-              <span className={`ml-1.5 text-xs ${isActive ? 'opacity-80' : 'opacity-60'}`}>
+              <span className={`ml-1 text-[10px] ${isActive ? 'opacity-80' : 'opacity-60'}`}>
                 {count}
               </span>
             )}

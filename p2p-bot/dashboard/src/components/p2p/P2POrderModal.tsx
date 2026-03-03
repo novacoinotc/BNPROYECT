@@ -50,49 +50,49 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="shrink-0 px-4 pt-4 pb-3 border-b border-[#1e2a3e]">
+        <div className="shrink-0 px-3 pt-3 pb-2 border-b border-[#1e2a3e]">
           {/* Top row: close + trade badge + order# */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button onClick={onClose} className="p-1 -ml-1 text-gray-400 hover:text-white transition">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-center gap-1.5">
+              <button onClick={onClose} className="p-0.5 -ml-0.5 text-gray-400 hover:text-white transition">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-              <span className={`px-2 py-0.5 rounded-md text-xs font-bold uppercase ${
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
                 isSell ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
               }`}>
                 {order.tradeType}
               </span>
-              <span className="font-mono text-xs text-gray-400">
+              <span className="font-mono text-[11px] text-gray-400">
                 #{order.orderNumber.slice(-8)}
               </span>
             </div>
-            <span className={`px-2 py-1 rounded text-xs font-medium ${descriptive.color}`}>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${descriptive.color}`}>
               {descriptive.emoji} {descriptive.label}
             </span>
           </div>
 
-          {/* Order details grid */}
-          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+          {/* Order details — compact 2-column */}
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <div>
-              <span className="text-gray-500 text-xs">Comprador</span>
-              <p className="text-white truncate">
-                {order.isTrustedBuyer && <span className="mr-1">&#11088;</span>}
+              <span className="text-gray-500 text-[10px]">Comprador</span>
+              <p className="text-white truncate text-sm">
+                {order.isTrustedBuyer && <span className="mr-0.5">&#11088;</span>}
                 {order.buyerNickName}
               </p>
             </div>
             <div className="text-right">
-              <span className="text-gray-500 text-xs">Total</span>
-              <p className="text-white font-semibold">{formatPrice(order.totalPrice)} <span className="text-xs text-gray-500 font-normal">{order.fiatUnit || 'MXN'}</span></p>
+              <span className="text-gray-500 text-[10px]">Total</span>
+              <p className="text-white font-semibold text-sm">{formatPrice(order.totalPrice)} <span className="text-[10px] text-gray-500 font-normal">{order.fiatUnit || 'MXN'}</span></p>
             </div>
             <div>
-              <span className="text-gray-500 text-xs">Crypto</span>
-              <p className="text-white">{parseFloat(order.amount).toFixed(4)} {order.asset}</p>
+              <span className="text-gray-500 text-[10px]">Crypto</span>
+              <p className="text-white text-sm">{parseFloat(order.amount).toFixed(4)} {order.asset}</p>
             </div>
             <div className="text-right">
-              <span className="text-gray-500 text-xs">Precio</span>
-              <p className="text-white">{formatPrice(order.unitPrice)}</p>
+              <span className="text-gray-500 text-[10px]">Precio</span>
+              <p className="text-white text-sm">{formatPrice(order.unitPrice)}</p>
             </div>
           </div>
         </div>
@@ -103,7 +103,7 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-all ${
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-all ${
                 activeTab === tab.key
                   ? 'text-primary-400 border-b-2 border-primary-400'
                   : 'text-gray-500 hover:text-gray-300'
@@ -115,7 +115,7 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto p-4 scroll-touch">
+        <div className="flex-1 overflow-y-auto p-3 scroll-touch">
           {activeTab === 'chat' && (
             <P2PChatView orderNumber={order.orderNumber} />
           )}
@@ -183,22 +183,22 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
         </div>
 
         {/* Sticky bottom actions */}
-        <div className="shrink-0 px-4 py-3 border-t border-[#1e2a3e] bg-[#0d1421] p2p-modal-actions">
+        <div className="shrink-0 px-3 py-2 border-t border-[#1e2a3e] bg-[#0d1421] p2p-modal-actions">
           {/* Dual release buttons */}
           {canRelease && (
-            <div className="flex gap-2 mb-2">
+            <div className="flex gap-2 mb-1.5">
               <button
                 onClick={() => onReleaseAndVIP(order.orderNumber)}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl font-medium transition-all text-sm bg-gradient-to-r from-emerald-600 to-amber-600 text-white hover:from-emerald-700 hover:to-amber-700"
+                className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-lg font-medium transition-all text-xs bg-gradient-to-r from-emerald-600 to-amber-600 text-white hover:from-emerald-700 hover:to-amber-700"
               >
                 <span>&#11088;</span>
                 Liberar+VIP
               </button>
               <button
                 onClick={() => onRelease(order.orderNumber)}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition font-medium text-sm"
+                className="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition font-medium text-xs"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
                 Liberar
@@ -208,7 +208,7 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
           {/* Copy order button (secondary) */}
           <button
             onClick={handleCopyOrderNumber}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium transition-all text-xs ${
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all text-[11px] ${
               orderCopied
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : 'bg-[#1e2a3e] text-gray-400 hover:bg-[#2a3a52]'

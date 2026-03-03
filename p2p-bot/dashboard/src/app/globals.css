@@ -227,11 +227,10 @@ body {
   }
 }
 
-/* Touch-friendly tap targets */
+/* Touch-friendly tap targets — only for primary action buttons */
 @media (pointer: coarse) {
-  button, a {
+  .btn-primary, .btn-secondary, .btn-outline, .bottom-nav-item {
     min-height: 44px;
-    min-width: 44px;
   }
 
   .btn-outline {

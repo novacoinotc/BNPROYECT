@@ -179,18 +179,16 @@ export default function P2PPage() {
   };
 
   return (
-    <div className="min-h-screen pb-20 safe-area-bottom">
+    <div className="-mx-4 -mt-6 min-h-screen pb-20 safe-area-bottom">
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-[#0d1421]/95 backdrop-blur-xl border-b border-[#1e2a3e]">
-        <div className="px-4 pt-4 pb-2">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-white">P2P Ordenes</h1>
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-green-500' : 'bg-gray-500'}`} />
-              <span className="text-xs text-gray-500">
-                {sseConnected ? 'Tiempo real' : 'Conectando...'}
-              </span>
-            </div>
+      <div className="sticky top-14 z-40 bg-[#0d1421]/95 backdrop-blur-xl border-b border-[#1e2a3e]">
+        <div className="flex items-center justify-between px-3 pt-2 pb-1">
+          <h1 className="text-base font-bold text-white">P2P Ordenes</h1>
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? 'bg-green-500' : 'bg-gray-500'}`} />
+            <span className="text-[10px] text-gray-500">
+              {sseConnected ? 'En vivo' : 'Conectando...'}
+            </span>
           </div>
         </div>
         <P2PFilterTabs active={filter} onChange={setFilter} counts={counts} />
