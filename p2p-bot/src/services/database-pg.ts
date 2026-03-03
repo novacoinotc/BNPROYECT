@@ -295,6 +295,32 @@ export async function getRecentOrders(limit: number = 50) {
   return result.rows;
 }
 
+/**
+ * Get stale orders: orders stuck in PENDING/PAID status for longer than the given minutes.
+ * These may have been completed/cancelled on Binance but the bot missed the status update.
+ */
+export async function getStaleOrders(olderThanMinutes: number = 30, limit: number = 20): Promise<Array<{ orderNumber: string; status: string; binanceCreateTime: Date }>> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const merchantFilter = merchantId ? 'AND "merchantId" = $3' : '';
+  const params = merchantId
+    ? [olderThanMinutes, limit, merchantId]
+    : [olderThanMinutes, limit];
+
+  const result = await db.query(
+    `SELECT "orderNumber", status, "binanceCreateTime"
+     FROM "Order"
+     WHERE status IN ('PENDING', 'PAID')
+       AND dismissed = false
+       AND "binanceCreateTime" < NOW() - ($1 || ' minutes')::interval
+       ${merchantFilter}
+     ORDER BY "binanceCreateTime" ASC
+     LIMIT $2`,
+    params
+  );
+  return result.rows;
+}
+
 // ==================== PAYMENT OPERATIONS ====================
 
 export async function savePayment(payment: BankWebhookPayload): Promise<string> {

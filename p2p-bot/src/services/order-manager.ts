@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { orderLogger as logger } from '../utils/logger.js';
-import { saveOrder } from './database-pg.js';
+import { saveOrder, getStaleOrders } from './database-pg.js';
 import {
   OrderData,
   OrderStatus,
@@ -37,8 +37,10 @@ export class OrderManager extends EventEmitter {
   private activeOrders: Map<string, OrderData> = new Map();
   private pendingMatches: Map<string, OrderMatch> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
+  private staleCheckInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private isPolling: boolean = false; // Guard against concurrent polling
+  private isCheckingStale: boolean = false;
 
   constructor(config: OrderManagerConfig) {
     super();
@@ -73,6 +75,15 @@ export class OrderManager extends EventEmitter {
       () => this.pollOrders(),
       this.config.pollIntervalMs
     );
+
+    // Schedule stale order checker every 60 seconds
+    // This catches orders stuck in PENDING/PAID that Binance already completed/cancelled
+    this.staleCheckInterval = setInterval(
+      () => this.checkStaleOrders(),
+      60_000
+    );
+    // Run first stale check after 15s to let initial sync finish
+    setTimeout(() => this.checkStaleOrders(), 15_000);
   }
 
   /**
@@ -199,6 +210,10 @@ export class OrderManager extends EventEmitter {
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
+    }
+    if (this.staleCheckInterval) {
+      clearInterval(this.staleCheckInterval);
+      this.staleCheckInterval = null;
     }
     this.isRunning = false;
     logger.info('Order manager stopped');
@@ -561,6 +576,82 @@ export class OrderManager extends EventEmitter {
           logger.error({ orderNumber, error }, 'Failed to cancel expired order');
         }
       }
+    }
+  }
+
+  // ==================== STALE ORDER CHECKER ====================
+
+  /**
+   * Check for stale orders in the DB that are still PENDING/PAID but may have been
+   * completed/cancelled on Binance. This catches orders that the regular polling missed
+   * (e.g., due to bot restart, limited history rows, or high order volume).
+   *
+   * Runs every 60 seconds, checks orders older than 30 minutes.
+   */
+  private async checkStaleOrders(): Promise<void> {
+    if (this.isCheckingStale) return;
+    this.isCheckingStale = true;
+
+    try {
+      const staleOrders = await getStaleOrders(30, 10);
+
+      if (staleOrders.length === 0) {
+        return;
+      }
+
+      logger.info({ count: staleOrders.length }, 'Checking stale orders against Binance');
+
+      let updatedCount = 0;
+
+      for (const staleOrder of staleOrders) {
+        try {
+          const detail = await this.client.getOrderDetail(staleOrder.orderNumber);
+          const binanceStatus = detail.orderStatus;
+
+          // Check if Binance has a different (terminal) status
+          if (binanceStatus !== 'TRADING' && binanceStatus !== 'BUYER_PAYED') {
+            logger.info({
+              orderNumber: staleOrder.orderNumber,
+              dbStatus: staleOrder.status,
+              binanceStatus,
+            }, 'Stale order status changed on Binance - updating');
+
+            // Build a minimal OrderData to pass to saveOrder
+            await saveOrder({
+              ...detail,
+              orderNumber: staleOrder.orderNumber,
+              orderStatus: binanceStatus,
+            } as any);
+
+            // Remove from active tracking if present
+            this.activeOrders.delete(staleOrder.orderNumber);
+            this.pendingMatches.delete(staleOrder.orderNumber);
+
+            // Emit appropriate event
+            if (binanceStatus === 'COMPLETED') {
+              this.emit('order', { type: 'released', order: detail } as any);
+            } else if (['CANCELLED', 'CANCELLED_BY_SYSTEM'].includes(binanceStatus)) {
+              this.emit('order', { type: 'cancelled', order: detail } as any);
+            }
+
+            updatedCount++;
+          }
+
+          // Small delay to avoid hammering Binance API
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (err: any) {
+          // Order might not exist on Binance anymore (very old)
+          logger.debug({ orderNumber: staleOrder.orderNumber, error: err?.message }, 'Could not check stale order');
+        }
+      }
+
+      if (updatedCount > 0) {
+        logger.info({ updatedCount, checked: staleOrders.length }, 'Stale orders cleanup complete');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Error checking stale orders');
+    } finally {
+      this.isCheckingStale = false;
     }
   }
 
