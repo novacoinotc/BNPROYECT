@@ -312,7 +312,7 @@ export async function getStaleOrders(olderThanMinutes: number = 30, limit: numbe
      FROM "Order"
      WHERE status IN ('PENDING', 'PAID')
        AND dismissed = false
-       AND "binanceCreateTime" < NOW() - ($1 || ' minutes')::interval
+       AND "binanceCreateTime" < NOW() - make_interval(mins => $1::int)
        ${merchantFilter}
      ORDER BY "binanceCreateTime" ASC
      LIMIT $2`,

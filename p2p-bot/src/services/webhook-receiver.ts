@@ -543,13 +543,56 @@ export class WebhookReceiver extends EventEmitter {
         statusCounts[order.orderStatus] = (statusCounts[order.orderStatus] || 0) + 1;
       }
 
+      // === STALE ORDER CHECK ===
+      // Orders stuck as PENDING/PAID in DB that didn't appear in the Binance response
+      // need to be individually checked - they may have been completed/cancelled
+      let staleUpdated = 0;
+      try {
+        const staleOrders = await db.getStaleOrders(30, 20);
+        // Filter out orders that were already in the Binance response (already updated)
+        const staleToCheck = staleOrders.filter(o => !allOrders.has(o.orderNumber));
+
+        if (staleToCheck.length > 0) {
+          logger.info({ count: staleToCheck.length }, 'Checking stale orders not in Binance response');
+
+          for (const stale of staleToCheck) {
+            try {
+              const detail = await client.getOrderDetail(stale.orderNumber);
+              const binanceStatus = detail.orderStatus;
+
+              // If Binance shows a different (terminal) status, update the DB
+              if (binanceStatus !== 'TRADING' && binanceStatus !== 'BUYER_PAYED') {
+                logger.info({
+                  orderNumber: stale.orderNumber,
+                  dbStatus: stale.status,
+                  binanceStatus,
+                }, 'Stale order resolved via sync');
+                await db.saveOrder({
+                  ...detail,
+                  orderNumber: stale.orderNumber,
+                  orderStatus: binanceStatus,
+                } as any);
+                staleUpdated++;
+              }
+              // Small delay to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (err: any) {
+              logger.debug({ orderNumber: stale.orderNumber, error: err?.message }, 'Could not check stale order');
+            }
+          }
+        }
+      } catch (staleErr: any) {
+        logger.warn({ error: staleErr?.message }, 'Stale order check failed during sync');
+      }
+
       res.json({
         success: true,
-        message: `Synced ${savedCount} orders from Binance (${verificationTriggered} verification started)`,
+        message: `Synced ${savedCount} orders from Binance (${verificationTriggered} verification started, ${staleUpdated} stale resolved)`,
         total: allOrders.size,
         saved: savedCount,
         skipped: errorCount,
         verificationTriggered,
+        staleUpdated,
         statusBreakdown: statusCounts,
         orders: savedOrders,
         source: 'railway-proxy',
