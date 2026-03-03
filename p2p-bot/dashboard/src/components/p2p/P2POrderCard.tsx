@@ -15,35 +15,37 @@ export function P2POrderCard({ order, onTap, reasonTag }: P2POrderCardProps) {
   return (
     <div
       onClick={() => onTap(order)}
-      className="p2p-card p-2 px-3 cursor-pointer active:scale-[0.98] transition-all duration-150"
+      className="p2p-card p-1.5 px-2 cursor-pointer active:scale-[0.97] transition-all duration-150"
     >
-      {/* Row 1: Badge + buyer + amount + time */}
-      <div className="flex items-center gap-1.5">
-        <span className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${
+      {/* Row 1: Badge + amount + time */}
+      <div className="flex items-center gap-1">
+        <span className={`shrink-0 w-4 h-4 flex items-center justify-center rounded text-[9px] font-bold ${
           isSell ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
         }`}>
           {isSell ? 'S' : 'B'}
         </span>
-        <span className="text-sm text-white truncate min-w-0">
-          {order.isTrustedBuyer && <span className="mr-0.5">&#11088;</span>}
-          {order.buyerNickName}
-        </span>
-        <span className="ml-auto text-sm font-semibold text-white whitespace-nowrap">
+        <span className="text-[13px] font-semibold text-white">
           {formatPrice(order.totalPrice)}
         </span>
-        <span className="text-[10px] text-gray-500 shrink-0">
+        <span className="ml-auto text-[9px] text-gray-500 shrink-0">
           {formatOrderTime(order.binanceCreateTime)}
         </span>
       </div>
 
-      {/* Row 2: Status + reason tag */}
-      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${descriptive.color}`}>
+      {/* Row 2: Buyer nickname */}
+      <div className="mt-0.5 truncate text-[11px] text-gray-400">
+        {order.isTrustedBuyer && <span className="mr-0.5">&#11088;</span>}
+        {order.buyerNickName}
+      </div>
+
+      {/* Row 3: Status + reason tag */}
+      <div className="mt-0.5 flex items-center gap-1 flex-wrap">
+        <span className={`inline-flex items-center gap-0.5 px-1 py-px rounded text-[9px] font-medium leading-tight ${descriptive.color}`}>
           {descriptive.emoji} {descriptive.label}
         </span>
         {reasonTag && (
-          <span className="text-[10px] text-orange-400/80">
-            · {reasonTag.emoji} {reasonTag.tag}
+          <span className="text-[9px] text-orange-400/80">
+            {reasonTag.emoji} {reasonTag.tag}
           </span>
         )}
       </div>

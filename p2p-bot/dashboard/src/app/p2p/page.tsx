@@ -257,7 +257,7 @@ export default function P2PPage() {
                   <span className="text-xs font-medium text-gray-400">{section.title}</span>
                   <span className="text-[10px] text-gray-600 bg-gray-800/50 px-1.5 py-0.5 rounded-full">{section.orders.length}</span>
                 </div>
-                <div className="space-y-1">
+                <div className="grid grid-cols-2 gap-1">
                   {section.orders.map((order) => (
                     <P2POrderCard
                       key={order.orderNumber}
