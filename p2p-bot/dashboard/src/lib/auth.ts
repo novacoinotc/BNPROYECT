@@ -41,8 +41,40 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
+        webauthnMerchantId: { label: 'WebAuthn Merchant ID', type: 'text' },
       },
       async authorize(credentials) {
+        // Passkey login — merchant already verified by /api/auth/webauthn
+        if (credentials?.webauthnMerchantId) {
+          try {
+            const result = await pool.query(
+              `SELECT id, name, email, "isAdmin", "isActive"
+               FROM "Merchant" WHERE id = $1`,
+              [credentials.webauthnMerchantId]
+            );
+            const user = result.rows[0];
+            if (!user || !user.isActive) {
+              throw new Error('Cuenta no encontrada o desactivada');
+            }
+
+            await pool.query(
+              `UPDATE "Merchant" SET "lastLoginAt" = NOW() WHERE id = $1`,
+              [user.id]
+            );
+
+            return {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              isAdmin: user.isAdmin,
+            };
+          } catch (error) {
+            console.error('WebAuthn auth error:', error);
+            throw error;
+          }
+        }
+
+        // Standard email + password login
         if (!credentials?.email || !credentials?.password) {
           throw new Error('Email y password son requeridos');
         }
