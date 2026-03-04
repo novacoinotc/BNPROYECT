@@ -195,6 +195,9 @@ export default function AutoSpeiPage() {
   };
 
   const retryDispatch = async (id: string) => {
+    if (!confirm('Verifica con administrador que tu pago no se haya enviado para evitar duplicados.\n\n¿Deseas continuar con el reintento?')) {
+      return;
+    }
     setActionLoading(id + '-retry');
     setError(null);
     try {
