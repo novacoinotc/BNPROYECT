@@ -161,23 +161,23 @@ export default function P2PPage() {
 
   if (filter === 'SELL') {
     sections = [
-      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
       { title: '\u26A0\uFE0F Intervención manual', orders: sellManual, showReasonTag: true },
       { title: '\u2705 En proceso', orders: sellProcess },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
     ];
   } else if (filter === 'BUY') {
     sections = [
-      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
       { title: '\u23F3 Sin pagar', orders: buyUnpaid },
       { title: '\u2705 Pagadas', orders: buyPaid },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
     ];
   } else {
     sections = [
-      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
       { title: '\u26A0\uFE0F Intervención manual', orders: sellManual, showReasonTag: true },
       { title: '\u23F3 Sin pagar', orders: buyUnpaid },
       { title: '\u2705 En proceso', orders: sellProcess },
       { title: '\u2705 Pagadas', orders: buyPaid },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
     ];
   }
 
