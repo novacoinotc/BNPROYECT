@@ -27,10 +27,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Credenciales invalidas' }, { status: 401 });
     }
 
-    // Check if merchant has passkeys registered
-    const passkeyCount = await prisma.webAuthnCredential.count({
-      where: { merchantId: merchant.id },
-    });
+    // Check if merchant has passkeys registered (raw SQL to avoid Prisma client staleness)
+    const countResult = await prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*)::bigint as count FROM "WebAuthnCredential" WHERE "merchantId" = ${merchant.id}
+    `;
+    const passkeyCount = Number(countResult[0].count);
 
     console.log(`[validate] merchant=${merchant.id} email=${email} passkeyCount=${passkeyCount} requires2fa=${passkeyCount > 0}`);
 
