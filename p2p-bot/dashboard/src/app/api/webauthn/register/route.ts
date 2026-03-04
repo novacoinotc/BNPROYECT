@@ -34,7 +34,6 @@ export async function GET(request: NextRequest) {
         transports: cred.transports as AuthenticatorTransport[],
       })),
       authenticatorSelection: {
-        authenticatorAttachment: 'platform',
         userVerification: 'required',
         residentKey: 'preferred',
       },

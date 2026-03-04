@@ -21,7 +21,19 @@ function LoginForm() {
   const [webauthnSupported, setWebauthnSupported] = useState(false);
 
   useEffect(() => {
-    setWebauthnSupported(typeof window !== 'undefined' && !!window.PublicKeyCredential);
+    async function checkSupport() {
+      if (typeof window === 'undefined' || !window.PublicKeyCredential) {
+        setWebauthnSupported(false);
+        return;
+      }
+      try {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        setWebauthnSupported(available);
+      } catch {
+        setWebauthnSupported(true); // fallback: assume supported, let WebAuthn ceremony decide
+      }
+    }
+    checkSupport();
   }, []);
 
   // Step 1: Validate email + password
@@ -123,8 +135,16 @@ function LoginForm() {
         throw new Error(loginResult.error);
       }
 
+      // Wait for session cookie to propagate
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Now we have a session — register passkey
-      const optionsRes = await fetch('/api/webauthn/register');
+      let optionsRes = await fetch('/api/webauthn/register');
+      if (optionsRes.status === 401) {
+        // Retry once after another brief wait
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        optionsRes = await fetch('/api/webauthn/register');
+      }
       if (!optionsRes.ok) throw new Error('Error al obtener opciones de registro');
       const options = await optionsRes.json();
 
@@ -154,6 +174,10 @@ function LoginForm() {
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         setErrorMessage('Registro cancelado — intenta de nuevo');
+      } else if (err.name === 'InvalidStateError') {
+        setErrorMessage('Este dispositivo ya tiene una passkey registrada');
+      } else if (err.message?.includes('credential manager')) {
+        setErrorMessage('Tu dispositivo no soporta Face ID/Touch ID. Intenta desde otro dispositivo.');
       } else {
         setErrorMessage(err.message || 'Error al registrar');
       }
