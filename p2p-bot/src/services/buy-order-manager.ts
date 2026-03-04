@@ -139,8 +139,14 @@ export class BuyOrderManager extends EventEmitter {
           }
 
           return { ...d, binanceStatus };
-        } catch {
-          // If we can't check, return as-is
+        } catch (err: any) {
+          // If Binance can't find the order or returns error, it's likely old/gone — expire it
+          const msg = err?.message || '';
+          const isNotFound = msg.includes('not found') || msg.includes('does not exist') || err?.response?.status === 400;
+          if (isNotFound) {
+            await updateBuyDispatch(d.id, { status: 'EXPIRED', error: 'Orden ya no existe en Binance' });
+            return { ...d, status: 'EXPIRED', error: 'Orden ya no existe en Binance' };
+          }
           return d;
         }
       })
