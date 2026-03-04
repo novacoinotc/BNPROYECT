@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
     const includeInactive = searchParams.get('includeInactive') === 'true';
+    const buyerUserNo = searchParams.get('buyerUserNo');
 
     // Get merchant filter (admin sees all, merchant sees own)
     const merchantFilter = getMerchantFilter(context);
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
     const trustedBuyers = await prisma.trustedBuyer.findMany({
       where: {
         ...(includeInactive ? {} : { isActive: true }),
+        ...(buyerUserNo ? { buyerUserNo } : {}),
         ...merchantFilter,
       },
       orderBy: { verifiedAt: 'desc' },

@@ -88,10 +88,29 @@ model Merchant {
   auditLogs         AuditLog[]
   supportRequests   SupportRequest[]
   chatMessages      ChatMessage[]
+  webauthnCredentials WebAuthnCredential[]
 
   @@index([email])
   @@index([clabeAccount])
   @@index([isActive])
+}
+
+/// WebAuthn credentials for biometric authentication (Face ID / Touch ID)
+model WebAuthnCredential {
+  id              String   @id @default(cuid())
+  credentialId    String   @unique
+  publicKey       Bytes
+  counter         BigInt   @default(0)
+  transports      String[]
+  deviceName      String?
+
+  merchantId      String
+  merchant        Merchant @relation(fields: [merchantId], references: [id])
+
+  createdAt       DateTime @default(now())
+  lastUsedAt      DateTime?
+
+  @@index([merchantId])
 }
 
 // ==================== MODELS ====================

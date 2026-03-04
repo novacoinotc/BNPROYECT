@@ -10,6 +10,8 @@ import { webhookLogger as logger } from '../utils/logger.js';
 import { BankWebhookPayload } from '../types/binance.js';
 import * as db from './database-pg.js';
 import { getBinanceClient } from './binance-client.js';
+import { getTOTPService } from './totp-service.js';
+import { AuthType } from '../types/binance.js';
 import { MultiAdPositioningManager, MultiAdStatus } from './multi-ad-positioning.js';
 
 export interface WebhookConfig {
@@ -684,32 +686,64 @@ export class WebhookReceiver extends EventEmitter {
    */
   private async handleReleaseOrder(req: Request, res: Response): Promise<void> {
     try {
-      const { orderNumber, authType, code } = req.body;
+      const { orderNumber, useAutoTOTP, authType, code } = req.body;
 
-      if (!orderNumber || !authType || !code) {
-        res.status(400).json({
-          success: false,
-          error: 'orderNumber, authType, and code are required',
-        });
-        return;
+      let releaseAuthType: AuthType;
+      let releaseCode: string;
+
+      if (useAutoTOTP) {
+        // Biometric flow: dashboard verified identity, bot generates TOTP
+        if (!orderNumber) {
+          res.status(400).json({ success: false, error: 'orderNumber is required' });
+          return;
+        }
+
+        const totpService = getTOTPService();
+        if (!totpService.isConfigured()) {
+          res.status(500).json({ success: false, error: 'TOTP not configured on bot' });
+          return;
+        }
+
+        // Use fresh TOTP window if less than 10 seconds remaining
+        const timeRemaining = totpService.getTimeRemaining();
+        if (timeRemaining < 10) {
+          logger.info({ orderNumber, timeRemaining }, '⏳ [TOTP] Waiting for fresh window...');
+          releaseCode = await totpService.waitForNextWindowAndGenerate();
+        } else {
+          releaseCode = totpService.generateCode();
+        }
+        releaseAuthType = AuthType.GOOGLE;
+
+        logger.info({ orderNumber, timeRemaining }, '🔐 Generated TOTP for biometric release');
+      } else {
+        // Manual code flow
+        if (!orderNumber || !authType || !code) {
+          res.status(400).json({
+            success: false,
+            error: 'orderNumber, authType, and code are required',
+          });
+          return;
+        }
+        releaseAuthType = authType;
+        releaseCode = code;
       }
 
       const client = getBinanceClient();
 
-      logger.info({ orderNumber, authType }, '🔓 Attempting to release order');
+      logger.info({ orderNumber, authType: releaseAuthType, biometric: !!useAutoTOTP }, '🔓 Attempting to release order');
 
       await client.releaseCoin({
         orderNumber,
-        authType,
-        code,
+        authType: releaseAuthType,
+        code: releaseCode,
       });
 
       // Update order status in database
       await db.addVerificationStep(
         orderNumber,
         'RELEASED' as any,
-        'Crypto liberado manualmente desde dashboard',
-        { authType, releasedBy: 'dashboard', timestamp: new Date().toISOString() }
+        useAutoTOTP ? 'Crypto liberado con biometria desde dashboard' : 'Crypto liberado manualmente desde dashboard',
+        { authType: releaseAuthType, releasedBy: 'dashboard', biometric: !!useAutoTOTP, timestamp: new Date().toISOString() }
       );
 
       // Broadcast update to SSE clients

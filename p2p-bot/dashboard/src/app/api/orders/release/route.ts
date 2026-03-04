@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
+import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
+import { cookies } from 'next/headers';
+import { getRPConfig } from '../../webauthn/rp-config';
 
 const prisma = new PrismaClient();
 const pool = new Pool({
@@ -34,11 +37,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { orderNumber, authType, code } = body;
+    const { orderNumber, biometric, webauthnResponse, authType, code } = body;
 
-    if (!orderNumber || !authType || !code) {
+    if (!orderNumber) {
       return NextResponse.json(
-        { success: false, error: 'orderNumber, authType, and code are required' },
+        { success: false, error: 'orderNumber is required' },
         { status: 400 }
       );
     }
@@ -59,8 +62,6 @@ export async function POST(request: NextRequest) {
 
     // Get the logged-in merchant's bot URL
     const botUrl = await getMerchantBotUrl(context.merchantId);
-
-    // Use merchant's bot URL or fallback to global RAILWAY_API_URL
     const apiUrl = botUrl || RAILWAY_API_URL;
 
     if (!apiUrl) {
@@ -70,11 +71,87 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let botPayload: Record<string, unknown>;
+
+    if (biometric && webauthnResponse) {
+      // --- Biometric flow: verify WebAuthn, then tell bot to use auto-TOTP ---
+      const cookieStore = await cookies();
+      const challenge = cookieStore.get('webauthn-challenge')?.value;
+      if (!challenge) {
+        return NextResponse.json(
+          { success: false, error: 'WebAuthn challenge expired' },
+          { status: 400 }
+        );
+      }
+
+      // Find credential in DB
+      const credential = await prisma.webAuthnCredential.findFirst({
+        where: {
+          credentialId: webauthnResponse.id,
+          merchantId: context.merchantId,
+        },
+      });
+
+      if (!credential) {
+        return NextResponse.json(
+          { success: false, error: 'Credential not found' },
+          { status: 400 }
+        );
+      }
+
+      const { rpID, origin } = getRPConfig(request);
+
+      const verification = await verifyAuthenticationResponse({
+        response: webauthnResponse,
+        expectedChallenge: challenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        credential: {
+          id: credential.credentialId,
+          publicKey: new Uint8Array(credential.publicKey),
+          counter: Number(credential.counter),
+          transports: credential.transports as AuthenticatorTransport[],
+        },
+        requireUserVerification: true,
+      });
+
+      if (!verification.verified) {
+        return NextResponse.json(
+          { success: false, error: 'Biometric verification failed' },
+          { status: 403 }
+        );
+      }
+
+      // Update credential counter and last used
+      await prisma.webAuthnCredential.update({
+        where: { id: credential.id },
+        data: {
+          counter: BigInt(verification.authenticationInfo.newCounter),
+          lastUsedAt: new Date(),
+        },
+      });
+
+      // Clear challenge cookie
+      cookieStore.delete('webauthn-challenge');
+
+      // Tell bot to use auto-TOTP
+      botPayload = { orderNumber, useAutoTOTP: true };
+    } else {
+      // --- Manual code flow ---
+      if (!authType || !code) {
+        return NextResponse.json(
+          { success: false, error: 'authType and code are required' },
+          { status: 400 }
+        );
+      }
+      botPayload = { orderNumber, authType, code };
+    }
+
     const response = await fetch(`${apiUrl}/api/orders/release`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderNumber, authType, code }),
-      signal: AbortSignal.timeout(30000), // 30 second timeout for release
+      body: JSON.stringify(botPayload),
+      signal: AbortSignal.timeout(30000),
     });
 
     const data = await response.json();

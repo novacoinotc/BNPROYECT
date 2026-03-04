@@ -77,8 +77,10 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
           <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <div>
               <span className="text-gray-500 text-[10px]">Comprador</span>
-              <p className="text-white truncate text-sm">
-                {order.isTrustedBuyer && <span className="mr-0.5">&#11088;</span>}
+              <p className="text-white truncate text-sm flex items-center gap-1">
+                {order.isTrustedBuyer && (
+                  <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">VIP</span>
+                )}
                 {order.buyerNickName}
               </p>
             </div>
@@ -187,13 +189,15 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
           {/* Dual release buttons */}
           {canRelease && (
             <div className="flex gap-2 mb-1.5">
-              <button
-                onClick={() => onReleaseAndVIP(order.orderNumber)}
-                className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-lg font-medium transition-all text-xs bg-gradient-to-r from-emerald-600 to-amber-600 text-white hover:from-emerald-700 hover:to-amber-700"
-              >
-                <span>&#11088;</span>
-                Liberar+VIP
-              </button>
+              {!order.isTrustedBuyer && (
+                <button
+                  onClick={() => onReleaseAndVIP(order.orderNumber)}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-lg font-medium transition-all text-xs bg-gradient-to-r from-emerald-600 to-amber-600 text-white hover:from-emerald-700 hover:to-amber-700"
+                >
+                  <span>&#11088;</span>
+                  Liberar+VIP
+                </button>
+              )}
               <button
                 onClick={() => onRelease(order.orderNumber)}
                 className="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition font-medium text-xs"
