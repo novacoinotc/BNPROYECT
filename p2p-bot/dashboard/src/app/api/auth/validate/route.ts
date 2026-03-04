@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
       where: { merchantId: merchant.id },
     });
 
+    console.log(`[validate] merchant=${merchant.id} email=${email} passkeyCount=${passkeyCount} requires2fa=${passkeyCount > 0}`);
+
     return NextResponse.json({
       valid: true,
       requires2fa: passkeyCount > 0,

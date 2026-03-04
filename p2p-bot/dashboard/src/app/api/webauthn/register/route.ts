@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
     const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
 
     // Save credential to DB
+    console.log(`[webauthn/register] Saving credential for merchant=${context.merchantId} credentialId=${credential.id}`);
     const saved = await prisma.webAuthnCredential.create({
       data: {
         credentialId: credential.id,

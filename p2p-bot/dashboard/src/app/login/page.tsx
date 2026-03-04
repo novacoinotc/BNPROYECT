@@ -124,7 +124,6 @@ function LoginForm() {
 
     try {
       // First, create a temporary session so the register endpoint works
-      // We login first, then register the passkey
       const loginResult = await signIn('credentials', {
         email,
         password,
@@ -135,16 +134,23 @@ function LoginForm() {
         throw new Error(loginResult.error);
       }
 
-      // Wait for session cookie to propagate
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Poll until session is active (max 5 attempts, 500ms apart)
+      let sessionReady = false;
+      for (let i = 0; i < 5; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const sessionRes = await fetch('/api/auth/session');
+        const sessionData = await sessionRes.json();
+        if (sessionData?.user) {
+          sessionReady = true;
+          break;
+        }
+      }
+      if (!sessionReady) {
+        throw new Error('No se pudo establecer la sesion — intenta de nuevo');
+      }
 
       // Now we have a session — register passkey
-      let optionsRes = await fetch('/api/webauthn/register');
-      if (optionsRes.status === 401) {
-        // Retry once after another brief wait
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        optionsRes = await fetch('/api/webauthn/register');
-      }
+      const optionsRes = await fetch('/api/webauthn/register');
       if (!optionsRes.ok) throw new Error('Error al obtener opciones de registro');
       const options = await optionsRes.json();
 
@@ -172,12 +178,38 @@ function LoginForm() {
       // Already logged in from signIn above — redirect
       window.location.href = callbackUrl;
     } catch (err: any) {
+      // If registration failed (not user cancellation), try authenticating
+      // with an existing passkey as fallback — covers the case where the
+      // passkey exists on the device AND in the DB but validate didn't detect it
+      if (err.name !== 'NotAllowedError') {
+        try {
+          const authOptRes = await fetch('/api/auth/webauthn');
+          if (authOptRes.ok) {
+            const authOpts = await authOptRes.json();
+            const assertionResponse = await startAuthentication({ optionsJSON: authOpts });
+            const authVerifyRes = await fetch('/api/auth/webauthn', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ assertionResponse }),
+            });
+            const authData = await authVerifyRes.json();
+            if (authVerifyRes.ok && authData.success) {
+              // Passkey works — complete login via credentials + redirect
+              await completeLogin();
+              return;
+            }
+          }
+        } catch {
+          // Auth fallback failed — fall through to show registration error
+        }
+      }
+
       if (err.name === 'NotAllowedError') {
         setErrorMessage('Registro cancelado — intenta de nuevo');
       } else if (err.name === 'InvalidStateError') {
-        setErrorMessage('Este dispositivo ya tiene una passkey registrada');
+        setErrorMessage('Este dispositivo ya tiene una passkey registrada. Intenta iniciar sesion de nuevo.');
       } else if (err.message?.includes('credential manager')) {
-        setErrorMessage('Tu dispositivo no soporta Face ID/Touch ID. Intenta desde otro dispositivo.');
+        setErrorMessage('Error con el autenticador. Intenta de nuevo o usa otro dispositivo.');
       } else {
         setErrorMessage(err.message || 'Error al registrar');
       }
