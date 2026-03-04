@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 import { verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { cookies } from 'next/headers';
 import { getRPConfig } from '../../webauthn/rp-config';
+import { prisma } from '@/lib/prisma';
 
-const prisma = new PrismaClient();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },

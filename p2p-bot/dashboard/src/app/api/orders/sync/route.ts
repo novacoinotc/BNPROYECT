@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // Binance API configuration - support both env var names
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;

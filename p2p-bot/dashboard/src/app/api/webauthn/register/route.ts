@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
-import { PrismaClient } from '@prisma/client';
 import { getMerchantContext } from '@/lib/merchant-context';
 import { cookies } from 'next/headers';
 import { getRPConfig } from '../rp-config';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET — Generate registration options
 export async function GET(request: NextRequest) {
@@ -35,7 +33,7 @@ export async function GET(request: NextRequest) {
       })),
       authenticatorSelection: {
         userVerification: 'required',
-        residentKey: 'preferred',
+        residentKey: 'required',
       },
     });
 

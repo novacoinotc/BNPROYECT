@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { getMerchantContext } from '@/lib/merchant-context';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET — List credentials for current merchant
 export async function GET() {

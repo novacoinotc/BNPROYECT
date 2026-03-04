@@ -1,22 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { cookies } from 'next/headers';
 import { getRPConfig } from '../../webauthn/rp-config';
 import jwt from 'next-auth/jwt';
 
-const prisma = new PrismaClient();
-
 // GET — Generate authentication options for login (no session required)
-// Uses discoverable credentials — browser picks the right passkey
+// Accepts optional ?merchantId= to include allowCredentials for non-discoverable fallback
 export async function GET(request: NextRequest) {
   try {
     const { rpID } = getRPConfig(request);
+    const merchantId = request.nextUrl.searchParams.get('merchantId');
+
+    // If merchantId provided, fetch credentials to include as allowCredentials
+    let allowCredentials: { id: string; transports?: AuthenticatorTransport[] }[] | undefined;
+    if (merchantId) {
+      const credentials = await prisma.webAuthnCredential.findMany({
+        where: { merchantId },
+        select: { credentialId: true, transports: true },
+      });
+      if (credentials.length > 0) {
+        allowCredentials = credentials.map((c) => ({
+          id: c.credentialId,
+          transports: c.transports as AuthenticatorTransport[],
+        }));
+      }
+    }
 
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
-      // No allowCredentials — let browser use discoverable credentials
+      allowCredentials,
     });
 
     const cookieStore = await cookies();

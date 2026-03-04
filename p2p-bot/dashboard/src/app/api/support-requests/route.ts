@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
-
-const prisma = new PrismaClient();
 
 // GET - Fetch support requests
 export async function GET(request: Request) {

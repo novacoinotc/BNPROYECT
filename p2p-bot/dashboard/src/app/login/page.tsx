@@ -89,7 +89,8 @@ function LoginForm() {
     try {
       // Get authentication options (needs session for merchant-scoped credentials)
       // We use the login-specific endpoint that doesn't require session
-      const optionsRes = await fetch('/api/auth/webauthn');
+      const authUrl = merchantId ? `/api/auth/webauthn?merchantId=${merchantId}` : '/api/auth/webauthn';
+      const optionsRes = await fetch(authUrl);
       if (!optionsRes.ok) throw new Error('Error al obtener opciones');
       const options = await optionsRes.json();
 

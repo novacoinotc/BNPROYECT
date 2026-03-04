@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 import { Pool } from 'pg';
-
-const prisma = new PrismaClient();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
