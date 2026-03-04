@@ -14,7 +14,6 @@ const pool = new Pool({
 
 const RAILWAY_API_URL = process.env.RAILWAY_API_URL;
 
-// Get bot URL for the logged-in merchant
 async function getMerchantBotUrl(merchantId: string): Promise<string | null> {
   try {
     const result = await pool.query(
@@ -37,16 +36,17 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { orderNumber, biometric, webauthnResponse, authType, code } = body;
+    const { orderNumber, webauthnResponse } = body;
 
-    if (!orderNumber) {
+    // SECURITY: WebAuthn biometric is MANDATORY — no exceptions
+    if (!orderNumber || !webauthnResponse) {
       return NextResponse.json(
-        { success: false, error: 'orderNumber is required' },
-        { status: 400 }
+        { success: false, error: 'Se requiere verificacion biometrica para liberar' },
+        { status: 403 }
       );
     }
 
-    // SECURITY: Verify merchant owns this order before proxying release
+    // SECURITY: Verify merchant owns this order
     const merchantFilter = getMerchantFilter(context);
     const order = await prisma.order.findFirst({
       where: { orderNumber, ...merchantFilter },
@@ -60,7 +60,68 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the logged-in merchant's bot URL
+    // SECURITY: Read and validate WebAuthn challenge
+    const cookieStore = await cookies();
+    const challenge = cookieStore.get('webauthn-challenge')?.value;
+    if (!challenge) {
+      return NextResponse.json(
+        { success: false, error: 'WebAuthn challenge expired — intenta de nuevo' },
+        { status: 400 }
+      );
+    }
+
+    // SECURITY: Find credential scoped to this merchant
+    const credential = await prisma.webAuthnCredential.findFirst({
+      where: {
+        credentialId: webauthnResponse.id,
+        merchantId: context.merchantId,
+      },
+    });
+
+    if (!credential) {
+      return NextResponse.json(
+        { success: false, error: 'Passkey no reconocida' },
+        { status: 403 }
+      );
+    }
+
+    const { rpID, origin } = getRPConfig(request);
+
+    // SECURITY: Verify the WebAuthn assertion
+    const verification = await verifyAuthenticationResponse({
+      response: webauthnResponse,
+      expectedChallenge: challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: {
+        id: credential.credentialId,
+        publicKey: new Uint8Array(credential.publicKey),
+        counter: Number(credential.counter),
+        transports: credential.transports as AuthenticatorTransport[],
+      },
+      requireUserVerification: true,
+    });
+
+    if (!verification.verified) {
+      return NextResponse.json(
+        { success: false, error: 'Verificacion biometrica fallida' },
+        { status: 403 }
+      );
+    }
+
+    // Update credential counter and last used
+    await prisma.webAuthnCredential.update({
+      where: { id: credential.id },
+      data: {
+        counter: BigInt(verification.authenticationInfo.newCounter),
+        lastUsedAt: new Date(),
+      },
+    });
+
+    // Clear challenge cookie
+    cookieStore.delete('webauthn-challenge');
+
+    // Get bot URL
     const botUrl = await getMerchantBotUrl(context.merchantId);
     const apiUrl = botUrl || RAILWAY_API_URL;
 
@@ -71,86 +132,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let botPayload: Record<string, unknown>;
-
-    if (biometric && webauthnResponse) {
-      // --- Biometric flow: verify WebAuthn, then tell bot to use auto-TOTP ---
-      const cookieStore = await cookies();
-      const challenge = cookieStore.get('webauthn-challenge')?.value;
-      if (!challenge) {
-        return NextResponse.json(
-          { success: false, error: 'WebAuthn challenge expired' },
-          { status: 400 }
-        );
-      }
-
-      // Find credential in DB
-      const credential = await prisma.webAuthnCredential.findFirst({
-        where: {
-          credentialId: webauthnResponse.id,
-          merchantId: context.merchantId,
-        },
-      });
-
-      if (!credential) {
-        return NextResponse.json(
-          { success: false, error: 'Credential not found' },
-          { status: 400 }
-        );
-      }
-
-      const { rpID, origin } = getRPConfig(request);
-
-      const verification = await verifyAuthenticationResponse({
-        response: webauthnResponse,
-        expectedChallenge: challenge,
-        expectedOrigin: origin,
-        expectedRPID: rpID,
-        credential: {
-          id: credential.credentialId,
-          publicKey: new Uint8Array(credential.publicKey),
-          counter: Number(credential.counter),
-          transports: credential.transports as AuthenticatorTransport[],
-        },
-        requireUserVerification: true,
-      });
-
-      if (!verification.verified) {
-        return NextResponse.json(
-          { success: false, error: 'Biometric verification failed' },
-          { status: 403 }
-        );
-      }
-
-      // Update credential counter and last used
-      await prisma.webAuthnCredential.update({
-        where: { id: credential.id },
-        data: {
-          counter: BigInt(verification.authenticationInfo.newCounter),
-          lastUsedAt: new Date(),
-        },
-      });
-
-      // Clear challenge cookie
-      cookieStore.delete('webauthn-challenge');
-
-      // Tell bot to use auto-TOTP
-      botPayload = { orderNumber, useAutoTOTP: true };
-    } else {
-      // --- Manual code flow ---
-      if (!authType || !code) {
-        return NextResponse.json(
-          { success: false, error: 'authType and code are required' },
-          { status: 400 }
-        );
-      }
-      botPayload = { orderNumber, authType, code };
-    }
-
+    // SECURITY: Only useAutoTOTP — bot generates the code, never sent from client
     const response = await fetch(`${apiUrl}/api/orders/release`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(botPayload),
+      body: JSON.stringify({ orderNumber, useAutoTOTP: true }),
       signal: AbortSignal.timeout(30000),
     });
 

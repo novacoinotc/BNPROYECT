@@ -686,55 +686,48 @@ export class WebhookReceiver extends EventEmitter {
    */
   private async handleReleaseOrder(req: Request, res: Response): Promise<void> {
     try {
-      const { orderNumber, useAutoTOTP, authType, code } = req.body;
+      const { orderNumber, useAutoTOTP } = req.body;
 
-      let releaseAuthType: AuthType;
-      let releaseCode: string;
-
-      if (useAutoTOTP) {
-        // Biometric flow: dashboard verified identity, bot generates TOTP
-        if (!orderNumber) {
-          res.status(400).json({ success: false, error: 'orderNumber is required' });
-          return;
-        }
-
-        const totpService = getTOTPService();
-        if (!totpService.isConfigured()) {
-          res.status(500).json({ success: false, error: 'TOTP not configured on bot' });
-          return;
-        }
-
-        // Use fresh TOTP window if less than 10 seconds remaining
-        const timeRemaining = totpService.getTimeRemaining();
-        if (timeRemaining < 10) {
-          logger.info({ orderNumber, timeRemaining }, '⏳ [TOTP] Waiting for fresh window...');
-          releaseCode = await totpService.waitForNextWindowAndGenerate();
-        } else {
-          releaseCode = totpService.generateCode();
-        }
-        releaseAuthType = AuthType.GOOGLE;
-
-        logger.info({ orderNumber, timeRemaining }, '🔐 Generated TOTP for biometric release');
-      } else {
-        // Manual code flow
-        if (!orderNumber || !authType || !code) {
-          res.status(400).json({
-            success: false,
-            error: 'orderNumber, authType, and code are required',
-          });
-          return;
-        }
-        releaseAuthType = authType;
-        releaseCode = code;
+      // SECURITY: Only accept biometric-verified releases (useAutoTOTP)
+      // Manual codes from dashboard are NOT allowed — prevents bypass
+      if (!useAutoTOTP) {
+        res.status(403).json({
+          success: false,
+          error: 'Se requiere verificacion biometrica. Codigos manuales no permitidos.',
+        });
+        return;
       }
+
+      if (!orderNumber) {
+        res.status(400).json({ success: false, error: 'orderNumber is required' });
+        return;
+      }
+
+      const totpService = getTOTPService();
+      if (!totpService.isConfigured()) {
+        res.status(500).json({ success: false, error: 'TOTP not configured on bot' });
+        return;
+      }
+
+      // Use fresh TOTP window if less than 10 seconds remaining
+      const timeRemaining = totpService.getTimeRemaining();
+      let releaseCode: string;
+      if (timeRemaining < 10) {
+        logger.info({ orderNumber, timeRemaining }, '⏳ [TOTP] Waiting for fresh window...');
+        releaseCode = await totpService.waitForNextWindowAndGenerate();
+      } else {
+        releaseCode = totpService.generateCode();
+      }
+
+      logger.info({ orderNumber, timeRemaining }, '🔐 Generated TOTP for biometric release');
 
       const client = getBinanceClient();
 
-      logger.info({ orderNumber, authType: releaseAuthType, biometric: !!useAutoTOTP }, '🔓 Attempting to release order');
+      logger.info({ orderNumber }, '🔓 Releasing order (biometric verified)');
 
       await client.releaseCoin({
         orderNumber,
-        authType: releaseAuthType,
+        authType: AuthType.GOOGLE,
         code: releaseCode,
       });
 
@@ -742,8 +735,8 @@ export class WebhookReceiver extends EventEmitter {
       await db.addVerificationStep(
         orderNumber,
         'RELEASED' as any,
-        useAutoTOTP ? 'Crypto liberado con biometria desde dashboard' : 'Crypto liberado manualmente desde dashboard',
-        { authType: releaseAuthType, releasedBy: 'dashboard', biometric: !!useAutoTOTP, timestamp: new Date().toISOString() }
+        'Crypto liberado con verificacion biometrica desde dashboard',
+        { authType: 'GOOGLE', releasedBy: 'dashboard', biometric: true, timestamp: new Date().toISOString() }
       );
 
       // Broadcast update to SSE clients
