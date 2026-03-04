@@ -116,10 +116,37 @@ export class BuyOrderManager extends EventEmitter {
   // ==================== PUBLIC: DISPATCH MANAGEMENT ====================
 
   /**
-   * Get dispatches from DB (for dashboard)
+   * Get dispatches from DB (for dashboard).
+   * For FAILED dispatches, checks Binance order status and auto-expires
+   * orders that are no longer active (canceled, completed, etc.)
    */
-  async getDispatches(status?: string): Promise<BuyDispatch[]> {
-    return getBuyDispatches(status);
+  async getDispatches(status?: string): Promise<(BuyDispatch & { binanceStatus?: string })[]> {
+    const dispatches = await getBuyDispatches(status);
+
+    // Enrich FAILED dispatches with live Binance order status
+    const enriched = await Promise.all(
+      dispatches.map(async (d) => {
+        if (d.status !== 'FAILED') return d;
+
+        try {
+          const detail = await this.client.getOrderDetail(d.orderNumber);
+          const binanceStatus = (detail as any).orderStatus as string;
+
+          // If order is no longer active, mark dispatch as EXPIRED
+          if (binanceStatus && ['CANCELLED', 'CANCELED', 'COMPLETED', 'APPEAL_FINISH'].includes(binanceStatus.toUpperCase())) {
+            await updateBuyDispatch(d.id, { status: 'EXPIRED', error: `Orden ${binanceStatus} en Binance` });
+            return { ...d, status: 'EXPIRED', error: `Orden ${binanceStatus} en Binance`, binanceStatus };
+          }
+
+          return { ...d, binanceStatus };
+        } catch {
+          // If we can't check, return as-is
+          return d;
+        }
+      })
+    );
+
+    return enriched;
   }
 
   /**

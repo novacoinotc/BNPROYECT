@@ -50,6 +50,7 @@ function statusBadge(status: string) {
     COMPLETED: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
     FAILED: 'bg-red-500/20 text-red-400 border border-red-500/30',
     REJECTED: 'bg-gray-500/20 text-gray-400 border border-gray-500/30',
+    EXPIRED: 'bg-gray-500/20 text-gray-400 border border-gray-500/30',
   };
   const labels: Record<string, string> = {
     PENDING_APPROVAL: 'Pendiente',
@@ -57,6 +58,7 @@ function statusBadge(status: string) {
     COMPLETED: 'Completada',
     FAILED: 'Fallida',
     REJECTED: 'Rechazada',
+    EXPIRED: 'Expirada',
   };
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${styles[status] || 'bg-gray-700 text-gray-300'}`}>
