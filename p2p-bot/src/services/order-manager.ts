@@ -117,10 +117,29 @@ export class OrderManager extends EventEmitter {
       });
       logger.info({ count: recentOrders.length }, 'Found recent orders to sync');
 
+      // Also fetch BUY orders for dashboard visibility
+      let pendingBuyOrders: OrderData[] = [];
+      let recentBuyOrders: OrderData[] = [];
+      try {
+        pendingBuyOrders = await this.client.listPendingOrders(50, 'BUY');
+        logger.info({ count: pendingBuyOrders.length }, 'Found pending BUY orders to sync');
+      } catch (err) {
+        logger.warn({ error: err }, 'listPendingOrders BUY failed');
+      }
+      try {
+        recentBuyOrders = await this.client.listOrderHistory({
+          tradeType: TradeType.BUY,
+          rows: 50,
+        });
+        logger.info({ count: recentBuyOrders.length }, 'Found recent BUY orders to sync');
+      } catch (err) {
+        logger.warn({ error: err }, 'listOrderHistory BUY failed');
+      }
+
       // Combine and deduplicate - pendingOrders has MOST CURRENT status for active orders
       // so it should be processed LAST to take priority
       const allOrders = new Map<string, OrderData>();
-      for (const order of [...recentOrders, ...activeOrders, ...pendingOrders]) {
+      for (const order of [...recentOrders, ...activeOrders, ...recentBuyOrders, ...pendingOrders, ...pendingBuyOrders]) {
         allOrders.set(order.orderNumber, order);
       }
 
@@ -268,6 +287,23 @@ export class OrderManager extends EventEmitter {
           }, 'Detected status change from recent orders');
           await this.processOrder(order);
         }
+      }
+
+      // Sync BUY orders to DB (save only, no SELL-specific processing)
+      try {
+        const buyOrders = await this.client.listPendingOrders(50, 'BUY');
+        for (const order of buyOrders) {
+          try { await saveOrder(order); } catch { /* skip duplicates */ }
+        }
+        const buyHistory = await this.client.listOrderHistory({
+          tradeType: TradeType.BUY,
+          rows: 20,
+        });
+        for (const order of buyHistory) {
+          try { await saveOrder(order); } catch { /* skip duplicates */ }
+        }
+      } catch (err) {
+        logger.debug({ error: err }, 'BUY order sync skipped');
       }
 
       // Check for expired/cancelled orders
