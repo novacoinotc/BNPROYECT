@@ -113,6 +113,9 @@ export async function GET() {
 
         // Ignored advertisers
         ignoredAdvertisers,
+
+        // Auto-buy SPEI
+        autoBuyAutoDispatch: config.autoBuyAutoDispatch ?? false,
       },
     });
   } catch (error) {
