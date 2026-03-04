@@ -19,6 +19,7 @@ interface BuyDispatch {
   approvedAt: string | null;
   dispatchedAt: string | null;
   approvedBy: string | null;
+  transferStatus: string | null;
 }
 
 interface BotConfig {
@@ -64,6 +65,29 @@ function statusBadge(status: string) {
   );
 }
 
+function transferStatusBadge(transferStatus: string | null) {
+  if (!transferStatus) return null;
+  const styles: Record<string, string> = {
+    sent: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+    scattered: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+    canceled: 'bg-orange-500/20 text-orange-400 border border-orange-500/30',
+    failed: 'bg-red-500/20 text-red-400 border border-red-500/30',
+    returned: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  };
+  const labels: Record<string, string> = {
+    sent: 'SPEI Enviado',
+    scattered: 'SPEI Liquidado',
+    canceled: 'SPEI Cancelado',
+    failed: 'SPEI Rechazado',
+    returned: 'SPEI Devuelto',
+  };
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${styles[transferStatus] || 'bg-gray-700 text-gray-300'}`}>
+      {labels[transferStatus] || transferStatus}
+    </span>
+  );
+}
+
 export default function AutoSpeiPage() {
   const [dispatches, setDispatches] = useState<BuyDispatch[]>([]);
   const [config, setConfig] = useState<BotConfig | null>(null);
@@ -71,6 +95,7 @@ export default function AutoSpeiPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toggleLoading, setToggleLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showConflicts, setShowConflicts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -209,8 +234,20 @@ export default function AutoSpeiPage() {
     }
   };
 
+  // Conflict transfers: COMPLETED dispatches where the bank transfer had issues
+  const conflictDispatches = dispatches.filter(
+    (d) => d.transferStatus && ['returned', 'failed', 'canceled'].includes(d.transferStatus)
+  );
+
+  // Pending approval: manual dispatches waiting for authorization
   const pendingDispatches = dispatches.filter((d) => d.status === 'PENDING_APPROVAL');
-  const historyDispatches = dispatches.filter((d) => d.status !== 'PENDING_APPROVAL');
+
+  // History: everything else (excluding conflicts which have their own section)
+  const historyDispatches = dispatches.filter(
+    (d) => d.status !== 'PENDING_APPROVAL' &&
+      !(d.transferStatus && ['returned', 'failed', 'canceled'].includes(d.transferStatus))
+  );
+
   const autoMode = config?.autoBuyAutoDispatch ?? false;
 
   if (loading) {
@@ -267,6 +304,98 @@ export default function AutoSpeiPage() {
         </div>
       )}
 
+      {/* Conflict transfers */}
+      {conflictDispatches.length > 0 && (
+        <div>
+          <button
+            onClick={() => setShowConflicts(!showConflicts)}
+            className="w-full text-left text-sm font-semibold text-red-400 uppercase tracking-wider flex items-center gap-2 mb-2"
+          >
+            <span className={`transition-transform ${showConflicts ? 'rotate-90' : ''}`}>&#9654;</span>
+            Transferencias en conflicto ({conflictDispatches.length})
+          </button>
+
+          {showConflicts && (
+            <div className="space-y-3">
+              {conflictDispatches.map((d) => (
+                <div key={d.id} className="border border-red-500/30 bg-red-500/5 rounded-xl p-4 space-y-3">
+                  {/* Amount + Status */}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-2xl font-bold text-white">{formatAmount(d.amount)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Orden: {d.orderNumber.slice(-10)}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      {statusBadge(d.status)}
+                      {transferStatusBadge(d.transferStatus)}
+                    </div>
+                  </div>
+
+                  {/* Conflict reason */}
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                    <p className="text-xs text-red-300 font-medium">
+                      {d.transferStatus === 'returned' && 'La transferencia fue devuelta por el banco receptor (limite excedido, cuenta invalida, etc.)'}
+                      {d.transferStatus === 'failed' && 'La transferencia fue rechazada por el sistema bancario'}
+                      {d.transferStatus === 'canceled' && 'La transferencia fue cancelada por OPM/Banxico'}
+                    </p>
+                  </div>
+
+                  {/* Payment details */}
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Beneficiario</span>
+                      <span className="text-white font-medium">{d.beneficiaryName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Cuenta</span>
+                      <span className="text-white font-mono text-xs">{d.beneficiaryAccount}</span>
+                    </div>
+                    {d.bankName && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Banco</span>
+                        <span className="text-white">{d.bankName}</span>
+                      </div>
+                    )}
+                    {d.trackingKey && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Tracking</span>
+                        <span className="text-gray-400 font-mono text-xs">{d.trackingKey}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Enviada</span>
+                      <span className="text-gray-400 text-xs">{formatDate(d.dispatchedAt)}</span>
+                    </div>
+                  </div>
+
+                  {d.error && (
+                    <p className="text-xs text-red-400">{d.error}</p>
+                  )}
+
+                  {/* Actions for conflicts */}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => retryDispatch(d.id)}
+                      disabled={actionLoading === d.id + '-retry'}
+                      className="flex-1 py-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 text-sm font-bold rounded-lg transition border border-yellow-600/30 disabled:opacity-50"
+                    >
+                      {actionLoading === d.id + '-retry' ? 'Reintentando...' : 'Reintentar envio'}
+                    </button>
+                    <button
+                      onClick={() => rescanChat(d.id)}
+                      disabled={actionLoading === d.id + '-rescan'}
+                      className="flex-1 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 text-sm font-bold rounded-lg transition border border-blue-600/30 disabled:opacity-50"
+                    >
+                      {actionLoading === d.id + '-rescan' ? 'Buscando...' : 'Buscar CLABE en chat'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Pending dispatches */}
       <div>
         <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -281,64 +410,79 @@ export default function AutoSpeiPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {pendingDispatches.map((d) => (
-              <div key={d.id} className="card p-4 space-y-3">
-                {/* Amount + Status */}
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-2xl font-bold text-white">{formatAmount(d.amount)}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Orden: {d.orderNumber.slice(-10)}</p>
-                  </div>
-                  {statusBadge(d.status)}
-                </div>
-
-                {/* Payment details */}
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Beneficiario</span>
-                    <span className="text-white font-medium">{d.beneficiaryName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Cuenta</span>
-                    <span className="text-white font-mono text-xs">{maskAccount(d.beneficiaryAccount)}</span>
-                  </div>
-                  {d.bankName && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Banco</span>
-                      <span className="text-white">{d.bankName}</span>
+            {pendingDispatches.map((d) => {
+              const isHighAmount = d.amount > 120000;
+              return (
+                <div key={d.id} className={`card p-4 space-y-3 ${isHighAmount ? 'border border-orange-500/30' : ''}`}>
+                  {/* High amount badge */}
+                  {isHighAmount && (
+                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg px-3 py-1.5">
+                      <p className="text-xs text-orange-400 font-medium">
+                        Monto mayor a $120,000 — requiere autorizacion manual
+                      </p>
                     </div>
                   )}
-                  {d.sellerNick && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Vendedor</span>
-                      <span className="text-white">{d.sellerNick}</span>
+
+                  {/* Amount + Status */}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className={`text-2xl font-bold ${isHighAmount ? 'text-orange-400' : 'text-white'}`}>{formatAmount(d.amount)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Orden: {d.orderNumber.slice(-10)}</p>
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Detectada</span>
-                    <span className="text-gray-400 text-xs">{formatDate(d.detectedAt)}</span>
+                    {statusBadge(d.status)}
+                  </div>
+
+                  {/* Payment details — always visible for pending */}
+                  <div className="bg-gray-800/50 rounded-lg px-3 py-2 space-y-1.5">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Datos obtenidos</p>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Beneficiario</span>
+                        <span className="text-white font-medium">{d.beneficiaryName}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Cuenta</span>
+                        <span className="text-white font-mono text-xs">{d.beneficiaryAccount}</span>
+                      </div>
+                      {d.bankName && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Banco</span>
+                          <span className="text-white">{d.bankName}</span>
+                        </div>
+                      )}
+                      {d.sellerNick && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Vendedor</span>
+                          <span className="text-white">{d.sellerNick}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Detectada</span>
+                        <span className="text-gray-400 text-xs">{formatDate(d.detectedAt)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => approveDispatch(d.id)}
+                      disabled={actionLoading === d.id}
+                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition disabled:opacity-50"
+                    >
+                      {actionLoading === d.id ? 'Enviando SPEI...' : 'Autorizar'}
+                    </button>
+                    <button
+                      onClick={() => rejectDispatch(d.id)}
+                      disabled={actionLoading === d.id + '-reject'}
+                      className="px-4 py-2.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-lg transition border border-red-600/30 disabled:opacity-50"
+                    >
+                      {actionLoading === d.id + '-reject' ? '...' : 'Rechazar'}
+                    </button>
                   </div>
                 </div>
-
-                {/* Actions */}
-                <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={() => approveDispatch(d.id)}
-                    disabled={actionLoading === d.id}
-                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition disabled:opacity-50"
-                  >
-                    {actionLoading === d.id ? 'Enviando SPEI...' : 'Autorizar'}
-                  </button>
-                  <button
-                    onClick={() => rejectDispatch(d.id)}
-                    disabled={actionLoading === d.id + '-reject'}
-                    className="px-4 py-2.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-lg transition border border-red-600/30 disabled:opacity-50"
-                  >
-                    {actionLoading === d.id + '-reject' ? '...' : 'Rechazar'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -363,9 +507,10 @@ export default function AutoSpeiPage() {
                       <p className="text-white font-bold">{formatAmount(d.amount)}</p>
                       <p className="text-xs text-gray-500">{d.beneficiaryName}</p>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right flex flex-col items-end gap-1">
                       {statusBadge(d.status)}
-                      <p className="text-[10px] text-gray-600 mt-1">{formatDate(d.dispatchedAt || d.detectedAt)}</p>
+                      {transferStatusBadge(d.transferStatus)}
+                      <p className="text-[10px] text-gray-600 mt-0.5">{formatDate(d.dispatchedAt || d.detectedAt)}</p>
                     </div>
                   </div>
                   {d.trackingKey && (

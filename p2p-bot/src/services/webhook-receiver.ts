@@ -300,6 +300,9 @@ export class WebhookReceiver extends EventEmitter {
     // Payment reversal webhook (chargebacks)
     this.app.post(`${this.config.webhookPath}/reversal`, this.handleReversalWebhook.bind(this));
 
+    // NovaCorp SPEI transfer status webhook (sent/scattered/returned/failed/canceled)
+    this.app.post('/webhook/spei-status', this.handleSpeiStatusWebhook.bind(this));
+
     // 404 handler
     this.app.use((_req, res) => {
       res.status(404).json({ error: 'Not found' });
@@ -1051,6 +1054,102 @@ export class WebhookReceiver extends EventEmitter {
       });
     } catch (error) {
       logger.error({ error }, 'Error processing reversal webhook');
+      res.status(500).json({ error: 'Processing error' });
+    }
+  }
+
+  // ==================== SPEI STATUS WEBHOOK (NovaCorp) ====================
+
+  /**
+   * Handle SPEI transfer status updates from NovaCorp.
+   * Payload: { trackingKey, externalReference, status, timestamp }
+   * Statuses: sent | scattered | canceled | failed | returned
+   */
+  private async handleSpeiStatusWebhook(req: Request, res: Response): Promise<void> {
+    try {
+      const novacoreSecret = process.env.NOVACORE_WEBHOOK_SECRET;
+      if (!novacoreSecret) {
+        logger.error('NOVACORE_WEBHOOK_SECRET not configured');
+        res.status(500).json({ error: 'Webhook secret not configured' });
+        return;
+      }
+
+      // Verify HMAC-SHA256 signature
+      const signature = req.headers['x-novacore-signature'] as string;
+      if (!signature || !(req as any).rawBody) {
+        logger.warn('SPEI status webhook: missing signature or raw body');
+        res.status(401).json({ error: 'Missing signature' });
+        return;
+      }
+
+      const expectedSignature = crypto
+        .createHmac('sha256', novacoreSecret)
+        .update((req as any).rawBody)
+        .digest('hex');
+
+      const isValid = crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature)
+      );
+
+      if (!isValid) {
+        logger.warn('SPEI status webhook: invalid signature');
+        res.status(401).json({ error: 'Invalid signature' });
+        return;
+      }
+
+      const { trackingKey, externalReference, status, timestamp } = req.body;
+
+      if (!trackingKey || !status) {
+        res.status(400).json({ error: 'Missing trackingKey or status' });
+        return;
+      }
+
+      logger.info({ trackingKey, externalReference, status, timestamp }, '[SPEI-STATUS] Received transfer status update');
+
+      // Find the BuyDispatch by trackingKey first, fallback to externalReference (orderNumber)
+      let dispatch = await db.getBuyDispatchByTrackingKey(trackingKey);
+      if (!dispatch && externalReference) {
+        dispatch = await db.getBuyDispatchByOrderNumber(externalReference);
+      }
+
+      if (!dispatch) {
+        logger.warn({ trackingKey, externalReference }, '[SPEI-STATUS] No matching BuyDispatch found');
+        res.json({ status: 'acknowledged', matched: false });
+        return;
+      }
+
+      // Update transferStatus
+      await db.updateBuyDispatch(dispatch.id, { transferStatus: status });
+
+      logger.info({
+        orderNumber: dispatch.orderNumber,
+        amount: dispatch.amount,
+        transferStatus: status,
+        previousTransferStatus: dispatch.transferStatus,
+      }, `[SPEI-STATUS] ${status === 'scattered' ? '✅' : '⚠️'} Transfer ${status} for order ${dispatch.orderNumber}`);
+
+      // Emit SSE event for dashboard
+      this.broadcastSSE({
+        type: 'spei_status',
+        orderNumber: dispatch.orderNumber,
+        transferStatus: status,
+        amount: dispatch.amount,
+        trackingKey,
+        timestamp: timestamp || new Date().toISOString(),
+      });
+
+      // Emit event for other modules to react
+      this.emit('spei_status', {
+        dispatch,
+        transferStatus: status,
+        trackingKey,
+        timestamp,
+      });
+
+      res.json({ status: 'acknowledged', matched: true, orderNumber: dispatch.orderNumber });
+    } catch (error: any) {
+      logger.error({ error: error.message }, '[SPEI-STATUS] Error processing webhook');
       res.status(500).json({ error: 'Processing error' });
     }
   }

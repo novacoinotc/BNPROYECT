@@ -2438,6 +2438,7 @@ export interface BuyDispatch {
   dispatchedAt: string | null;
   approvedBy: string | null;
   merchantId: string | null;
+  transferStatus: string | null; // sent | scattered | canceled | failed | returned (from NovaCorp webhook)
 }
 
 /**
@@ -2467,9 +2468,14 @@ async function ensureBuyDispatchTable(): Promise<void> {
       "dispatchedAt" TIMESTAMP,
       "approvedBy" TEXT,
       "merchantId" TEXT,
+      "transferStatus" TEXT,
       "createdAt" TIMESTAMP DEFAULT NOW(),
       "updatedAt" TIMESTAMP DEFAULT NOW()
     );
+  `);
+  // Add transferStatus column if it doesn't exist (migration for existing tables)
+  await db.query(`
+    ALTER TABLE "BuyDispatch" ADD COLUMN IF NOT EXISTS "transferStatus" TEXT;
   `);
   buyDispatchTableReady = true;
 }
@@ -2515,6 +2521,7 @@ export async function saveBuyDispatch(dispatch: {
     dispatchedAt: null,
     approvedBy: null,
     merchantId,
+    transferStatus: null,
   };
 }
 
@@ -2530,6 +2537,7 @@ export async function updateBuyDispatch(id: string, updates: Partial<{
   beneficiaryName: string;
   bankName: string | null;
   selectedPayId: number;
+  transferStatus: string;
 }>): Promise<void> {
   await ensureBuyDispatchTable();
   const db = getPool();
@@ -2548,6 +2556,7 @@ export async function updateBuyDispatch(id: string, updates: Partial<{
   if (updates.beneficiaryName !== undefined) { sets.push(`"beneficiaryName" = $${idx++}`); values.push(updates.beneficiaryName); }
   if (updates.bankName !== undefined) { sets.push(`"bankName" = $${idx++}`); values.push(updates.bankName); }
   if (updates.selectedPayId !== undefined) { sets.push(`"selectedPayId" = $${idx++}`); values.push(updates.selectedPayId); }
+  if (updates.transferStatus !== undefined) { sets.push(`"transferStatus" = $${idx++}`); values.push(updates.transferStatus); }
 
   sets.push(`"updatedAt" = NOW()`);
 
@@ -2618,6 +2627,7 @@ export async function getBuyDispatches(status?: string): Promise<BuyDispatch[]> 
     dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
     approvedBy: row.approvedBy,
     merchantId: row.merchantId,
+    transferStatus: row.transferStatus || null,
   }));
 }
 
@@ -2645,6 +2655,7 @@ export async function getBuyDispatchById(id: string): Promise<BuyDispatch | null
     dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
     approvedBy: row.approvedBy,
     merchantId: row.merchantId,
+    transferStatus: row.transferStatus || null,
   };
 }
 
@@ -2672,6 +2683,35 @@ export async function getBuyDispatchByOrderNumber(orderNumber: string): Promise<
     dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
     approvedBy: row.approvedBy,
     merchantId: row.merchantId,
+    transferStatus: row.transferStatus || null,
+  };
+}
+
+export async function getBuyDispatchByTrackingKey(trackingKey: string): Promise<BuyDispatch | null> {
+  await ensureBuyDispatchTable();
+  const db = getPool();
+  const result = await db.query('SELECT * FROM "BuyDispatch" WHERE "trackingKey" = $1', [trackingKey]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    amount: parseFloat(row.amount),
+    beneficiaryName: row.beneficiaryName,
+    beneficiaryAccount: row.beneficiaryAccount,
+    bankName: row.bankName,
+    sellerNick: row.sellerNick,
+    selectedPayId: row.selectedPayId,
+    trackingKey: row.trackingKey,
+    transactionId: row.transactionId,
+    error: row.error,
+    detectedAt: row.detectedAt?.toISOString?.() || row.detectedAt,
+    approvedAt: row.approvedAt?.toISOString?.() || row.approvedAt,
+    dispatchedAt: row.dispatchedAt?.toISOString?.() || row.dispatchedAt,
+    approvedBy: row.approvedBy,
+    merchantId: row.merchantId,
+    transferStatus: row.transferStatus || null,
   };
 }
 
