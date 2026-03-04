@@ -234,17 +234,19 @@ export default function AutoSpeiPage() {
     }
   };
 
-  // Conflict transfers: COMPLETED dispatches where the bank transfer had issues
+  // Conflict transfers: bank transfer issues (returned/failed/canceled) OR bot dispatch failed (no CLABE, SPEI error, etc.)
   const conflictDispatches = dispatches.filter(
-    (d) => d.transferStatus && ['returned', 'failed', 'canceled'].includes(d.transferStatus)
+    (d) =>
+      (d.transferStatus && ['returned', 'failed', 'canceled'].includes(d.transferStatus)) ||
+      d.status === 'FAILED'
   );
 
   // Pending approval: manual dispatches waiting for authorization
   const pendingDispatches = dispatches.filter((d) => d.status === 'PENDING_APPROVAL');
 
-  // History: everything else (excluding conflicts which have their own section)
+  // History: everything else (excluding conflicts and pending)
   const historyDispatches = dispatches.filter(
-    (d) => d.status !== 'PENDING_APPROVAL' &&
+    (d) => d.status !== 'PENDING_APPROVAL' && d.status !== 'FAILED' &&
       !(d.transferStatus && ['returned', 'failed', 'canceled'].includes(d.transferStatus))
   );
 
@@ -337,6 +339,9 @@ export default function AutoSpeiPage() {
                       {d.transferStatus === 'returned' && 'La transferencia fue devuelta por el banco receptor (limite excedido, cuenta invalida, etc.)'}
                       {d.transferStatus === 'failed' && 'La transferencia fue rechazada por el sistema bancario'}
                       {d.transferStatus === 'canceled' && 'La transferencia fue cancelada por OPM/Banxico'}
+                      {d.status === 'FAILED' && !d.transferStatus && (
+                        d.error || 'Error en el envio del SPEI'
+                      )}
                     </p>
                   </div>
 
