@@ -432,40 +432,24 @@ export class BuyOrderManager extends EventEmitter {
           continue;
         }
 
-        // Amount check
-        if (amount > this.config.maxAmount) {
-          logger.warn({
+        // Amount check — high amounts go to manual approval instead of auto-dispatch
+        const isHighAmount = amount > this.config.maxAmount;
+        if (isHighAmount) {
+          logger.info({
             orderNumber,
             amount,
             maxAmount: this.config.maxAmount,
-          }, '🛒 [AUTO-BUY] Order exceeds max amount - skipping');
-          // Save as failed in DB
-          await saveBuyDispatch({
+          }, '🛒 [AUTO-BUY] High amount order - requires manual approval');
+        } else {
+          logger.info({
             orderNumber,
             amount,
-            beneficiaryName: 'N/A',
-            beneficiaryAccount: 'N/A',
-            bankName: null,
-            sellerNick: order.counterPartNickName || null,
-            selectedPayId: 0,
-            status: 'FAILED',
-          });
-          await updateBuyDispatch(
-            (await getBuyDispatchByOrderNumber(orderNumber))!.id,
-            { error: `Monto $${amount} excede el máximo $${this.config.maxAmount}` }
-          );
-          this.processedOrders.add(orderNumber);
-          continue;
+            seller: order.counterPartNickName,
+          }, '🛒 [AUTO-BUY] New BUY order detected');
         }
 
-        logger.info({
-          orderNumber,
-          amount,
-          seller: order.counterPartNickName,
-        }, '🛒 [AUTO-BUY] New BUY order detected');
-
-        // Process the order
-        await this.processBuyOrder(orderNumber, amount, order.counterPartNickName);
+        // Process the order (high amounts forced to manual approval inside processBuyOrder)
+        await this.processBuyOrder(orderNumber, amount, order.counterPartNickName, isHighAmount);
         this.processedOrders.add(orderNumber);
       }
     } catch (error: any) {
@@ -477,7 +461,7 @@ export class BuyOrderManager extends EventEmitter {
 
   // ==================== ORDER PROCESSING ====================
 
-  private async processBuyOrder(orderNumber: string, amount: number, sellerNick: string): Promise<void> {
+  private async processBuyOrder(orderNumber: string, amount: number, sellerNick: string, forceManualApproval: boolean = false): Promise<void> {
     try {
       // Step 1: Get order detail to extract payment info
       const detail = await (this.client as any).signedPost(
@@ -540,9 +524,9 @@ export class BuyOrderManager extends EventEmitter {
         payId: paymentDetails.selectedPayId,
       }, '🛒 [AUTO-BUY] Payment details extracted');
 
-      // Step 2: Check auto-dispatch mode
+      // Step 2: Check auto-dispatch mode (high amounts always require manual approval)
       const botConfig = await getBotConfig();
-      const autoDispatch = botConfig.autoBuyAutoDispatch;
+      const autoDispatch = botConfig.autoBuyAutoDispatch && !forceManualApproval;
 
       // Save dispatch to DB
       const dispatch = await saveBuyDispatch({
@@ -556,13 +540,21 @@ export class BuyOrderManager extends EventEmitter {
         status: autoDispatch ? 'DISPATCHING' : 'PENDING_APPROVAL',
       });
 
+      if (forceManualApproval) {
+        // Update with info message so operator knows why it needs approval
+        await updateBuyDispatch(dispatch.id, {
+          error: `Monto $${paymentDetails.amount} excede $${this.config.maxAmount} - requiere autorizacion manual`,
+        });
+      }
+
       if (autoDispatch) {
         // Auto mode: execute immediately
         logger.info({ orderNumber, amount: paymentDetails.amount }, '🛒 [AUTO-BUY] Auto-dispatch mode - sending SPEI immediately');
         await this.executeDispatch(dispatch);
       } else {
         // Manual mode: wait for dashboard approval
-        logger.info({ orderNumber, amount: paymentDetails.amount }, '🛒 [AUTO-BUY] Manual mode - awaiting dashboard approval');
+        const reason = forceManualApproval ? 'high amount' : 'manual mode';
+        logger.info({ orderNumber, amount: paymentDetails.amount, reason }, '🛒 [AUTO-BUY] Awaiting dashboard approval');
         this.emit('buy_order', {
           type: 'pending_approval',
           orderNumber,
