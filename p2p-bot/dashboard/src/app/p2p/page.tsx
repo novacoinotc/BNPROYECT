@@ -134,21 +134,25 @@ export default function P2PPage() {
   };
 
   // Classify orders into sections
-  const terminalStatuses = ['COMPLETED', 'CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT', 'APPEALING'];
+  const terminalStatuses = ['COMPLETED', 'CANCELLED', 'CANCELLED_SYSTEM', 'CANCELLED_TIMEOUT'];
+
+  // Disputed orders (APPEALING) — separate section for visibility
+  const disputeOrders = filteredOrders.filter(o => o.status === 'APPEALING');
 
   const sellManual = filteredOrders.filter(o =>
     o.tradeType === 'SELL' &&
     (o.verificationStatus === 'MANUAL_REVIEW' || o.verificationStatus === 'NAME_MISMATCH') &&
-    !terminalStatuses.includes(o.status)
+    !terminalStatuses.includes(o.status) &&
+    o.status !== 'APPEALING'
   );
   const sellProcess = filteredOrders.filter(o =>
-    o.tradeType === 'SELL' && !sellManual.includes(o)
+    o.tradeType === 'SELL' && !sellManual.includes(o) && o.status !== 'APPEALING'
   );
   const buyUnpaid = filteredOrders.filter(o =>
     o.tradeType === 'BUY' && o.status === 'PENDING'
   );
   const buyPaid = filteredOrders.filter(o =>
-    o.tradeType === 'BUY' && o.status !== 'PENDING'
+    o.tradeType === 'BUY' && o.status !== 'PENDING' && o.status !== 'APPEALING'
   );
 
   // Build sections based on active tab
@@ -157,20 +161,23 @@ export default function P2PPage() {
 
   if (filter === 'SELL') {
     sections = [
-      { title: '⚠️ Intervención manual', orders: sellManual, showReasonTag: true },
-      { title: '✅ En proceso', orders: sellProcess },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
+      { title: '\u26A0\uFE0F Intervención manual', orders: sellManual, showReasonTag: true },
+      { title: '\u2705 En proceso', orders: sellProcess },
     ];
   } else if (filter === 'BUY') {
     sections = [
-      { title: '⏳ Sin pagar', orders: buyUnpaid },
-      { title: '✅ Pagadas', orders: buyPaid },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
+      { title: '\u23F3 Sin pagar', orders: buyUnpaid },
+      { title: '\u2705 Pagadas', orders: buyPaid },
     ];
   } else {
     sections = [
-      { title: '⚠️ Intervención manual', orders: sellManual, showReasonTag: true },
-      { title: '⏳ Sin pagar', orders: buyUnpaid },
-      { title: '✅ En proceso', orders: sellProcess },
-      { title: '✅ Pagadas', orders: buyPaid },
+      { title: '\u2696\uFE0F En disputa', orders: disputeOrders },
+      { title: '\u26A0\uFE0F Intervención manual', orders: sellManual, showReasonTag: true },
+      { title: '\u23F3 Sin pagar', orders: buyUnpaid },
+      { title: '\u2705 En proceso', orders: sellProcess },
+      { title: '\u2705 Pagadas', orders: buyPaid },
     ];
   }
 
