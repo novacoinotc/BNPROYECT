@@ -176,7 +176,20 @@ function LoginForm() {
         throw new Error(err.error || 'Error al registrar passkey');
       }
 
-      // Already logged in from signIn above — redirect
+      // Double-check: verify the credential actually persisted in DB
+      const checkRes = await fetch('/api/auth/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const checkData = await checkRes.json();
+
+      if (!checkData.requires2fa) {
+        console.error('[handleSetupPasskey] Credential NOT found after save! checkData:', checkData);
+        throw new Error('La passkey no se guardo. Contacta soporte.');
+      }
+
+      // Credential confirmed saved — redirect
       window.location.href = callbackUrl;
     } catch (err: any) {
       // If registration failed (not user cancellation), try authenticating

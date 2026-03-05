@@ -105,6 +105,18 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Verify the save actually persisted (catches PgBouncer/Neon phantom writes)
+    const verifyCount = await prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*)::bigint as count FROM "WebAuthnCredential" WHERE "merchantId" = ${context.merchantId}
+    `;
+    const count = Number(verifyCount[0].count);
+    console.log(`[webauthn/register] After save: merchantId=${context.merchantId} savedId=${saved.id} dbCount=${count}`);
+
+    if (count === 0) {
+      console.error(`[webauthn/register] CRITICAL: Prisma create returned but credential NOT in DB!`);
+      return NextResponse.json({ error: 'Credential no persistio en la base de datos' }, { status: 500 });
+    }
+
     // Clear challenge cookie
     cookieStore.delete('webauthn-challenge');
 
