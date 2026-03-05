@@ -178,7 +178,11 @@ export async function saveOrder(order: OrderData): Promise<void> {
   // For SELL orders: counterpart is the buyer, we are the seller
   // For BUY orders: counterpart is the seller, we are the buyer
   // Get the actual userNo from order detail if available
-  const counterPartUserNo = order.buyer?.userNo || (order as any).counterPartUserNo || (order as any).buyerUserNo || null;
+  // For SELL orders: counterpart is the buyer → buyer.userNo
+  // For BUY orders: counterpart is the seller → seller.userNo
+  const counterPartUserNo = isSellOrder
+    ? (order.buyer?.userNo || (order as any).counterPartUserNo || (order as any).buyerUserNo || 'unknown')
+    : ((order as any).seller?.userNo || (order as any).counterPartUserNo || (order as any).sellerUserNo || 'unknown');
 
   const buyerUserNo = isSellOrder ? counterPartUserNo : 'self';
   const buyerNickName = isSellOrder ? counterPartNick : 'self';
