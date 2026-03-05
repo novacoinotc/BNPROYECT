@@ -1,21 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
-import { getMerchantContext } from '@/lib/merchant-context';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { getRPConfig } from '../rp-config';
 import { prisma } from '@/lib/prisma';
 
 // GET — Generate registration options
+// IMPORTANT: Always uses session.user.id (real user), never "viewing as" override
 export async function GET(request: NextRequest) {
   try {
-    const context = await getMerchantContext();
-    if (!context) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const merchantId = session.user.id; // Always real user ID, never viewingAs
+
     // Get existing credentials to exclude
     const existingCredentials = await prisma.webAuthnCredential.findMany({
-      where: { merchantId: context.merchantId },
+      where: { merchantId },
       select: { credentialId: true, transports: true },
     });
 
@@ -24,8 +28,8 @@ export async function GET(request: NextRequest) {
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userName: context.email,
-      userDisplayName: context.name,
+      userName: session.user.email,
+      userDisplayName: session.user.name,
       attestationType: 'none',
       excludeCredentials: existingCredentials.map((cred) => ({
         id: cred.credentialId,
@@ -55,12 +59,15 @@ export async function GET(request: NextRequest) {
 }
 
 // POST — Verify registration and save credential
+// IMPORTANT: Always uses session.user.id (real user), never "viewing as" override
 export async function POST(request: NextRequest) {
   try {
-    const context = await getMerchantContext();
-    if (!context) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const merchantId = session.user.id; // Always real user ID
 
     const body = await request.json();
     const { attestationResponse, deviceName } = body;
@@ -93,7 +100,7 @@ export async function POST(request: NextRequest) {
     const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
 
     // Save credential to DB
-    console.log(`[webauthn/register] Saving credential for merchant=${context.merchantId} credentialId=${credential.id}`);
+    console.log(`[webauthn/register] Saving credential for merchant=${merchantId} credentialId=${credential.id}`);
     const saved = await prisma.webAuthnCredential.create({
       data: {
         credentialId: credential.id,
@@ -101,16 +108,16 @@ export async function POST(request: NextRequest) {
         counter: BigInt(credential.counter),
         transports: credential.transports || [],
         deviceName: deviceName || null,
-        merchantId: context.merchantId,
+        merchantId: merchantId,
       },
     });
 
     // Verify the save actually persisted (catches PgBouncer/Neon phantom writes)
     const verifyCount = await prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(*)::bigint as count FROM "WebAuthnCredential" WHERE "merchantId" = ${context.merchantId}
+      SELECT COUNT(*)::bigint as count FROM "WebAuthnCredential" WHERE "merchantId" = ${merchantId}
     `;
     const count = Number(verifyCount[0].count);
-    console.log(`[webauthn/register] After save: merchantId=${context.merchantId} savedId=${saved.id} dbCount=${count}`);
+    console.log(`[webauthn/register] After save: merchantId=${merchantId} savedId=${saved.id} dbCount=${count}`);
 
     if (count === 0) {
       console.error(`[webauthn/register] CRITICAL: Prisma create returned but credential NOT in DB!`);
