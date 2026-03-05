@@ -83,6 +83,9 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
                 )}
                 {order.buyerNickName}
               </p>
+              {order.buyerRealName && (
+                <p className="text-gray-400 text-xs truncate">{order.buyerRealName}</p>
+              )}
             </div>
             <div className="text-right">
               <span className="text-gray-500 text-[10px]">Total</span>

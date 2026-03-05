@@ -32,10 +32,13 @@ export function P2POrderCard({ order, onTap, reasonTag }: P2POrderCardProps) {
         </span>
       </div>
 
-      {/* Row 2: Buyer nickname */}
+      {/* Row 2: Buyer nickname + real name */}
       <div className="mt-0.5 truncate text-[11px] text-gray-400">
         {order.isTrustedBuyer && <span className="mr-0.5">&#11088;</span>}
         {order.buyerNickName}
+        {order.buyerRealName && (
+          <span className="text-gray-500 ml-1">({order.buyerRealName})</span>
+        )}
       </div>
 
       {/* Row 3: Status + reason tag */}
