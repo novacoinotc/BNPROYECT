@@ -122,7 +122,11 @@ export function P2POrderModal({ order, onClose, onRelease, onReleaseAndVIP, onRe
         {/* Tab Content */}
         <div className="flex-1 overflow-y-auto p-3 scroll-touch">
           {activeTab === 'chat' && (
-            <P2PChatView orderNumber={order.orderNumber} />
+            <P2PChatView
+              orderNumber={order.orderNumber}
+              buyerNickName={order.buyerNickName}
+              buyerUserNo={order.buyerUserNo}
+            />
           )}
 
           {activeTab === 'verificacion' && (

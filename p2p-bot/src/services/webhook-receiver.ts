@@ -150,6 +150,9 @@ export class WebhookReceiver extends EventEmitter {
     // Multi-ad positioning status
     this.app.get('/api/positioning/status', this.handlePositioningStatus.bind(this));
 
+    // Image proxy - downloads Binance chat images for INE storage
+    this.app.get('/api/proxy-image', this.handleImageProxy.bind(this));
+
     // Debug: Explore BUY order data (temporary - for development)
     this.app.get('/api/debug/buy-orders', this.handleDebugBuyOrders.bind(this));
 
@@ -678,6 +681,39 @@ export class WebhookReceiver extends EventEmitter {
         success: false,
         error: error.message || 'Failed to fetch chat messages',
       });
+    }
+  }
+
+  /**
+   * Proxy image download from Binance CDN (for INE storage)
+   */
+  private async handleImageProxy(req: Request, res: Response): Promise<void> {
+    try {
+      const imageUrl = req.query.url as string;
+      if (!imageUrl) {
+        res.status(400).json({ success: false, error: 'url query param is required' });
+        return;
+      }
+
+      const response = await fetch(imageUrl, {
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) {
+        res.status(response.status).json({ success: false, error: 'Failed to download image' });
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', buffer.length);
+      res.send(buffer);
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Image proxy error');
+      res.status(500).json({ success: false, error: 'Failed to proxy image' });
     }
   }
 

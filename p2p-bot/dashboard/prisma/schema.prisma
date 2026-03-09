@@ -89,6 +89,7 @@ model Merchant {
   supportRequests   SupportRequest[]
   chatMessages      ChatMessage[]
   webauthnCredentials WebAuthnCredential[]
+  buyerDocuments    BuyerDocument[]
 
   @@index([email])
   @@index([clabeAccount])
@@ -360,10 +361,42 @@ model TrustedBuyer {
   merchantId            String?
   merchant              Merchant? @relation(fields: [merchantId], references: [id])
 
+  // Relations
+  documents         BuyerDocument[]
+
   @@unique([buyerUserNo, merchantId])
   @@index([counterPartNickName])
   @@index([buyerUserNo])
   @@index([isActive])
+  @@index([merchantId])
+}
+
+/// Buyer identity documents (INE, etc.) for chargeback defense
+model BuyerDocument {
+  id                  String   @id @default(cuid())
+  trustedBuyerId      String
+  trustedBuyer        TrustedBuyer @relation(fields: [trustedBuyerId], references: [id], onDelete: Cascade)
+
+  documentType        String   @default("INE")   // INE, PASSPORT, etc.
+  imageData           Bytes                       // Compressed JPEG binary
+  mimeType            String   @default("image/jpeg")
+  originalSize        Int?                        // Original file size in bytes
+  compressedSize      Int?                        // Compressed size in bytes
+
+  // Source tracking
+  sourceOrderNumber   String?                     // Order where image was found
+  sourceChatMessageId String?                     // ChatMessage.id reference
+
+  notes               String?
+  uploadedBy          String?                     // "manual", "chat-extract", "retroactive-script"
+
+  createdAt           DateTime @default(now())
+
+  // Multi-tenant
+  merchantId          String?
+  merchant            Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([trustedBuyerId])
   @@index([merchantId])
 }
 

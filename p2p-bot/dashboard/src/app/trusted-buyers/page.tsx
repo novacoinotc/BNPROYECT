@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { INEViewer } from '@/components/trusted-buyers/INEViewer';
 
 interface TrustedBuyer {
   id: string;
@@ -16,6 +17,8 @@ interface TrustedBuyer {
   isActive: boolean;
 }
 
+interface DocCount { trustedBuyerId: string; count: number }
+
 export default function TrustedBuyersPage() {
   const [trustedBuyers, setTrustedBuyers] = useState<TrustedBuyer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,6 +26,8 @@ export default function TrustedBuyersPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState<TrustedBuyer | null>(null);
+  const [viewingINE, setViewingINE] = useState<TrustedBuyer | null>(null);
+  const [docCounts, setDocCounts] = useState<Map<string, number>>(new Map());
 
   const fetchTrustedBuyers = useCallback(async () => {
     try {
@@ -41,9 +46,33 @@ export default function TrustedBuyersPage() {
     }
   }, [showInactive]);
 
+  // Fetch document counts for all buyers
+  const fetchDocCounts = useCallback(async (buyers: TrustedBuyer[]) => {
+    const counts = new Map<string, number>();
+    // Fetch all documents (metadata only) and count per buyer
+    try {
+      const res = await fetch('/api/buyer-documents');
+      const data = await res.json();
+      if (data.success) {
+        for (const doc of data.documents) {
+          counts.set(doc.trustedBuyerId, (counts.get(doc.trustedBuyerId) || 0) + 1);
+        }
+      }
+    } catch {
+      // Ignore — counts are optional UI enhancement
+    }
+    setDocCounts(counts);
+  }, []);
+
   useEffect(() => {
     fetchTrustedBuyers();
   }, [fetchTrustedBuyers]);
+
+  useEffect(() => {
+    if (trustedBuyers.length > 0) {
+      fetchDocCounts(trustedBuyers);
+    }
+  }, [trustedBuyers, fetchDocCounts]);
 
   const handleRemove = async (buyer: TrustedBuyer) => {
     const displayName = buyer.realName || buyer.counterPartNickName;
@@ -119,7 +148,13 @@ export default function TrustedBuyersPage() {
                     </div>
                   </div>
                   {buyer.isActive && (
-                    <div className="flex gap-3 mt-2">
+                    <div className="flex gap-3 mt-2 items-center">
+                      <button onClick={() => setViewingINE(buyer)} className="text-amber-400 text-xs flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
+                        </svg>
+                        INE{docCounts.get(buyer.id) ? ` (${docCounts.get(buyer.id)})` : ''}
+                      </button>
                       <button onClick={() => setEditingBuyer(buyer)} className="text-blue-400 text-xs">Editar</button>
                       <button onClick={() => handleRemove(buyer)} className="text-red-400 text-xs">Remover</button>
                     </div>
@@ -136,6 +171,7 @@ export default function TrustedBuyersPage() {
                     <th className="px-4 py-3 text-left">Comprador</th>
                     <th className="px-4 py-3 text-center">Operaciones</th>
                     <th className="px-4 py-3 text-right">Monto Total</th>
+                    <th className="px-4 py-3 text-center">INE</th>
                     <th className="px-4 py-3 text-center">Estado</th>
                     <th className="px-4 py-3 text-center">Acciones</th>
                   </tr>
@@ -162,6 +198,23 @@ export default function TrustedBuyersPage() {
                       </td>
                       <td className="px-4 py-3 text-right text-white">
                         ${parseFloat(buyer.totalAmountReleased || '0').toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {buyer.isActive && (
+                          <button
+                            onClick={() => setViewingINE(buyer)}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${
+                              docCounts.get(buyer.id)
+                                ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
+                                : 'bg-gray-500/10 text-gray-500 hover:bg-gray-500/20'
+                            }`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
+                            </svg>
+                            {docCounts.get(buyer.id) || 0}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
@@ -192,6 +245,13 @@ export default function TrustedBuyersPage() {
       )}
       {editingBuyer && (
         <EditTrustedBuyerModal buyer={editingBuyer} onClose={() => setEditingBuyer(null)} onSuccess={() => { setEditingBuyer(null); fetchTrustedBuyers(); }} />
+      )}
+      {viewingINE && (
+        <INEViewer
+          trustedBuyerId={viewingINE.id}
+          buyerName={viewingINE.realName || viewingINE.counterPartNickName}
+          onClose={() => { setViewingINE(null); fetchDocCounts(trustedBuyers); }}
+        />
       )}
     </div>
   );

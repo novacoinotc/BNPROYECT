@@ -1898,6 +1898,80 @@ export async function removeTrustedBuyer(buyerUserNoOrId: string): Promise<boole
 }
 
 /**
+ * Get trusted buyer by buyerUserNo (Binance unique ID)
+ * Returns the TrustedBuyer record or null if not found
+ */
+export async function getTrustedBuyerByUserNo(buyerUserNo: string): Promise<TrustedBuyerData | null> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  if (!buyerUserNo) return null;
+
+  const merchantFilter = merchantId ? ' AND "merchantId" = $2' : '';
+  const params = merchantId ? [buyerUserNo, merchantId] : [buyerUserNo];
+
+  const result = await db.query(
+    `SELECT * FROM "TrustedBuyer"
+     WHERE "isActive" = true AND "buyerUserNo" = $1${merchantFilter}`,
+    params
+  );
+
+  return result.rows[0] || null;
+}
+
+/**
+ * Save a buyer document (ID image) to the database
+ */
+export async function saveBuyerDocument(data: {
+  trustedBuyerId: string;
+  documentType: string;
+  imageData: Buffer;
+  mimeType: string;
+  originalSize: number;
+  compressedSize: number;
+  sourceOrderNumber?: string;
+  sourceChatMessageId?: string;
+  uploadedBy: string;
+}): Promise<string> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const id = generateId();
+
+  await db.query(
+    `INSERT INTO "BuyerDocument" (
+      id, "trustedBuyerId", "documentType", "imageData",
+      "mimeType", "originalSize", "compressedSize",
+      "sourceOrderNumber", "sourceChatMessageId",
+      "uploadedBy", "merchantId", "createdAt"
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+    [
+      id,
+      data.trustedBuyerId,
+      data.documentType,
+      data.imageData,
+      data.mimeType,
+      data.originalSize,
+      data.compressedSize,
+      data.sourceOrderNumber || null,
+      data.sourceChatMessageId || null,
+      data.uploadedBy,
+      merchantId || null,
+    ]
+  );
+
+  logger.info({
+    documentId: id,
+    trustedBuyerId: data.trustedBuyerId,
+    documentType: data.documentType,
+    originalSize: data.originalSize,
+    compressedSize: data.compressedSize,
+    sourceOrderNumber: data.sourceOrderNumber,
+  }, '📄 [BUYER DOCUMENT] Saved ID document');
+
+  return id;
+}
+
+/**
  * List all trusted buyers (filtered by merchantId in multi-tenant mode)
  */
 export async function listTrustedBuyers(includeInactive: boolean = false): Promise<TrustedBuyerData[]> {

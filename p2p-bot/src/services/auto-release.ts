@@ -11,6 +11,7 @@ import { OCRService } from './ocr-service.js';
 import { getBinanceClient, BinanceC2CClient } from './binance-client.js';
 import { BuyerRiskAssessor, BuyerRiskAssessment } from './buyer-risk-assessor.js';
 import { getTOTPService } from './totp-service.js';
+import { classifyText, logClassification, DocumentType } from './document-classifier.js';
 import { logger } from '../utils/logger.js';
 import * as db from './database-pg.js';
 import {
@@ -334,7 +335,62 @@ export class AutoReleaseOrchestrator extends EventEmitter {
    * Handle chat events
    */
   private async handleChatEvent(event: ChatEvent): Promise<void> {
-    if (event.type === 'image' && event.message) {
+    if (event.type === 'image' && event.message && !event.message.self) {
+      const imageUrl = event.message.imageUrl || '';
+      const orderNo = event.message.orderNo;
+
+      if (!imageUrl) return;
+
+      // Run OCR on the image to classify it
+      try {
+        const ocrResult = await this.ocrService.processReceiptUrl(imageUrl);
+
+        if (ocrResult.rawText && ocrResult.rawText.length > 10) {
+          const classification = classifyText(ocrResult.rawText);
+          logClassification(classification, orderNo);
+
+          if (classification.type.startsWith('ID_') && classification.confidence >= 0.3) {
+            // Detected an ID document — save it in background (don't block receipt flow)
+            this.handleIdDocument(event.message, classification).catch(err => {
+              logger.error({ err, orderNo }, '📄 [ID DETECT] Error saving ID document');
+            });
+          }
+
+          if (classification.type === 'RECEIPT' || classification.type === 'UNKNOWN') {
+            // Route to existing receipt handler
+            await this.handleReceiptImage({
+              orderNo,
+              imageUrl,
+              thumbnailUrl: event.message.thumbnailUrl,
+              senderId: '',
+              senderName: event.message.fromNickName,
+              timestamp: new Date(event.message.createTime),
+            });
+          }
+        } else {
+          // OCR didn't extract useful text — treat as potential receipt (existing behavior)
+          await this.handleReceiptImage({
+            orderNo,
+            imageUrl,
+            thumbnailUrl: event.message.thumbnailUrl,
+            senderId: '',
+            senderName: event.message.fromNickName,
+            timestamp: new Date(event.message.createTime),
+          });
+        }
+      } catch (err) {
+        logger.error({ err, orderNo }, '📄 [DOC CLASSIFY] OCR classification failed, falling back to receipt handler');
+        await this.handleReceiptImage({
+          orderNo,
+          imageUrl,
+          thumbnailUrl: event.message.thumbnailUrl,
+          senderId: '',
+          senderName: event.message.fromNickName,
+          timestamp: new Date(event.message.createTime),
+        });
+      }
+    } else if (event.type === 'image' && event.message && event.message.self) {
+      // Self images — still route to receipt handler (existing behavior)
       await this.handleReceiptImage({
         orderNo: event.message.orderNo,
         imageUrl: event.message.imageUrl || '',
@@ -356,6 +412,114 @@ export class AutoReleaseOrchestrator extends EventEmitter {
         logger.info(`🆘 [SUPPORT] Detected AYUDA in order ${event.message.orderNo}`);
         await this.handleSupportRequest(event.message);
       }
+    }
+  }
+
+  /**
+   * Handle detected ID document — download, compress, and save to BuyerDocument
+   */
+  private async handleIdDocument(
+    message: { orderNo: string; imageUrl?: string; fromNickName: string; id: number },
+    classification: { type: DocumentType; confidence: number; detectedPatterns: string[] }
+  ): Promise<void> {
+    const orderNo = message.orderNo;
+    const imageUrl = message.imageUrl;
+
+    if (!imageUrl) return;
+
+    // Look up the order to get buyerUserNo
+    const pending = this.pendingReleases.get(orderNo);
+    const buyerUserNo = pending?.order?.buyer?.userNo
+      || (pending?.order as any)?.buyerUserNo
+      || null;
+
+    if (!buyerUserNo || buyerUserNo === 'unknown') {
+      logger.info({ orderNo, fromNickName: message.fromNickName },
+        '📄 [ID DETECT] ID detected but no buyerUserNo available — skipping save');
+      return;
+    }
+
+    // Find TrustedBuyer record
+    const trustedBuyer = await db.getTrustedBuyerByUserNo(buyerUserNo);
+    if (!trustedBuyer) {
+      logger.info({ orderNo, buyerUserNo, fromNickName: message.fromNickName },
+        '📄 [ID DETECT] ID detected but buyer is not in trusted list — skipping save');
+      return;
+    }
+
+    try {
+      // Download image
+      const axios = (await import('axios')).default;
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
+      const imageBuffer = Buffer.from(response.data);
+      const originalSize = imageBuffer.length;
+
+      // Compress with sharp
+      let compressedBuffer: Buffer;
+      let compressedSize: number;
+      try {
+        const sharp = (await import('sharp')).default;
+        compressedBuffer = await sharp(imageBuffer)
+          .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        compressedSize = compressedBuffer.length;
+      } catch {
+        // If sharp fails, save original
+        compressedBuffer = imageBuffer;
+        compressedSize = originalSize;
+      }
+
+      // Map classifier type to DB documentType
+      const docTypeMap: Record<string, string> = {
+        'ID_INE': 'INE',
+        'ID_PASSPORT': 'PASSPORT',
+        'ID_LICENSE': 'LICENSE',
+      };
+      const documentType = docTypeMap[classification.type] || 'INE';
+
+      // Save to database
+      const docId = await db.saveBuyerDocument({
+        trustedBuyerId: trustedBuyer.id,
+        documentType,
+        imageData: compressedBuffer,
+        mimeType: 'image/jpeg',
+        originalSize,
+        compressedSize,
+        sourceOrderNumber: orderNo,
+        sourceChatMessageId: String(message.id),
+        uploadedBy: 'chat-auto-detect',
+      });
+
+      logger.info({
+        documentId: docId,
+        orderNo,
+        buyerUserNo,
+        buyerNickName: trustedBuyer.counterPartNickName,
+        documentType,
+        confidence: classification.confidence.toFixed(2),
+        originalSize,
+        compressedSize,
+      }, `📄 [ID DETECT] Auto-saved ${documentType} for trusted buyer`);
+
+      // Broadcast SSE event for dashboard notification
+      this.webhookReceiver.broadcastSSE({
+        type: 'document_saved',
+        orderNumber: orderNo,
+        buyerNickName: trustedBuyer.counterPartNickName,
+        trustedBuyerId: trustedBuyer.id,
+        documentType,
+        confidence: classification.confidence,
+        timestamp: new Date().toISOString(),
+      });
+
+    } catch (err) {
+      logger.error({ err, orderNo, buyerUserNo },
+        '📄 [ID DETECT] Failed to download/save ID document');
     }
   }
 
@@ -1397,7 +1561,12 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     // DO NOT match by realName - different people can have the same name!
     let buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
     let buyerRealName = (pending.order as any).buyerRealName || pending.order.buyer?.realName || null;
-    let buyerUserNo = pending.order.buyer?.userNo || null;
+    // Check multiple sources for buyerUserNo: buyer object, top-level property, or DB-saved value
+    let buyerUserNo = pending.order.buyer?.userNo || (pending.order as any).buyerUserNo || null;
+    // Filter out placeholder values that are not real user IDs
+    if (buyerUserNo === 'unknown' || buyerUserNo === 'self' || buyerUserNo === 'counterpart') {
+      buyerUserNo = null;
+    }
 
     // CRITICAL FIX: If buyerUserNo is missing, fetch order detail to get it
     // This is required for TrustedBuyer verification to work correctly
@@ -1429,6 +1598,16 @@ export class AutoReleaseOrchestrator extends EventEmitter {
           buyerNickName,
           buyerRealName: buyerRealName || '(not available)',
         }, '📋 [TRUSTED BUYER CHECK] Got buyer info from order detail');
+
+        // CRITICAL: Persist buyerUserNo to DB so dashboard shows correct value
+        // This prevents VIP saves with 'unknown' buyerUserNo
+        if (buyerUserNo) {
+          try {
+            await db.saveOrder({ ...pending.order, buyer: { ...((pending.order as any).buyer || {}), userNo: buyerUserNo } } as any);
+          } catch {
+            // Non-blocking — best effort DB update
+          }
+        }
       } catch (error) {
         logger.warn({ orderNumber, error }, '⚠️ [TRUSTED BUYER CHECK] Failed to fetch order detail for userNo');
       }

@@ -192,10 +192,18 @@ export default function P2PPage() {
   const handleReleaseAndVIP = (orderNumber: string) => {
     const order = displayedOrders.find(o => o.orderNumber === orderNumber);
     if (order) {
+      // Validate buyerUserNo is available and valid
+      const userNo = order.buyerUserNo;
+      if (!userNo || userNo === 'unknown' || userNo === 'self') {
+        alert('buyerUserNo no disponible para este comprador. No se puede marcar como VIP. Intenta liberar sin VIP y agrega el VIP desde la sección de compradores confiables.');
+        // Still allow release, just without VIP
+        setReleaseOrderNumber(orderNumber);
+        return;
+      }
       setPendingVIP({
         orderNumber,
         buyerNickName: order.buyerNickName,
-        buyerUserNo: order.buyerUserNo,
+        buyerUserNo: userNo,
         realName: order.buyerRealName,
       });
     }
@@ -206,7 +214,7 @@ export default function P2PPage() {
     // If this was a release+VIP, mark buyer as trusted
     if (pendingVIP) {
       try {
-        await fetch('/api/trusted-buyers', {
+        const res = await fetch('/api/trusted-buyers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -217,8 +225,12 @@ export default function P2PPage() {
             notes: `Marcado VIP al liberar orden ${pendingVIP.orderNumber}`,
           }),
         });
+        const data = await res.json();
+        if (!data.success) {
+          alert(`Error al marcar como VIP: ${data.error || 'Error desconocido'}`);
+        }
       } catch {
-        // VIP marking is best-effort, don't block the release flow
+        alert('Error de red al marcar como VIP. Agrega manualmente desde compradores confiables.');
       }
       setPendingVIP(null);
     }
