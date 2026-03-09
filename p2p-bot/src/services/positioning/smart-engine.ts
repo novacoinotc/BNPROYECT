@@ -95,6 +95,7 @@ export class SmartEngine {
       tradeType: searchType,
       page: 1,
       rows: 20,
+      kycVerifiedOnly: true, // SECURITY: Only consider KYC-verified users for positioning
     });
 
     if (ads.length > 0) {

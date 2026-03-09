@@ -78,6 +78,7 @@ export class FollowEngine {
         tradeType: searchType,
         page,
         rows: 20,
+        kycVerifiedOnly: true, // SECURITY: Only consider KYC-verified users
       });
 
       if (ads.length === 0) break;

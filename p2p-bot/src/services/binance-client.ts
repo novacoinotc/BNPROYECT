@@ -230,7 +230,7 @@ export class BinanceC2CClient {
         shieldMerchantAds: false,
         filterType: 'all',
         periods: [],
-        additionalKycVerifyFilter: 0,
+        additionalKycVerifyFilter: request.kycVerifiedOnly ? 1 : 0,
         payTypes: [],
       };
 

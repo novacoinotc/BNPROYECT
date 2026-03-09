@@ -88,6 +88,7 @@ export interface SearchAdsRequest {
   payTypes?: string[];
   publisherType?: string;
   transAmount?: number;
+  kycVerifiedOnly?: boolean; // true = only return KYC-verified users
 }
 
 export interface UpdateAdRequest {
