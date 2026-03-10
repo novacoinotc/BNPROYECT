@@ -491,18 +491,25 @@ export class BinanceC2CClient {
    * Error 187022 = wrong advNo or ad is offline.
    */
   async updateAd(request: UpdateAdRequest): Promise<boolean> {
-    // Round price to 2 decimals
-    const priceNum = typeof request.price === 'number'
-      ? Math.round(request.price * 100) / 100
-      : parseFloat(String(request.price));
-
-    // Simple body - this is the format that works
-    const body = {
+    // Build body with only provided fields
+    const body: Record<string, any> = {
       advNo: request.advNo,
-      price: priceNum,
     };
 
-    logger.info(`📝 [UPDATE AD] advNo=${body.advNo} price=${body.price}`);
+    if (request.price !== undefined) {
+      body.price = typeof request.price === 'number'
+        ? Math.round(request.price * 100) / 100
+        : parseFloat(String(request.price));
+    }
+
+    if (request.initAmount !== undefined) {
+      body.initAmount = Math.round(request.initAmount * 100) / 100;
+    }
+
+    const logParts = [`advNo=${body.advNo}`];
+    if (body.price !== undefined) logParts.push(`price=${body.price}`);
+    if (body.initAmount !== undefined) logParts.push(`initAmount=${body.initAmount}`);
+    logger.info(`📝 [UPDATE AD] ${logParts.join(' ')}`);
 
     try {
       const response = await this.signedPost<{ code: string; success: boolean }>(

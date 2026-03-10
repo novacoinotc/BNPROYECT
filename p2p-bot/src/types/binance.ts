@@ -100,6 +100,7 @@ export interface UpdateAdRequest {
   price?: number;
   priceType?: PriceType;
   priceFloatingRatio?: number;
+  initAmount?: number;           // total ad amount (e.g. USDT quantity)
   minSingleTransAmount?: number;
   maxSingleTransAmount?: number;
   minSingleTransQuantity?: number;

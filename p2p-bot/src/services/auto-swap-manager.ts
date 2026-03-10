@@ -200,6 +200,105 @@ export class AutoSwapManager extends EventEmitter {
     return (adjusted / scale).toFixed(precision);
   }
 
+  // ==================== SPOT → FUNDING TRANSFER (USDT) ====================
+
+  /**
+   * Check Spot wallet for USDT and transfer to Funding (P2P wallet).
+   * Then update the SELL ad's initAmount so the new USDT appears on the ad.
+   * Triggered when operators receive USDT deposits to their Spot wallet.
+   */
+  private async transferSpotUsdtToFunding(): Promise<void> {
+    try {
+      const balances = await this.client.getSpotBalances();
+      const usdtBalance = balances.find(b => b.asset === 'USDT');
+      if (!usdtBalance) return;
+
+      const free = parseFloat(usdtBalance.free);
+      // Only transfer if there's meaningful USDT in Spot (> $1)
+      if (free <= 1) return;
+
+      // Transfer full USDT balance from Spot → Funding
+      const amount = usdtBalance.free;
+      await this.client.walletTransfer('USDT', amount, 'MAIN_FUNDING');
+      this.totalTransfers++;
+
+      logger.info({
+        amount,
+      }, '💰 [AUTO-SWAP] USDT transferred Spot → Funding');
+
+      // Now update the SELL ad to include the new USDT
+      await this.reloadSellAd(parseFloat(amount));
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.msg || error?.message || '';
+      // Ignore harmless errors
+      if (!errorMsg.includes('You don') && !errorMsg.includes('The amount')) {
+        logger.warn({ error: errorMsg }, '[AUTO-SWAP] Spot → Funding USDT transfer failed');
+      }
+    }
+  }
+
+  /**
+   * Find the operator's active SELL ad and increase its initAmount
+   * so the transferred USDT is available for P2P trading.
+   */
+  private async reloadSellAd(addedUsdt: number): Promise<void> {
+    try {
+      // Get operator's own ads
+      const myAds = await this.client.listMyAds();
+      const sellAds = (myAds.sellList || []).filter(
+        (ad: any) => ad.asset === 'USDT' && ad.advStatus === 1
+      );
+
+      if (sellAds.length === 0) {
+        logger.debug('[AUTO-SWAP] No active SELL USDT ad found — skipping ad reload');
+        return;
+      }
+
+      const sellAd = sellAds[0];
+      const advNo = sellAd.advNo;
+
+      // Get full ad detail to know current initAmount
+      const detail = await this.client.getAdDetailByNo(advNo);
+      const currentSurplus = parseFloat(sellAd.surplusAmount || '0');
+
+      // Try to read initAmount from ad detail (field location varies by API version)
+      let currentInitAmount = parseFloat(
+        detail?.initAmount || detail?.data?.initAmount || detail?.adDetailResp?.initAmount || '0'
+      );
+
+      // Fallback: if we can't get initAmount, use surplus as base
+      // (surplus = what's currently available on the ad)
+      if (currentInitAmount <= 0) {
+        currentInitAmount = currentSurplus;
+        logger.debug({ advNo, currentSurplus }, '[AUTO-SWAP] Using surplus as base for initAmount');
+      }
+
+      if (currentInitAmount <= 0) {
+        logger.warn({ advNo }, '[AUTO-SWAP] Could not determine ad amount — skipping reload');
+        return;
+      }
+
+      // New initAmount = current + added USDT
+      const newInitAmount = Math.floor((currentInitAmount + addedUsdt) * 100) / 100;
+
+      await this.client.updateAd({
+        advNo,
+        initAmount: newInitAmount,
+      });
+
+      logger.info({
+        advNo,
+        addedUsdt: addedUsdt.toFixed(2),
+        oldInitAmount: currentInitAmount.toFixed(2),
+        newInitAmount: newInitAmount.toFixed(2),
+        surplus: currentSurplus.toFixed(2),
+      }, '📈 [AUTO-SWAP] SELL ad updated — USDT loaded to ad');
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.msg || error?.message || '';
+      logger.warn({ error: errorMsg, addedUsdt }, '[AUTO-SWAP] Failed to reload SELL ad (USDT is in Funding but ad not updated)');
+    }
+  }
+
   // ==================== FUNDING → SPOT TRANSFER ====================
 
   /**
@@ -264,6 +363,9 @@ export class AutoSwapManager extends EventEmitter {
         this.consecutiveErrors = 0;
         return;
       }
+
+      // Step 0: Transfer USDT from Spot → Funding (makes deposits available for P2P ads)
+      await this.transferSpotUsdtToFunding();
 
       // Step 1: Transfer any crypto from Funding → Spot
       const transferred = await this.transferFundingToSpot();
