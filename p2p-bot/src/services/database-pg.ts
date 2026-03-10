@@ -2959,6 +2959,200 @@ export async function getSwapRecords(limit: number = 50): Promise<SwapRecord[]> 
   }));
 }
 
+// ==================== OPERATOR MONITORING ====================
+
+/**
+ * Save an operator monitoring snapshot
+ */
+export async function saveOperatorSnapshot(data: {
+  nickname: string;
+  isAdOnline: boolean;
+  surplusAmount: number | null;
+  adPrice: number | null;
+  lowFunds: boolean;
+}): Promise<void> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  await db.query(
+    `INSERT INTO "OperatorSnapshot" (
+      id, nickname, "checkedAt", "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "merchantId"
+    ) VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7)`,
+    [
+      generateId(),
+      data.nickname,
+      data.isAdOnline,
+      data.surplusAmount,
+      data.adPrice,
+      data.lowFunds,
+      merchantId || null,
+    ]
+  );
+}
+
+/**
+ * Get operator daily summary: hours online, hours with low funds
+ * Groups snapshots by day. Each snapshot = ~5 min interval.
+ */
+export async function getOperatorDailySummary(
+  date: string, // YYYY-MM-DD
+  nickname?: string
+): Promise<Array<{
+  nickname: string;
+  date: string;
+  totalSnapshots: number;
+  onlineSnapshots: number;
+  lowFundsSnapshots: number;
+  hoursOnline: number;
+  hoursLowFunds: number;
+  avgSurplus: number | null;
+  minSurplus: number | null;
+}>> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  const conditions = [`"checkedAt"::date = $1`];
+  const params: any[] = [date];
+
+  if (nickname) {
+    params.push(nickname);
+    conditions.push(`nickname = $${params.length}`);
+  }
+  if (merchantId) {
+    params.push(merchantId);
+    conditions.push(`"merchantId" = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `SELECT
+      nickname,
+      $1::date as date,
+      COUNT(*)::int as "totalSnapshots",
+      COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
+      COUNT(*) FILTER (WHERE "lowFunds" = true)::int as "lowFundsSnapshots",
+      ROUND((COUNT(*) FILTER (WHERE "isAdOnline" = true) * 5.0 / 60)::numeric, 2) as "hoursOnline",
+      ROUND((COUNT(*) FILTER (WHERE "lowFunds" = true) * 5.0 / 60)::numeric, 2) as "hoursLowFunds",
+      ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
+      MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
+    FROM "OperatorSnapshot"
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY nickname
+    ORDER BY nickname`,
+    params
+  );
+
+  return result.rows.map(row => ({
+    nickname: row.nickname,
+    date: date,
+    totalSnapshots: row.totalSnapshots,
+    onlineSnapshots: row.onlineSnapshots,
+    lowFundsSnapshots: row.lowFundsSnapshots,
+    hoursOnline: parseFloat(row.hoursOnline) || 0,
+    hoursLowFunds: parseFloat(row.hoursLowFunds) || 0,
+    avgSurplus: row.avgSurplus !== null ? parseFloat(row.avgSurplus) : null,
+    minSurplus: row.minSurplus !== null ? parseFloat(row.minSurplus) : null,
+  }));
+}
+
+/**
+ * Get operator summary for a date range
+ */
+export async function getOperatorRangeSummary(
+  startDate: string, // YYYY-MM-DD
+  endDate: string,    // YYYY-MM-DD
+  nickname?: string
+): Promise<Array<{
+  nickname: string;
+  date: string;
+  hoursOnline: number;
+  hoursLowFunds: number;
+  avgSurplus: number | null;
+}>> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  const conditions = [`"checkedAt"::date >= $1`, `"checkedAt"::date <= $2`];
+  const params: any[] = [startDate, endDate];
+
+  if (nickname) {
+    params.push(nickname);
+    conditions.push(`nickname = $${params.length}`);
+  }
+  if (merchantId) {
+    params.push(merchantId);
+    conditions.push(`"merchantId" = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `SELECT
+      nickname,
+      "checkedAt"::date as date,
+      ROUND((COUNT(*) FILTER (WHERE "isAdOnline" = true) * 5.0 / 60)::numeric, 2) as "hoursOnline",
+      ROUND((COUNT(*) FILTER (WHERE "lowFunds" = true) * 5.0 / 60)::numeric, 2) as "hoursLowFunds",
+      ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus"
+    FROM "OperatorSnapshot"
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY nickname, "checkedAt"::date
+    ORDER BY date DESC, nickname`,
+    params
+  );
+
+  return result.rows.map(row => ({
+    nickname: row.nickname,
+    date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date),
+    hoursOnline: parseFloat(row.hoursOnline) || 0,
+    hoursLowFunds: parseFloat(row.hoursLowFunds) || 0,
+    avgSurplus: row.avgSurplus !== null ? parseFloat(row.avgSurplus) : null,
+  }));
+}
+
+/**
+ * Get current status of all monitored operators (latest snapshot per operator)
+ */
+export async function getOperatorCurrentStatus(): Promise<Array<{
+  nickname: string;
+  isAdOnline: boolean;
+  surplusAmount: number | null;
+  adPrice: number | null;
+  lowFunds: boolean;
+  lastChecked: string;
+}>> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+
+  const merchantFilter = merchantId ? `AND "merchantId" = $1` : '';
+  const params = merchantId ? [merchantId] : [];
+
+  const result = await db.query(
+    `SELECT DISTINCT ON (nickname)
+      nickname, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
+    FROM "OperatorSnapshot"
+    WHERE "checkedAt" > NOW() - INTERVAL '1 hour' ${merchantFilter}
+    ORDER BY nickname, "checkedAt" DESC`,
+    params
+  );
+
+  return result.rows.map(row => ({
+    nickname: row.nickname,
+    isAdOnline: row.isAdOnline,
+    surplusAmount: row.surplusAmount,
+    adPrice: row.adPrice,
+    lowFunds: row.lowFunds,
+    lastChecked: row.checkedAt?.toISOString?.() || String(row.checkedAt),
+  }));
+}
+
+/**
+ * Cleanup old operator snapshots (older than N days)
+ */
+export async function cleanupOperatorSnapshots(daysToKeep: number = 90): Promise<number> {
+  const db = getPool();
+  const result = await db.query(
+    `DELETE FROM "OperatorSnapshot" WHERE "checkedAt" < NOW() - INTERVAL '${daysToKeep} days'`
+  );
+  return result.rowCount || 0;
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {

@@ -18,6 +18,7 @@ import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode
 import { SellAdManager, createSellAdManager, BuyAdManager, createBuyAdManager } from './services/positioning/index.js';
 import { BuyOrderManager, createBuyOrderManager } from './services/buy-order-manager.js';
 import { AutoSwapManager, createAutoSwapManager } from './services/auto-swap-manager.js';
+import { OperatorMonitor, createOperatorMonitor } from './services/operator-monitor.js';
 import { TradeType, AuthType } from './types/binance.js';
 
 // ==================== CONFIGURATION ====================
@@ -60,6 +61,8 @@ let buyAdManager: BuyAdManager | null = null;
 let buyOrderManager: BuyOrderManager | null = null;
 // Auto-swap module (converts crypto balances to USDT)
 let autoSwapManager: AutoSwapManager | null = null;
+// Operator monitoring (tracks online hours + volume)
+let operatorMonitor: OperatorMonitor | null = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -308,6 +311,13 @@ async function startServices(): Promise<void> {
     autoSwapManager = createAutoSwapManager();
     await autoSwapManager.start();
     logger.info('Auto-swap module started');
+  }
+
+  // Start operator monitor (tracks online hours + volume - only if nicknames configured)
+  operatorMonitor = createOperatorMonitor();
+  if (operatorMonitor) {
+    await operatorMonitor.start();
+    logger.info('Operator monitor started');
   }
 }
 

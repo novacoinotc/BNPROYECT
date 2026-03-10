@@ -90,6 +90,7 @@ model Merchant {
   chatMessages      ChatMessage[]
   webauthnCredentials WebAuthnCredential[]
   buyerDocuments    BuyerDocument[]
+  operatorSnapshots OperatorSnapshot[]
 
   @@index([email])
   @@index([clabeAccount])
@@ -533,5 +534,24 @@ model BotConfig {
   merchantId          String?  @unique
   merchant            Merchant? @relation(fields: [merchantId], references: [id])
 
+  @@index([merchantId])
+}
+
+/// Operator monitoring snapshots — tracks online status and volume for each operator
+model OperatorSnapshot {
+  id              String   @id @default(cuid())
+  nickname        String                       // Binance P2P nickname of the operator
+  checkedAt       DateTime @default(now())     // When this check was performed
+  isAdOnline      Boolean                      // Was their SELL ad visible on marketplace?
+  surplusAmount   Float?                       // Available USDT on their ad (null if offline)
+  adPrice         Float?                       // Their current ad price (null if offline)
+  lowFunds        Boolean  @default(false)     // surplusAmount < threshold (default 1000 USDT)
+
+  // Multi-tenant
+  merchantId      String?
+  merchant        Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([nickname, checkedAt])
+  @@index([checkedAt])
   @@index([merchantId])
 }
