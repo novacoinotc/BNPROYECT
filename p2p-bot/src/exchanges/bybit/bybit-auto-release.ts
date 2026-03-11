@@ -255,14 +255,22 @@ export class BybitAutoRelease extends EventEmitter {
               }, 'Bybit: Buyer profile enriched from counterparty API');
 
               // CRITICAL: Block release if buyer is blocked/banned
-              if (profile.blocked && profile.blocked !== '0' && profile.blocked !== '') {
+              // blocked field: "1" = blocked, "0" or undefined/null = not blocked
+              const blockedValue = String(profile.blocked ?? '0').trim();
+              if (blockedValue === '1') {
                 log.error({
                   orderId: orderNumber,
                   buyerNickName: profile.nickName,
-                  blocked: profile.blocked,
+                  blocked: blockedValue,
                 }, 'Bybit: BUYER IS BLOCKED/BANNED — blocking auto-release');
                 this.emitRelease('manual_required', orderNumber, 'Buyer account is blocked/banned on Bybit');
                 return;  // Stop verification — do NOT auto-release
+              } else if (blockedValue !== '0') {
+                log.warn({
+                  orderId: orderNumber,
+                  blocked: profile.blocked,
+                  blockedType: typeof profile.blocked,
+                }, 'Bybit: Unexpected blocked field value — treating as not blocked');
               }
             }
           } catch (profileError) {
@@ -506,7 +514,7 @@ export class BybitAutoRelease extends EventEmitter {
     const authStatus = buyer.authStatus;
 
     // CRITICAL: Blocked buyer — never auto-release (should have been caught earlier, but double check)
-    if (buyer.blocked && buyer.blocked !== '0' && buyer.blocked !== '') {
+    if (String(buyer.blocked ?? '0').trim() === '1') {
       failedCriteria.push(`BLOCKED buyer (blocked=${buyer.blocked})`);
     }
 

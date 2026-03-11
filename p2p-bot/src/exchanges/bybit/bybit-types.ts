@@ -400,8 +400,10 @@ export function toOrderData(bybitOrder: BybitOrderData): OrderData {
     fiat: bybitOrder.currencyId,
     fiatUnit: bybitOrder.currencyId,
     fiatSymbol: bybitOrder.currencyId === 'MXN' ? 'Mex$' : '$',
-    amount: bybitOrder.amount,
-    totalPrice: String(parseFloat(bybitOrder.amount) * parseFloat(bybitOrder.price)),
+    // Bybit: amount = fiat total, NOT crypto quantity
+    // OrderData: amount = crypto qty, totalPrice = fiat total
+    amount: String(parseFloat(bybitOrder.amount) / parseFloat(bybitOrder.price)),
+    totalPrice: bybitOrder.amount,
     unitPrice: bybitOrder.price,
     commission: bybitOrder.fee || '0',
     createTime: parseInt(bybitOrder.createDate) || Date.now(),

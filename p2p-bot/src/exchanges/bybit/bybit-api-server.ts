@@ -324,25 +324,29 @@ export class BybitApiServer extends EventEmitter {
         return;
       }
 
-      await client.updateAd({
+      const updateParams = {
         id: advNo,
-        priceType: String(adDetail.priceType),
-        premium: adDetail.premium,
+        priceType: String(adDetail.priceType ?? 0),
+        premium: adDetail.premium || '0',
         price: adDetail.price,
         minAmount: adDetail.minAmount,
         maxAmount: adDetail.maxAmount,
-        remark: adDetail.remark,
-        tradingPreferenceSet: adDetail.tradingPreferenceSet,
+        remark: adDetail.remark || '',
+        tradingPreferenceSet: adDetail.tradingPreferenceSet || {},
         paymentIds: adDetail.payments || [],
-        actionType: 'ACTIVE',
-        quantity: adDetail.quantity,
-        paymentPeriod: String(adDetail.paymentPeriod),
-      });
+        actionType: 'ACTIVE' as const,
+        quantity: adDetail.quantity || adDetail.lastQuantity,
+        paymentPeriod: String(adDetail.paymentPeriod ?? 15),
+      };
 
-      log.info({ advNo, price: adDetail.price }, 'Ad activated');
+      log.info({ advNo, updateParams }, 'Attempting to activate ad');
+
+      await client.updateAd(updateParams);
+
+      log.info({ advNo, price: adDetail.price, status: adDetail.status }, 'Ad activated');
       res.json({ success: true, advNo, status: 'activated', price: adDetail.price });
     } catch (error: any) {
-      log.error({ error: error.message }, 'Ad activate error');
+      log.error({ error: error.message, advNo: req.body?.advNo }, 'Ad activate error');
       res.status(500).json({ success: false, error: error.message });
     }
   }
