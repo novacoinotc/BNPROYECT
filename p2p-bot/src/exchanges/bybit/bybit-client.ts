@@ -6,6 +6,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { logger } from '../../utils/logger.js';
 import {
   BybitApiResponse,
@@ -42,10 +43,18 @@ export class BybitClient {
     this.apiSecret = apiSecret;
     this.recvWindow = recvWindow;
 
+    // Setup proxy if configured (needed for regions where Bybit blocks IPs, e.g. US)
+    const proxyUrl = process.env.BYBIT_PROXY_URL || process.env.PROXY_URL;
+    const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+    if (proxyAgent) {
+      log.info({ proxy: proxyUrl?.replace(/:[^:@]+@/, ':***@') }, 'Using proxy for Bybit API');
+    }
+
     this.client = axios.create({
       baseURL: baseUrl,
       timeout: 30000,
       headers: { 'Content-Type': 'application/json' },
+      ...(proxyAgent && { httpsAgent: proxyAgent, proxy: false }),
     });
 
     this.setupInterceptors();
