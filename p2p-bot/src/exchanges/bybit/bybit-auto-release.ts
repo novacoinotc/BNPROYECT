@@ -50,6 +50,7 @@ interface PendingRelease {
 interface BybitBuyerRiskConfig {
   minTotalOrders: number;
   min30DayOrders: number;
+  minRegisterDays: number;
   minCompletionRate: number;
   maxAutoReleaseAmount: number;
 }
@@ -81,8 +82,9 @@ export class BybitAutoRelease extends EventEmitter {
     this.bybitClient = getBybitClient();
 
     this.riskConfig = {
-      minTotalOrders: parseInt(process.env.MIN_BUYER_TOTAL_ORDERS || '100'),
-      min30DayOrders: parseInt(process.env.MIN_BUYER_30DAY_ORDERS || '15'),
+      minTotalOrders: parseInt(process.env.MIN_BUYER_TOTAL_ORDERS || '50'),
+      min30DayOrders: parseInt(process.env.MIN_BUYER_30DAY_ORDERS || '1'),
+      minRegisterDays: parseInt(process.env.MIN_BUYER_REGISTER_DAYS || '60'),
       minCompletionRate: parseFloat(process.env.MIN_BUYER_POSITIVE_RATE || '0.85'),
       maxAutoReleaseAmount: config.maxAutoReleaseAmount,
     };
@@ -92,8 +94,10 @@ export class BybitAutoRelease extends EventEmitter {
     log.info({
       enableAutoRelease: config.enableAutoRelease,
       maxAmount: config.maxAutoReleaseAmount,
+      skipRiskThreshold: config.skipRiskCheckThreshold,
       requireBankMatch: config.requireBankMatch,
       buyerRiskCheck: config.enableBuyerRiskCheck,
+      riskConfig: this.riskConfig,
     }, 'Bybit Auto-Release initialized');
   }
 
@@ -523,9 +527,9 @@ export class BybitAutoRelease extends EventEmitter {
     if (completionRate < this.riskConfig.minCompletionRate) {
       failedCriteria.push(`CompletionRate ${(completionRate * 100).toFixed(1)}% < ${(this.riskConfig.minCompletionRate * 100).toFixed(0)}%`);
     }
-    // Check account age — at least 30 days
-    if (registerDays < 30) {
-      failedCriteria.push(`AccountAge ${registerDays} days < 30 days`);
+    // Check account age
+    if (registerDays < this.riskConfig.minRegisterDays) {
+      failedCriteria.push(`AccountAge ${registerDays} days < ${this.riskConfig.minRegisterDays} days`);
     }
     // Check max auto-release amount
     if (orderAmount > this.riskConfig.maxAutoReleaseAmount) {
