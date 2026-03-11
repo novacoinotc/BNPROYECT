@@ -99,6 +99,23 @@ export class BybitAutoRelease extends EventEmitter {
       buyerRiskCheck: config.enableBuyerRiskCheck,
       riskConfig: this.riskConfig,
     }, 'Bybit Auto-Release initialized');
+
+    // Periodic re-check for pending orders that may have been missed
+    // This is a safety net — runs every 10s to catch orders stuck by throttle or race conditions
+    this.pendingRecheckInterval = setInterval(() => this.recheckPendingOrders(), 10_000);
+  }
+
+  private pendingRecheckInterval?: ReturnType<typeof setInterval>;
+
+  private async recheckPendingOrders(): Promise<void> {
+    for (const [orderNumber, pending] of this.pendingReleases) {
+      // Only re-check orders that have BOTH bank match and name verified but haven't been released
+      if (pending.bankMatch && pending.nameVerified && !this.processingOrders.has(orderNumber) && !this.releaseQueue.includes(orderNumber)) {
+        log.debug({ orderId: orderNumber }, 'Bybit: Periodic re-check for pending order');
+        this.lastCheckTime.delete(orderNumber);
+        await this.checkReadyForRelease(orderNumber);
+      }
+    }
   }
 
   // ==================== EVENT SETUP ====================
