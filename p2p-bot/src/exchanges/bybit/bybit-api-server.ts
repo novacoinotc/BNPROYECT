@@ -182,9 +182,9 @@ export class BybitApiServer extends EventEmitter {
       const rows = parseInt(req.query.rows as string) || 20;
 
       // Bybit side: '0' = buy ads, '1' = sell ads
-      // When dashboard asks for tradeType=BUY (competitors buying), we search side='0'
-      // When dashboard asks for tradeType=SELL (competitors selling), we search side='1'
-      const side: '0' | '1' = tradeType === 'SELL' ? '1' : '0';
+      // Dashboard already flips tradeType: our SELL panel sends tradeType=BUY (wants seller ads)
+      // So tradeType=BUY → side='1' (sellers), tradeType=SELL → side='0' (buyers)
+      const side: '0' | '1' = tradeType === 'BUY' ? '1' : '0';
       const currencyId = (req.query.fiat as string) || 'MXN';
 
       const client = getBybitClient();
