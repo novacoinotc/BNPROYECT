@@ -147,6 +147,7 @@ export class BybitAutoRelease extends EventEmitter {
         if (event.match?.bankTransactionId) {
           const pending = this.pendingReleases.get(event.order.orderNumber);
           if (pending) {
+            this.lastCheckTime.delete(event.order.orderNumber);
             await this.checkReadyForRelease(event.order.orderNumber);
           }
         }
@@ -362,6 +363,8 @@ export class BybitAutoRelease extends EventEmitter {
     } catch { /* non-critical */ }
 
     await this.verifyName(selected.pending);
+    // Clear throttle so checkReadyForRelease runs immediately after bank match
+    this.lastCheckTime.delete(selected.orderNumber);
     await this.checkReadyForRelease(selected.orderNumber);
   }
 
