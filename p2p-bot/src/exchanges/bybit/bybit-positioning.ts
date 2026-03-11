@@ -1,12 +1,12 @@
 // =====================================================
 // BYBIT MULTI-AD POSITIONING COORDINATOR
 // Manages positioning for all active Bybit ads
-// Unlike OKX, Bybit keeps the same ad ID after updates
+// Uses per-asset config from database (same as Binance)
 // =====================================================
 
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
-import { getBotConfig } from '../../services/database-pg.js';
+import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../../services/database-pg.js';
 import { BybitClient, getBybitClient } from './bybit-client.js';
 import { BybitAdManager } from './bybit-ad-manager.js';
 import { BybitSmartEngine, BybitSmartConfig } from './bybit-smart-engine.js';
@@ -51,12 +51,8 @@ export class BybitPositioning extends EventEmitter {
   private updateInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
-  // Config from DB
-  private currentMode = 'smart';
-  private followTarget: string | null = null;
-  private undercutCents = 1;
-  private priceFloor: number | null = null;
-  private priceCeiling: number | null = null;
+  // Full DB config (for per-asset lookups)
+  private dbConfig: BotConfig | null = null;
 
   private readonly PRICE_UPDATE_THRESHOLD = 0.01;
 
@@ -80,8 +76,7 @@ export class BybitPositioning extends EventEmitter {
     this.isRunning = true;
     log.info({
       adCount: this.trackedAds.size,
-      mode: this.currentMode,
-      target: this.followTarget,
+      hasPerAssetConfigs: this.dbConfig?.positioningConfigs ? Object.keys(this.dbConfig.positioningConfigs).length : 0,
     }, 'Bybit Positioning started');
 
     // Initial update
@@ -104,22 +99,7 @@ export class BybitPositioning extends EventEmitter {
 
   private async loadConfig(): Promise<void> {
     try {
-      const config = await getBotConfig();
-      const oldMode = this.currentMode;
-
-      this.currentMode = config.positioningMode || 'smart';
-      this.followTarget = config.followTargetNickName || null;
-      this.undercutCents = config.undercutCents || 1;
-
-      // Price limits from env
-      const floorEnv = process.env.BYBIT_PRICE_FLOOR;
-      this.priceFloor = floorEnv ? parseFloat(floorEnv) : null;
-      const ceilingEnv = process.env.BYBIT_PRICE_CEILING;
-      this.priceCeiling = ceilingEnv ? parseFloat(ceilingEnv) : null;
-
-      if (oldMode !== this.currentMode) {
-        log.info({ oldMode, newMode: this.currentMode }, 'Bybit: Mode changed');
-      }
+      this.dbConfig = await getBotConfig();
     } catch (error: any) {
       log.error({ error: error.message }, 'Bybit: Failed to load config');
     }
@@ -189,25 +169,37 @@ export class BybitPositioning extends EventEmitter {
   }
 
   private async updateSingleAd(ad: TrackedAd): Promise<void> {
+    if (!this.dbConfig) return;
+
+    // Get per-asset config from database (same logic as Binance)
+    const tradeType = ad.side === 'sell' ? 'SELL' : 'BUY';
+    const assetConfig = getPositioningConfigForAd(this.dbConfig, tradeType as 'SELL' | 'BUY', ad.tokenId);
+
+    // Skip disabled assets
+    if (!assetConfig.enabled) {
+      ad.mode = 'idle';
+      return;
+    }
+
     let targetPrice: number | null = null;
 
-    if (this.currentMode === 'follow' && this.followTarget) {
+    if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
       ad.mode = 'follow';
-      const engine = this.getFollowEngine(ad);
+      const engine = this.getFollowEngine(ad, assetConfig);
       const result = await engine.getPrice(ad.tokenId, ad.currencyId);
 
       if (result) {
         targetPrice = result.targetPrice;
       } else {
-        // Fallback to smart
+        // Fallback to smart if target not found
         ad.mode = 'smart';
-        const smartEngine = this.getSmartEngine(ad);
+        const smartEngine = this.getSmartEngine(ad, assetConfig);
         const smartResult = await smartEngine.getPrice(ad.tokenId, ad.currencyId);
         if (smartResult) targetPrice = smartResult.targetPrice;
       }
     } else {
       ad.mode = 'smart';
-      const engine = this.getSmartEngine(ad);
+      const engine = this.getSmartEngine(ad, assetConfig);
       const result = await engine.getPrice(ad.tokenId, ad.currencyId);
       if (result) targetPrice = result.targetPrice;
     }
@@ -235,6 +227,7 @@ export class BybitPositioning extends EventEmitter {
         oldPrice: oldPrice.toFixed(2),
         newPrice: targetPrice.toFixed(2),
         mode: ad.mode,
+        followTarget: assetConfig.followTarget,
       }, `Bybit: ${ad.tokenId} ${oldPrice.toFixed(2)} -> ${targetPrice.toFixed(2)}`);
 
       this.emit('priceUpdated', {
@@ -252,49 +245,58 @@ export class BybitPositioning extends EventEmitter {
 
   // ==================== ENGINE MANAGEMENT ====================
 
-  private getSmartEngine(ad: TrackedAd): BybitSmartEngine {
+  private getSmartEngine(ad: TrackedAd, assetConfig: ReturnType<typeof getPositioningConfigForAd>): BybitSmartEngine {
     const key = `${ad.side}-${ad.tokenId}-${ad.currencyId}`;
     let engine = this.smartEngines.get(key);
 
     if (!engine) {
       engine = new BybitSmartEngine(ad.side, {
-        undercutCents: this.undercutCents,
-        minPrice: ad.side === 'sell' ? this.priceFloor : undefined,
-        maxPrice: ad.side === 'buy' ? this.priceCeiling : undefined,
+        undercutCents: assetConfig.undercutCents,
+        matchPrice: assetConfig.matchPrice,
+        minPrice: ad.side === 'sell' ? (assetConfig.minPrice ?? undefined) : undefined,
+        maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
         myNickName: process.env.BYBIT_MY_NICKNAME,
+        minMonthOrderCount: assetConfig.smartMinOrderCount,
+        minSurplusAmount: assetConfig.smartMinSurplus,
+        ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers,
       });
       this.smartEngines.set(key, engine);
     }
 
     engine.updateConfig({
-      undercutCents: this.undercutCents,
-      minPrice: ad.side === 'sell' ? this.priceFloor : undefined,
-      maxPrice: ad.side === 'buy' ? this.priceCeiling : undefined,
+      undercutCents: assetConfig.undercutCents,
+      matchPrice: assetConfig.matchPrice,
+      minPrice: ad.side === 'sell' ? (assetConfig.minPrice ?? undefined) : undefined,
+      maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
+      minMonthOrderCount: assetConfig.smartMinOrderCount,
+      minSurplusAmount: assetConfig.smartMinSurplus,
+      ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers,
     });
 
     return engine;
   }
 
-  private getFollowEngine(ad: TrackedAd): BybitFollowEngine {
+  private getFollowEngine(ad: TrackedAd, assetConfig: ReturnType<typeof getPositioningConfigForAd>): BybitFollowEngine {
     const key = `${ad.side}-${ad.tokenId}-${ad.currencyId}`;
     let engine = this.followEngines.get(key);
 
     if (!engine) {
       engine = new BybitFollowEngine(ad.side, {
-        targetNickName: this.followTarget || '',
-        undercutCents: this.undercutCents,
-        matchPrice: false,
-        minPrice: ad.side === 'sell' ? this.priceFloor : undefined,
-        maxPrice: ad.side === 'buy' ? this.priceCeiling : undefined,
+        targetNickName: assetConfig.followTarget || '',
+        undercutCents: assetConfig.undercutCents,
+        matchPrice: assetConfig.matchPrice,
+        minPrice: ad.side === 'sell' ? (assetConfig.minPrice ?? undefined) : undefined,
+        maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
       });
       this.followEngines.set(key, engine);
     }
 
     engine.updateConfig({
-      targetNickName: this.followTarget || '',
-      undercutCents: this.undercutCents,
-      minPrice: ad.side === 'sell' ? this.priceFloor : undefined,
-      maxPrice: ad.side === 'buy' ? this.priceCeiling : undefined,
+      targetNickName: assetConfig.followTarget || '',
+      undercutCents: assetConfig.undercutCents,
+      matchPrice: assetConfig.matchPrice,
+      minPrice: ad.side === 'sell' ? (assetConfig.minPrice ?? undefined) : undefined,
+      maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
     });
 
     return engine;
@@ -304,11 +306,24 @@ export class BybitPositioning extends EventEmitter {
 
   getStatus(): BybitPositioningStatus {
     const ads = Array.from(this.trackedAds.values());
+    // Return first non-idle ad's config for display
+    const firstSellAd = ads.find(a => a.side === 'sell');
+    let displayMode = 'smart';
+    let displayTarget: string | null = null;
+    let displayUndercut = 1;
+
+    if (this.dbConfig && firstSellAd) {
+      const cfg = getPositioningConfigForAd(this.dbConfig, 'SELL', firstSellAd.tokenId);
+      displayMode = cfg.mode;
+      displayTarget = cfg.followTarget;
+      displayUndercut = cfg.undercutCents;
+    }
+
     return {
       isRunning: this.isRunning,
-      mode: this.currentMode,
-      followTarget: this.followTarget,
-      undercutCents: this.undercutCents,
+      mode: displayMode,
+      followTarget: displayTarget,
+      undercutCents: displayUndercut,
       managedAds: ads,
       totalUpdates: ads.reduce((sum, ad) => sum + ad.updateCount, 0),
       totalErrors: ads.reduce((sum, ad) => sum + ad.errorCount, 0),
