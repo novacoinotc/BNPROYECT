@@ -73,6 +73,7 @@ export class BybitApiServer extends EventEmitter {
     this.app.get('/api/sellers', this.handleSellers.bind(this));
     this.app.get('/api/ads', this.handleAds.bind(this));
     this.app.post('/api/ads/update', this.handleAdUpdate.bind(this));
+    this.app.post('/api/ads/activate', this.handleAdActivate.bind(this));
     this.app.post('/api/orders/sync', this.handleOrdersSync.bind(this));
     this.app.post('/api/orders/release', this.handleRelease.bind(this));
     this.app.get('/api/chat/:orderNumber', this.handleChat.bind(this));
@@ -304,6 +305,44 @@ export class BybitApiServer extends EventEmitter {
       res.json({ success: true, advNo, newPrice: price, source: 'bybit-proxy' });
     } catch (error: any) {
       log.error({ error: error.message }, 'Ad update error');
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  private async handleAdActivate(req: Request, res: Response): Promise<void> {
+    try {
+      const { advNo } = req.body;
+      if (!advNo) {
+        res.status(400).json({ success: false, error: 'advNo is required' });
+        return;
+      }
+
+      const client = getBybitClient();
+      const adDetail = await client.getAdDetail(advNo);
+      if (!adDetail) {
+        res.status(404).json({ success: false, error: 'Ad not found' });
+        return;
+      }
+
+      await client.updateAd({
+        id: advNo,
+        priceType: String(adDetail.priceType),
+        premium: adDetail.premium,
+        price: adDetail.price,
+        minAmount: adDetail.minAmount,
+        maxAmount: adDetail.maxAmount,
+        remark: adDetail.remark,
+        tradingPreferenceSet: adDetail.tradingPreferenceSet,
+        paymentIds: adDetail.payments || [],
+        actionType: 'ACTIVE',
+        quantity: adDetail.quantity,
+        paymentPeriod: String(adDetail.paymentPeriod),
+      });
+
+      log.info({ advNo, price: adDetail.price }, 'Ad activated');
+      res.json({ success: true, advNo, status: 'activated', price: adDetail.price });
+    } catch (error: any) {
+      log.error({ error: error.message }, 'Ad activate error');
       res.status(500).json({ success: false, error: error.message });
     }
   }
