@@ -61,7 +61,7 @@ export class OkxClient {
     const proxyAgent = createProxyAgent();
     const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, proxy: false as const } : {};
 
-    // P2P API client (endpoints under /api/v5/c2c/)
+    // P2P API client (endpoints under /api/v5/p2p/)
     this.p2pClient = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -219,7 +219,7 @@ export class OkxClient {
 
   /**
    * Search marketplace ads (competitor analysis)
-   * GET /api/v5/c2c/ad/marketplace-list
+   * GET /api/v5/p2p/ad/marketplace-list
    */
   async searchAds(
     side: 'buy' | 'sell',
@@ -229,7 +229,7 @@ export class OkxClient {
     pageSize: number = 20
   ): Promise<OkxAdData[]> {
     try {
-      const result = await this.p2pGet<OkxAdData[]>('/api/v5/c2c/ad/marketplace-list', {
+      const result = await this.p2pGet<OkxAdData[]>('/api/v5/p2p/ad/marketplace-list', {
         side,
         cryptoCurrency,
         fiatCurrency,
@@ -245,7 +245,7 @@ export class OkxClient {
 
   /**
    * Get our own active ads
-   * GET /api/v5/c2c/ad/active-list
+   * GET /api/v5/p2p/ad/active-list
    */
   async getActiveAds(
     side?: 'buy' | 'sell',
@@ -258,7 +258,7 @@ export class OkxClient {
     if (fiatCurrency) params.fiatCurrency = fiatCurrency;
 
     try {
-      const result = await this.p2pGet<OkxAdData[]>('/api/v5/c2c/ad/active-list', params);
+      const result = await this.p2pGet<OkxAdData[]>('/api/v5/p2p/ad/active-list', params);
       return result || [];
     } catch (error: any) {
       log.error({ error: error.message }, 'getActiveAds failed');
@@ -268,11 +268,11 @@ export class OkxClient {
 
   /**
    * Get single ad detail
-   * GET /api/v5/c2c/ad
+   * GET /api/v5/p2p/ad
    */
   async getAd(adId: string): Promise<OkxAdData | null> {
     try {
-      const result = await this.p2pGet<OkxAdData>('/api/v5/c2c/ad', { adId });
+      const result = await this.p2pGet<OkxAdData>('/api/v5/p2p/ad', { adId });
       return result;
     } catch (error: any) {
       log.error({ error: error.message, adId }, 'getAd failed');
@@ -282,20 +282,20 @@ export class OkxClient {
 
   /**
    * Create a new ad
-   * POST /api/v5/c2c/ad/create
+   * POST /api/v5/p2p/ad/create
    */
   async createAd(params: OkxAdParams): Promise<string> {
-    const result = await this.p2pPost<{ adId: string }>('/api/v5/c2c/ad/create', params);
+    const result = await this.p2pPost<{ adId: string }>('/api/v5/p2p/ad/create', params);
     log.info({ adId: result.adId, side: params.side, price: params.unitPrice }, 'Ad created');
     return result.adId;
   }
 
   /**
    * Update an ad (OKX cancels old + creates new, returns both IDs)
-   * POST /api/v5/c2c/ad/update
+   * POST /api/v5/p2p/ad/update
    */
   async updateAd(adId: string, params: Partial<OkxAdParams>): Promise<OkxAdUpdateResult> {
-    const result = await this.p2pPost<OkxAdUpdateResult>('/api/v5/c2c/ad/update', {
+    const result = await this.p2pPost<OkxAdUpdateResult>('/api/v5/p2p/ad/update', {
       adId,
       ...params,
     });
@@ -305,29 +305,29 @@ export class OkxClient {
 
   /**
    * Update ad active status (show/hide)
-   * POST /api/v5/c2c/ad/update-active-status
+   * POST /api/v5/p2p/ad/update-active-status
    */
   async updateAdStatus(adId: string, status: 'hidden' | 'show'): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/ad/update-active-status', { adId, status });
+    await this.p2pPost('/api/v5/p2p/ad/update-active-status', { adId, status });
     log.info({ adId, status }, 'Ad status updated');
   }
 
   /**
    * Cancel an ad
-   * POST /api/v5/c2c/ad/cancel
+   * POST /api/v5/p2p/ad/cancel
    */
   async cancelAd(adId: string): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/ad/cancel', { adId });
+    await this.p2pPost('/api/v5/p2p/ad/cancel', { adId });
     log.info({ adId }, 'Ad cancelled');
   }
 
   /**
    * Get optimal price for a trading pair
-   * GET /api/v5/c2c/ad/optimal-price
+   * GET /api/v5/p2p/ad/optimal-price
    */
   async getOptimalPrice(cryptoCurrency: string, fiatCurrency: string): Promise<string> {
     try {
-      const result = await this.p2pGet<{ optimalPrice: string }>('/api/v5/c2c/ad/optimal-price', {
+      const result = await this.p2pGet<{ optimalPrice: string }>('/api/v5/p2p/ad/optimal-price', {
         cryptoCurrency,
         fiatCurrency,
       });
@@ -342,7 +342,7 @@ export class OkxClient {
 
   /**
    * List orders with filters
-   * GET /api/v5/c2c/order/list
+   * GET /api/v5/p2p/order/list
    */
   async listOrders(filters: {
     side?: 'buy' | 'sell';
@@ -351,7 +351,7 @@ export class OkxClient {
     pageSize?: number;
   } = {}): Promise<OkxOrderData[]> {
     try {
-      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/c2c/order/list', {
+      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/p2p/order/list', {
         side: filters.side,
         completionStatus: filters.completionStatus || 'pending',
         pageIndex: String(filters.pageIndex || 1),
@@ -366,11 +366,11 @@ export class OkxClient {
 
   /**
    * Get single order detail (includes counterparty info)
-   * GET /api/v5/c2c/order
+   * GET /api/v5/p2p/order
    */
   async getOrder(orderId: string): Promise<OkxOrderData | null> {
     try {
-      const result = await this.p2pGet<OkxOrderData>('/api/v5/c2c/order', { orderId });
+      const result = await this.p2pGet<OkxOrderData>('/api/v5/p2p/order', { orderId });
       return result;
     } catch (error: any) {
       log.error({ error: error.message, orderId }, 'getOrder failed');
@@ -380,12 +380,12 @@ export class OkxClient {
 
   /**
    * Get counterparty user info for an order
-   * GET /api/v5/c2c/order/counterparty-user-info
+   * GET /api/v5/p2p/order/counterparty-user-info
    */
   async getCounterpartyInfo(orderId: string): Promise<OkxCounterpartyInfo | null> {
     try {
       const result = await this.p2pGet<OkxCounterpartyInfo>(
-        '/api/v5/c2c/order/counterparty-user-info',
+        '/api/v5/p2p/order/counterparty-user-info',
         { orderId }
       );
       return result;
@@ -397,29 +397,29 @@ export class OkxClient {
 
   /**
    * Mark order as paid (buyer side)
-   * POST /api/v5/c2c/order/mark-as-paid
+   * POST /api/v5/p2p/order/mark-as-paid
    */
   async markAsPaid(orderId: string): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/order/mark-as-paid', { orderId });
+    await this.p2pPost('/api/v5/p2p/order/mark-as-paid', { orderId });
     log.info({ orderId }, 'Order marked as paid');
   }
 
   /**
    * Mark order as unpaid
-   * POST /api/v5/c2c/order/mark-as-unpaid
+   * POST /api/v5/p2p/order/mark-as-unpaid
    */
   async markAsUnpaid(orderId: string): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/order/mark-as-unpaid', { orderId });
+    await this.p2pPost('/api/v5/p2p/order/mark-as-unpaid', { orderId });
     log.info({ orderId }, 'Order marked as unpaid');
   }
 
   /**
    * Release crypto to buyer
-   * POST /api/v5/c2c/order/release-crypto
+   * POST /api/v5/p2p/order/release-crypto
    * OKX uses verificationType="2" — NO TOTP/2FA code needed
    */
   async releaseCrypto(orderId: string): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/order/release-crypto', {
+    await this.p2pPost('/api/v5/p2p/order/release-crypto', {
       orderId,
       verificationType: '2',
     });
@@ -428,10 +428,10 @@ export class OkxClient {
 
   /**
    * Cancel an order
-   * POST /api/v5/c2c/order/cancel
+   * POST /api/v5/p2p/order/cancel
    */
   async cancelOrder(orderId: string): Promise<void> {
-    await this.p2pPost('/api/v5/c2c/order/cancel', {
+    await this.p2pPost('/api/v5/p2p/order/cancel', {
       orderId,
       verificationType: '2',
     });
@@ -440,11 +440,11 @@ export class OkxClient {
 
   /**
    * Get unreleased orders (useful for stale check)
-   * GET /api/v5/c2c/order/unreleased-orders
+   * GET /api/v5/p2p/order/unreleased-orders
    */
   async getUnreleasedOrders(): Promise<OkxOrderData[]> {
     try {
-      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/c2c/order/unreleased-orders');
+      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/p2p/order/unreleased-orders');
       return result || [];
     } catch (error: any) {
       log.warn({ error: error.message }, 'getUnreleasedOrders failed');
@@ -454,11 +454,11 @@ export class OkxClient {
 
   /**
    * Get pending orders for a specific ad
-   * GET /api/v5/c2c/order/pending-order
+   * GET /api/v5/p2p/order/pending-order
    */
   async getPendingOrders(adId: string): Promise<OkxOrderData[]> {
     try {
-      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/c2c/order/pending-order', { adId });
+      const result = await this.p2pGet<OkxOrderData[]>('/api/v5/p2p/order/pending-order', { adId });
       return result || [];
     } catch (error: any) {
       log.warn({ error: error.message, adId }, 'getPendingOrders failed');
@@ -470,11 +470,11 @@ export class OkxClient {
 
   /**
    * Get own user info
-   * GET /api/v5/c2c/user/basic-info
+   * GET /api/v5/p2p/user/basic-info
    */
   async getUserInfo(): Promise<OkxUserInfo | null> {
     try {
-      const result = await this.p2pGet<OkxUserInfo>('/api/v5/c2c/user/basic-info');
+      const result = await this.p2pGet<OkxUserInfo>('/api/v5/p2p/user/basic-info');
       return result;
     } catch (error: any) {
       log.error({ error: error.message }, 'getUserInfo failed');
@@ -484,11 +484,11 @@ export class OkxClient {
 
   /**
    * Get P2P crypto balance
-   * GET /api/v5/c2c/user/balance
+   * GET /api/v5/p2p/user/balance
    */
   async getP2PBalance(currency: string): Promise<OkxBalanceInfo | null> {
     try {
-      const result = await this.p2pGet<OkxBalanceInfo>('/api/v5/c2c/user/balance', { currency });
+      const result = await this.p2pGet<OkxBalanceInfo>('/api/v5/p2p/user/balance', { currency });
       return result;
     } catch (error: any) {
       log.warn({ error: error.message, currency }, 'getP2PBalance failed');
@@ -498,11 +498,11 @@ export class OkxClient {
 
   /**
    * Get payment methods
-   * GET /api/v5/c2c/payment-method/list
+   * GET /api/v5/p2p/payment-method/list
    */
   async getPaymentMethods(): Promise<OkxPaymentMethod[]> {
     try {
-      const result = await this.p2pGet<OkxPaymentMethod[]>('/api/v5/c2c/payment-method/list');
+      const result = await this.p2pGet<OkxPaymentMethod[]>('/api/v5/p2p/payment-method/list');
       return result || [];
     } catch (error: any) {
       log.warn({ error: error.message }, 'getPaymentMethods failed');
