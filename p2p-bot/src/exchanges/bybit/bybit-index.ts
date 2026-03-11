@@ -12,7 +12,7 @@ import { createBybitOrderManager, BybitOrderManager } from './bybit-order-manage
 import { createBybitAutoRelease, BybitAutoRelease } from './bybit-auto-release.js';
 import { createBybitAutoSwap, BybitAutoSwap } from './bybit-auto-swap.js';
 import { createBybitBuyOrderManager, BybitBuyOrderManager } from './bybit-buy-order-manager.js';
-import { createWebhookReceiver } from '../../services/webhook-receiver.js';
+import { createBybitApiServer, BybitApiServer } from './bybit-api-server.js';
 import { testConnection, disconnect, isPositioningEnabled, isReleaseEnabled } from '../../services/database-pg.js';
 
 const log = logger.child({ module: 'bybit-main' });
@@ -38,7 +38,7 @@ let orderManager: BybitOrderManager | null = null;
 let autoRelease: BybitAutoRelease | null = null;
 let autoSwap: BybitAutoSwap | null = null;
 let buyOrderManager: BybitBuyOrderManager | null = null;
-let webhookReceiver: ReturnType<typeof createWebhookReceiver> | null = null;
+let apiServer: BybitApiServer | null = null;
 let positioningCheckInterval: NodeJS.Timeout | null = null;
 
 // ==================== INITIALIZATION ====================
@@ -124,15 +124,15 @@ async function startServices(): Promise<void> {
     log.info('Bybit Order Manager started');
   }
 
-  // Webhook Receiver — for receiving bank deposit notifications
+  // API Server — dashboard endpoints + webhook receiver
   if (BYBIT_CONFIG.enableWebhook) {
-    webhookReceiver = createWebhookReceiver({
+    apiServer = createBybitApiServer({
       port: parseInt(process.env.BYBIT_WEBHOOK_PORT || '3002'),
       webhookSecret: process.env.BYBIT_WEBHOOK_SECRET,
       webhookPath: process.env.BYBIT_WEBHOOK_PATH || '/webhook/bank-deposit',
     });
 
-    webhookReceiver.on('payment', (event) => {
+    apiServer.on('payment', (event) => {
       log.info({
         transactionId: event.payload.transactionId,
         amount: event.payload.amount,
@@ -140,8 +140,8 @@ async function startServices(): Promise<void> {
       }, 'Bybit: Bank payment received');
     });
 
-    await webhookReceiver.start();
-    log.info({ port: process.env.BYBIT_WEBHOOK_PORT || '3002' }, 'Bybit Webhook Receiver started');
+    await apiServer.start();
+    log.info({ port: process.env.BYBIT_WEBHOOK_PORT || '3002' }, 'Bybit API Server started');
   }
 
   // Auto-Release — requires order manager
@@ -154,12 +154,21 @@ async function startServices(): Promise<void> {
         orderId: event.orderNumber,
         reason: event.reason,
       }, `Bybit RELEASE: ${event.type}`);
+
+      // Broadcast to dashboard via SSE
+      if (apiServer) {
+        apiServer.broadcastSSE({
+          type: 'order_released',
+          orderNumber: event.orderNumber,
+          timestamp: new Date().toISOString(),
+        });
+      }
     });
 
-    // Connect webhook receiver for bank payment matching
-    if (webhookReceiver) {
-      autoRelease.connectWebhook(webhookReceiver);
-      log.info('Bybit Auto-Release connected to webhook receiver');
+    // Connect webhook for bank payment matching
+    if (apiServer) {
+      autoRelease.connectWebhook(apiServer);
+      log.info('Bybit Auto-Release connected to API server');
     }
 
     log.info('Bybit Auto-Release started');
@@ -207,6 +216,31 @@ async function startServices(): Promise<void> {
 
     log.info('Bybit Auto-Buy started');
   }
+
+  // Wire service references to API server for dashboard endpoints
+  if (apiServer) {
+    apiServer.setServices({
+      orderManager: orderManager || undefined,
+      positioning: positioning || undefined,
+      autoRelease: autoRelease || undefined,
+      autoSwap: autoSwap || undefined,
+      buyOrderManager: buyOrderManager || undefined,
+    });
+  }
+
+  // Broadcast order events to dashboard via SSE
+  if (orderManager && apiServer) {
+    orderManager.on('order', (event) => {
+      apiServer!.broadcastSSE({
+        type: 'order_update',
+        eventType: event.type,
+        orderNumber: event.order.orderNumber,
+        status: event.order.orderStatus,
+        amount: event.order.totalPrice,
+        timestamp: new Date().toISOString(),
+      });
+    });
+  }
 }
 
 // ==================== POSITIONING CHECK ====================
@@ -229,6 +263,7 @@ async function checkPositioningStatus(): Promise<void> {
         }, `Bybit PRICE UPDATE: ${event.oldPrice.toFixed(2)} -> ${event.newPrice.toFixed(2)}`);
       });
 
+      if (apiServer) apiServer.setServices({ positioning });
       log.info('Bybit Positioning started');
     } else if (!enabled && positioning) {
       positioning.stop();
@@ -272,9 +307,9 @@ async function shutdown(): Promise<void> {
 
   autoRelease = null;
 
-  if (webhookReceiver) {
-    await webhookReceiver.stop();
-    webhookReceiver = null;
+  if (apiServer) {
+    await apiServer.stop();
+    apiServer = null;
   }
 
   await disconnect();
@@ -303,4 +338,4 @@ main().catch((error) => {
 
 // ==================== EXPORTS ====================
 
-export { positioning, orderManager, autoRelease, autoSwap, buyOrderManager, webhookReceiver, BYBIT_CONFIG };
+export { positioning, orderManager, autoRelease, autoSwap, buyOrderManager, apiServer, BYBIT_CONFIG };
