@@ -54,9 +54,9 @@ export class SmartEngine {
   private passesFilters(ad: AdData): boolean {
     const adv = ad.advertiser;
 
-    // Filter 1: Minimum user grade (verification level)
-    // Grade 1 = basic/unverified, Grade 2+ = verified merchants
-    if (adv.userGrade < this.config.minUserGrade) {
+    // Filter 1: Must be a verified merchant (Pro badge or merchant-level verification)
+    // Regular users with basic KYC (userGrade 2) are NOT considered verified merchants
+    if (!adv.proMerchant && adv.userGrade < 3) {
       return false;
     }
 
