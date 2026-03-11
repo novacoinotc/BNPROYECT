@@ -624,37 +624,38 @@ export class BybitAutoRelease extends EventEmitter {
       return;
     }
 
-    // Name must match if bank match exists
+    // Name MUST ALWAYS match — even for VIP/TrustedBuyers
+    // A name mismatch could mean third-party payment (fraud)
     if (hasBankMatch && !hasNameVerified) {
-      const isTrusted = await this.checkTrustedBuyer(pending);
-      pending.isTrustedBuyer = isTrusted;
-
-      if (!isTrusted) {
-        // Unmatch the payment so it can be reused for other orders with the same amount
-        try {
-          if (pending.bankMatch?.transactionId) {
-            await db.unmatchPayment(pending.bankMatch.transactionId);
-            log.info({
-              orderId: orderNumber,
-              transactionId: pending.bankMatch.transactionId,
-            }, 'Bybit: Payment unmatched — available for other orders');
-          }
-        } catch { /* non-critical */ }
-
-        if (!this.loggedBlockedOrders.has(orderNumber)) {
-          log.warn({
+      // Unmatch the payment so it can be reused for other orders with the same amount
+      try {
+        if (pending.bankMatch?.transactionId) {
+          await db.unmatchPayment(pending.bankMatch.transactionId);
+          log.info({
             orderId: orderNumber,
-            senderName: pending.bankMatch?.senderName,
-            buyerName: pending.order.buyer?.realName,
-          }, 'Bybit: Name mismatch — manual review needed');
-          this.loggedBlockedOrders.set(orderNumber, 'name_mismatch');
-          this.emitRelease('manual_required', orderNumber, 'Name mismatch between bank sender and Bybit buyer');
+            transactionId: pending.bankMatch.transactionId,
+          }, 'Bybit: Payment unmatched — available for other orders');
         }
-        return;
+      } catch { /* non-critical */ }
+
+      if (!this.loggedBlockedOrders.has(orderNumber)) {
+        log.warn({
+          orderId: orderNumber,
+          senderName: pending.bankMatch?.senderName,
+          buyerName: pending.order.buyer?.realName,
+        }, 'Bybit: Name mismatch — manual review needed (VIP does NOT bypass name check)');
+        this.loggedBlockedOrders.set(orderNumber, 'name_mismatch');
+        this.emitRelease('manual_required', orderNumber, 'Name mismatch between bank sender and Bybit buyer');
       }
+      return;
     }
 
-    // Buyer risk check
+    // Check trusted buyer status (for risk check bypass only, NOT name bypass)
+    if (!pending.isTrustedBuyer) {
+      pending.isTrustedBuyer = await this.checkTrustedBuyer(pending);
+    }
+
+    // Buyer risk check — VIP skips this, non-VIP must pass
     if (!pending.riskCheckPassed && !pending.isTrustedBuyer) {
       const passed = await this.assessBuyerRisk(pending);
       pending.riskCheckPassed = passed;
