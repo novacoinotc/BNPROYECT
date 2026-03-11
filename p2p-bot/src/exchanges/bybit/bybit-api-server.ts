@@ -70,6 +70,7 @@ export class BybitApiServer extends EventEmitter {
       });
     });
 
+    this.app.get('/api/sellers', this.handleSellers.bind(this));
     this.app.get('/api/ads', this.handleAds.bind(this));
     this.app.post('/api/ads/update', this.handleAdUpdate.bind(this));
     this.app.post('/api/orders/sync', this.handleOrdersSync.bind(this));
@@ -170,6 +171,62 @@ export class BybitApiServer extends EventEmitter {
       log.error({ error: err }, 'Server error');
       res.status(500).json({ error: 'Internal server error' });
     });
+  }
+
+  // ==================== SELLERS (COMPETITORS) ====================
+
+  private async handleSellers(req: Request, res: Response): Promise<void> {
+    try {
+      const asset = (req.query.asset as string) || 'USDT';
+      const tradeType = (req.query.tradeType as string) || 'SELL';
+      const rows = parseInt(req.query.rows as string) || 20;
+
+      // Bybit side: '0' = buy ads, '1' = sell ads
+      // When dashboard asks for tradeType=BUY (competitors buying), we search side='0'
+      // When dashboard asks for tradeType=SELL (competitors selling), we search side='1'
+      const side: '0' | '1' = tradeType === 'SELL' ? '1' : '0';
+      const currencyId = (req.query.fiat as string) || 'MXN';
+
+      const client = getBybitClient();
+      const perPage = 20;
+      const pages = Math.ceil(rows / perPage);
+      let allItems: any[] = [];
+
+      for (let page = 1; page <= pages; page++) {
+        const result = await client.searchAds(asset, currencyId, side, page, perPage);
+        allItems.push(...(result.items || []));
+        if ((result.items || []).length < perPage) break;
+      }
+
+      const sellers = allItems.slice(0, rows).map((ad: any, idx: number) => ({
+        position: idx + 1,
+        userNo: String(ad.userId),
+        nickName: ad.nickName,
+        price: ad.price,
+        surplusAmount: ad.lastQuantity,
+        minAmount: ad.minAmount,
+        maxAmount: ad.maxAmount,
+        isOnline: ad.isOnline ?? false,
+        userGrade: 0,
+        monthFinishRate: parseFloat(ad.recentExecuteRate) || 0,
+        monthOrderCount: parseInt(ad.recentOrderNum) || 0,
+        positiveRate: 0,
+        proMerchant: (ad.authTag || []).includes('BA'),
+      }));
+
+      res.json({
+        success: true,
+        sellers,
+        asset,
+        fiat: currencyId,
+        tradeType,
+        timestamp: new Date().toISOString(),
+        source: 'bybit-proxy',
+      });
+    } catch (error: any) {
+      log.error({ error: error.message }, 'Sellers fetch error');
+      res.status(500).json({ success: false, error: error.message });
+    }
   }
 
   // ==================== ADS ====================
@@ -773,8 +830,9 @@ export class BybitApiServer extends EventEmitter {
 }
 
 export function createBybitApiServer(config?: Partial<BybitApiServerConfig>): BybitApiServer {
+  // Railway assigns PORT env var — app MUST listen on it for external traffic to work
   const defaultConfig: BybitApiServerConfig = {
-    port: parseInt(process.env.BYBIT_WEBHOOK_PORT || '3002'),
+    port: parseInt(process.env.PORT || process.env.BYBIT_WEBHOOK_PORT || '3002'),
     webhookSecret: process.env.BYBIT_WEBHOOK_SECRET,
     webhookPath: process.env.BYBIT_WEBHOOK_PATH || '/webhook/bank-deposit',
   };

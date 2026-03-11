@@ -331,13 +331,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(formatProxyResponse(proxyResult.data));
     }
 
+    // If merchant has a dedicated botUrl (Bybit, OKX, etc.), don't fallback to Binance direct
+    if (botUrl) {
+      console.log(`Bot proxy failed for non-Binance merchant ${context.merchantId}, no fallback`);
+      return NextResponse.json(
+        { success: false, error: proxyResult.error || 'Bot proxy unavailable' },
+        { status: 500 }
+      );
+    }
+
     console.log('Bot proxy failed, trying direct Binance API...');
 
-    // 2. Fallback to direct Binance API
+    // 2. Fallback to direct Binance API (only for Binance merchants without botApiUrl)
     const directResult = await getMyAdsDirect();
 
     if (!directResult.success || !directResult.data) {
-      // Return the most informative error
       const error = proxyResult.error?.includes('restricted')
         ? proxyResult.error
         : directResult.error || proxyResult.error || 'Failed to fetch ads';
