@@ -320,6 +320,16 @@ export interface UserInfo {
   userGrade: number;
   monthFinishRate: number;
   monthOrderCount: number;
+  // Extended fields (populated by Bybit counterparty API or Binance user detail)
+  totalOrders?: number;
+  totalBuyOrders?: number;
+  totalSellOrders?: number;
+  registerDays?: number;
+  firstTradeDays?: number;
+  positiveRate?: number;
+  kycLevel?: string;
+  blocked?: string;
+  authStatus?: number;  // Bybit: 1=VA (verified), 2=Not VA
 }
 
 export interface UserStats {
@@ -419,6 +429,10 @@ export enum VerificationStatus {
   AMOUNT_MISMATCH = 'AMOUNT_MISMATCH',             // Amount doesn't match
   NAME_VERIFIED = 'NAME_VERIFIED',                 // Payer name matches buyer name
   NAME_MISMATCH = 'NAME_MISMATCH',                 // Names don't match
+
+  // Risk assessment states
+  RISK_CHECK_PASSED = 'RISK_CHECK_PASSED',         // Buyer profile passed risk check
+  RISK_CHECK_FAILED = 'RISK_CHECK_FAILED',         // Buyer profile failed risk check
 
   // Final states
   READY_TO_RELEASE = 'READY_TO_RELEASE',           // All checks passed, ready for release

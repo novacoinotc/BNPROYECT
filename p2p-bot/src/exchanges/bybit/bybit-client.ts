@@ -390,6 +390,24 @@ export class BybitClient {
     }
   }
 
+  /**
+   * Get counterparty user info (buyer/seller profile in an order)
+   * POST /v5/p2p/user/order/personal/info
+   * Returns full profile: order count, completion rate, rating, account age, etc.
+   */
+  async getCounterpartyInfo(userId: string, orderId: string): Promise<BybitUserInfo | null> {
+    try {
+      const result = await this.post<BybitUserInfo>(
+        '/v5/p2p/user/order/personal/info',
+        { originalUid: userId, orderId }
+      );
+      return result;
+    } catch (error: any) {
+      log.error({ error: error.message, userId, orderId }, 'getCounterpartyInfo failed');
+      return null;
+    }
+  }
+
   // ==================== BALANCE ====================
 
   /**

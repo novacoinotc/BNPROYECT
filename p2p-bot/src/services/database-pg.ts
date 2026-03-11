@@ -1655,6 +1655,8 @@ function getStatusEmoji(status: VerificationStatus): string {
     [VerificationStatus.AMOUNT_MISMATCH]: '⚠️',
     [VerificationStatus.NAME_VERIFIED]: '✅',
     [VerificationStatus.NAME_MISMATCH]: '⚠️',
+    [VerificationStatus.RISK_CHECK_PASSED]: '✅',
+    [VerificationStatus.RISK_CHECK_FAILED]: '⚠️',
     [VerificationStatus.READY_TO_RELEASE]: '🚀',
     [VerificationStatus.RELEASED]: '✨',
     [VerificationStatus.MANUAL_REVIEW]: '👤',
@@ -2041,6 +2043,7 @@ export interface AssetPositioningConfig {
   // Per-asset smart filters
   smartMinOrderCount: number;  // Min monthly orders for smart mode
   smartMinSurplus: number;     // Min volume in FIAT (e.g., MXN) for smart mode
+  smartMinFinishRate: number;  // Min completion rate (0-1) for smart mode
 }
 
 // Map of "TRADE_TYPE:ASSET" -> config (e.g., "SELL:USDT", "BUY:BTC")
@@ -2268,6 +2271,7 @@ export function getPositioningConfigForAd(
       // Per-asset smart filters (fallback to global defaults)
       smartMinOrderCount: assetConfig.smartMinOrderCount ?? config.smartMinOrderCount ?? 10,
       smartMinSurplus: assetConfig.smartMinSurplus ?? config.smartMinSurplus ?? 100,
+      smartMinFinishRate: assetConfig.smartMinFinishRate ?? config.smartMinFinishRate ?? 0,
     };
   }
 
@@ -2284,6 +2288,7 @@ export function getPositioningConfigForAd(
       spotMarginCents: 0,
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
+      smartMinFinishRate: config.smartMinFinishRate ?? 0,
     };
   } else {
     return {
@@ -2297,6 +2302,7 @@ export function getPositioningConfigForAd(
       spotMarginCents: 0,
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
+      smartMinFinishRate: config.smartMinFinishRate ?? 0,
     };
   }
 }

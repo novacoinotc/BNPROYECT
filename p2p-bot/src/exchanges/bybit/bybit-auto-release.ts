@@ -189,12 +189,81 @@ export class BybitAutoRelease extends EventEmitter {
     try {
       const detail = await this.bybitClient.getOrderDetail(orderNumber);
       if (detail) {
-        if (detail.buyerRealName && pending.order.buyer) {
-          pending.order.buyer.realName = detail.buyerRealName;
+        const isSell = detail.side === 1;
+        if (pending.order.buyer) {
+          if (detail.buyerRealName) {
+            pending.order.buyer.realName = detail.buyerRealName;
+          }
+          // Set buyerUserNo from the counterparty userId
+          if (isSell && detail.targetUserId) {
+            pending.order.buyer.userNo = detail.targetUserId;
+          } else if (!isSell && detail.userId) {
+            pending.order.buyer.userNo = detail.userId;
+          }
+          // Set buyer nickName
+          if (isSell && detail.targetNickName) {
+            pending.order.buyer.nickName = detail.targetNickName;
+          }
         }
         // Also update seller info
         if (detail.sellerRealName && pending.order.seller) {
           pending.order.seller.realName = detail.sellerRealName;
+        }
+        // Update counterPartNickName if missing
+        if (!pending.order.counterPartNickName || pending.order.counterPartNickName === 'unknown') {
+          pending.order.counterPartNickName = detail.targetNickName || pending.order.counterPartNickName;
+        }
+
+        // Fetch full buyer profile via counterparty endpoint
+        const buyerUserId = pending.order.buyer?.userNo;
+        if (buyerUserId && pending.order.buyer) {
+          try {
+            const profile = await this.bybitClient.getCounterpartyInfo(buyerUserId, orderNumber);
+            if (profile) {
+              pending.order.buyer.monthOrderCount = profile.recentFinishCount || 0;
+              pending.order.buyer.monthFinishRate = typeof profile.recentRate === 'number'
+                ? profile.recentRate / 100  // API returns integer (e.g. 68 = 68%)
+                : parseFloat(String(profile.recentRate)) / 100 || 0;
+              pending.order.buyer.totalOrders = profile.totalFinishCount || 0;
+              pending.order.buyer.totalBuyOrders = profile.totalFinishBuyCount || 0;
+              pending.order.buyer.totalSellOrders = profile.totalFinishSellCount || 0;
+              pending.order.buyer.registerDays = profile.accountCreateDays || 0;
+              pending.order.buyer.firstTradeDays = profile.firstTradeDays || 0;
+              pending.order.buyer.positiveRate = parseFloat(profile.goodAppraiseRate || '0');
+              pending.order.buyer.kycLevel = profile.kycLevel;
+              pending.order.buyer.blocked = profile.blocked;
+              pending.order.buyer.authStatus = profile.authStatus;
+
+              log.info({
+                orderId: orderNumber,
+                buyerNickName: profile.nickName,
+                monthOrders: profile.recentFinishCount,
+                totalOrders: profile.totalFinishCount,
+                completionRate: profile.recentRate,
+                goodRating: profile.goodAppraiseRate,
+                badReviews: profile.badAppraiseCount,
+                accountDays: profile.accountCreateDays,
+                firstTradeDays: profile.firstTradeDays,
+                kycLevel: profile.kycLevel,
+                authStatus: profile.authStatus,
+                blocked: profile.blocked,
+                vipLevel: profile.vipLevel,
+              }, 'Bybit: Buyer profile enriched from counterparty API');
+
+              // CRITICAL: Block release if buyer is blocked/banned
+              if (profile.blocked && profile.blocked !== '0' && profile.blocked !== '') {
+                log.error({
+                  orderId: orderNumber,
+                  buyerNickName: profile.nickName,
+                  blocked: profile.blocked,
+                }, 'Bybit: BUYER IS BLOCKED/BANNED — blocking auto-release');
+                this.emitRelease('manual_required', orderNumber, 'Buyer account is blocked/banned on Bybit');
+                return;  // Stop verification — do NOT auto-release
+              }
+            }
+          } catch (profileError) {
+            log.debug({ error: profileError, orderId: orderNumber }, 'Bybit: Could not fetch buyer profile');
+          }
         }
       }
     } catch { /* non-critical */ }
@@ -422,31 +491,76 @@ export class BybitAutoRelease extends EventEmitter {
 
     const failedCriteria: string[] = [];
 
-    const totalOrders = buyer.monthOrderCount || 0;
-    const completionRate = buyer.monthFinishRate || 0;
+    // Use enriched profile data (from getCounterpartyInfo)
+    const monthOrders = buyer.monthOrderCount || 0;
+    const totalOrders = buyer.totalOrders || 0;
+    const completionRate = buyer.monthFinishRate || 0;  // Already 0-1 from enrichment
+    const registerDays = buyer.registerDays || 0;
+    const firstTradeDays = buyer.firstTradeDays || 0;
+    const positiveRate = buyer.positiveRate || 0;
+    const kycLevel = buyer.kycLevel || '';
+    const authStatus = buyer.authStatus;
 
+    // CRITICAL: Blocked buyer — never auto-release (should have been caught earlier, but double check)
+    if (buyer.blocked && buyer.blocked !== '0' && buyer.blocked !== '') {
+      failedCriteria.push(`BLOCKED buyer (blocked=${buyer.blocked})`);
+    }
+
+    // Check KYC — buyer should have at least basic identity verification
+    if (!kycLevel || kycLevel === '0' || kycLevel === '') {
+      failedCriteria.push(`No KYC verification (kycLevel=${kycLevel})`);
+    }
+
+    // Check total orders (lifetime) — min 100 by default
     if (totalOrders < this.riskConfig.minTotalOrders) {
-      failedCriteria.push(`Orders ${totalOrders} < ${this.riskConfig.minTotalOrders}`);
+      failedCriteria.push(`TotalOrders ${totalOrders} < ${this.riskConfig.minTotalOrders}`);
     }
+    // Check 30-day orders
+    if (monthOrders < this.riskConfig.min30DayOrders) {
+      failedCriteria.push(`MonthOrders ${monthOrders} < ${this.riskConfig.min30DayOrders}`);
+    }
+    // Check completion rate (0-1)
     if (completionRate < this.riskConfig.minCompletionRate) {
-      failedCriteria.push(`Rate ${(completionRate * 100).toFixed(1)}% < ${(this.riskConfig.minCompletionRate * 100).toFixed(0)}%`);
+      failedCriteria.push(`CompletionRate ${(completionRate * 100).toFixed(1)}% < ${(this.riskConfig.minCompletionRate * 100).toFixed(0)}%`);
     }
+    // Check account age — at least 30 days
+    if (registerDays < 30) {
+      failedCriteria.push(`AccountAge ${registerDays} days < 30 days`);
+    }
+    // Check max auto-release amount
     if (orderAmount > this.riskConfig.maxAutoReleaseAmount) {
       failedCriteria.push(`Amount $${orderAmount} > $${this.riskConfig.maxAutoReleaseAmount}`);
     }
 
     const passed = failedCriteria.length === 0;
 
+    const profileSummary = {
+      totalOrders,
+      monthOrders,
+      completionRate: (completionRate * 100).toFixed(1) + '%',
+      positiveRate: (positiveRate * 100).toFixed(0) + '%',
+      registerDays,
+      firstTradeDays,
+      kycLevel,
+      authStatus: authStatus === 1 ? 'VA' : 'Not VA',
+    };
+
     if (passed) {
-      log.info({ orderId: pending.orderNumber, totalOrders, completionRate }, 'Bybit: Buyer risk check PASSED');
+      log.info({ orderId: pending.orderNumber, ...profileSummary }, 'Bybit: Buyer risk check PASSED');
     } else {
-      log.warn({
-        orderId: pending.orderNumber,
-        totalOrders,
-        completionRate,
-        failures: failedCriteria,
-      }, 'Bybit: Buyer risk check FAILED');
+      log.warn({ orderId: pending.orderNumber, ...profileSummary, failures: failedCriteria }, 'Bybit: Buyer risk check FAILED');
     }
+
+    try {
+      await db.addVerificationStep(
+        pending.orderNumber,
+        passed ? VerificationStatus.RISK_CHECK_PASSED : VerificationStatus.RISK_CHECK_FAILED,
+        passed
+          ? `Buyer profile OK: ${totalOrders} total orders, ${monthOrders}/30d, ${(completionRate * 100).toFixed(0)}% rate, ${registerDays}d old, KYC:${kycLevel}`
+          : `Buyer risk: ${failedCriteria.join(', ')}`,
+        { ...profileSummary, firstTradeDays }
+      );
+    } catch { /* non-critical */ }
 
     return passed;
   }
@@ -516,6 +630,17 @@ export class BybitAutoRelease extends EventEmitter {
       pending.isTrustedBuyer = isTrusted;
 
       if (!isTrusted) {
+        // Unmatch the payment so it can be reused for other orders with the same amount
+        try {
+          if (pending.bankMatch?.transactionId) {
+            await db.unmatchPayment(pending.bankMatch.transactionId);
+            log.info({
+              orderId: orderNumber,
+              transactionId: pending.bankMatch.transactionId,
+            }, 'Bybit: Payment unmatched — available for other orders');
+          }
+        } catch { /* non-critical */ }
+
         if (!this.loggedBlockedOrders.has(orderNumber)) {
           log.warn({
             orderId: orderNumber,
@@ -742,7 +867,7 @@ export function createBybitAutoRelease(
     enableAutoRelease: process.env.BYBIT_ENABLE_AUTO_RELEASE === 'true',
     requireBankMatch: process.env.BYBIT_REQUIRE_BANK_MATCH !== 'false',
     enableBuyerRiskCheck: process.env.BYBIT_ENABLE_BUYER_RISK_CHECK !== 'false',
-    skipRiskCheckThreshold: parseFloat(process.env.BYBIT_SKIP_RISK_THRESHOLD || '500'),
+    skipRiskCheckThreshold: parseFloat(process.env.BYBIT_SKIP_RISK_THRESHOLD || '1500'),
     releaseDelayMs: parseInt(process.env.BYBIT_RELEASE_DELAY_MS || '2000'),
     maxAutoReleaseAmount: parseFloat(process.env.BYBIT_MAX_AUTO_RELEASE_AMOUNT || '50000'),
   };

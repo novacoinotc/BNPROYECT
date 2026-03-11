@@ -332,10 +332,41 @@ export class BybitOrderManager extends EventEmitter {
   private async enrichBuyerInfo(order: OrderData): Promise<void> {
     try {
       const detail = await this.client.getOrderDetail(order.orderNumber);
-      if (detail?.buyerRealName && order.buyer) {
-        order.buyer.realName = detail.buyerRealName;
-        log.info({ orderId: order.orderNumber, buyerRealName: detail.buyerRealName }, 'Enriched buyer real name from order detail');
+      if (!detail) return;
+
+      const isSell = detail.side === 1;
+
+      if (order.buyer) {
+        if (detail.buyerRealName) {
+          order.buyer.realName = detail.buyerRealName;
+        }
+        // Enrich buyerUserNo from counterparty
+        if (isSell && detail.targetUserId) {
+          order.buyer.userNo = detail.targetUserId;
+        } else if (!isSell && detail.userId) {
+          order.buyer.userNo = detail.userId;
+        }
+        // Enrich buyer nickName
+        if (isSell && detail.targetNickName) {
+          order.buyer.nickName = detail.targetNickName;
+        }
       }
+
+      if (order.seller && detail.sellerRealName) {
+        order.seller.realName = detail.sellerRealName;
+      }
+
+      // Update counterPartNickName if missing
+      if ((!order.counterPartNickName || order.counterPartNickName === 'unknown') && detail.targetNickName) {
+        order.counterPartNickName = detail.targetNickName;
+      }
+
+      log.info({
+        orderId: order.orderNumber,
+        buyerRealName: detail.buyerRealName,
+        buyerUserNo: order.buyer?.userNo,
+        buyerNickName: order.buyer?.nickName,
+      }, 'Enriched buyer info from order detail');
     } catch (error) {
       log.warn({ orderId: order.orderNumber, error }, 'Failed to enrich buyer info');
     }

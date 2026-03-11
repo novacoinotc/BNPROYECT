@@ -15,6 +15,7 @@ const log = logger.child({ module: 'bybit-smart' });
 export interface BybitSmartConfig {
   minMonthOrderCount: number;
   minSurplusAmount: number;     // In FIAT value (price × available amount)
+  minFinishRate: number;         // Min completion rate (0-1), e.g. 0.90 = 90%
   undercutCents: number;
   matchPrice: boolean;
   minPrice?: number | null;      // Price floor for SELL ads
@@ -34,6 +35,7 @@ export interface BybitSmartResult {
 const DEFAULT_CONFIG: BybitSmartConfig = {
   minMonthOrderCount: 10,
   minSurplusAmount: 100,
+  minFinishRate: 0,
   undercutCents: 1,
   matchPrice: false,
   minUserGrade: 2,
@@ -68,7 +70,13 @@ export class BybitSmartEngine {
     const recentOrders = parseInt(ad.recentOrderNum) || 0;
     if (recentOrders < this.config.minMonthOrderCount) return false;
 
-    // Filter 3: Minimum fiat value available
+    // Filter 3: Minimum completion rate
+    if (this.config.minFinishRate > 0) {
+      const finishRate = parseFloat(ad.recentExecuteRate) || 0;
+      if (finishRate < this.config.minFinishRate) return false;
+    }
+
+    // Filter 4: Minimum fiat value available
     const price = parseFloat(ad.price);
     const available = parseFloat(ad.lastQuantity);
     const fiatValue = price * available;

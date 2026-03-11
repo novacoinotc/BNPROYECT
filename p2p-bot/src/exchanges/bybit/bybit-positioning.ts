@@ -258,6 +258,7 @@ export class BybitPositioning extends EventEmitter {
         myNickName: process.env.BYBIT_MY_NICKNAME,
         minMonthOrderCount: assetConfig.smartMinOrderCount,
         minSurplusAmount: assetConfig.smartMinSurplus,
+        minFinishRate: assetConfig.smartMinFinishRate,
         ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers,
       });
       this.smartEngines.set(key, engine);
@@ -270,6 +271,7 @@ export class BybitPositioning extends EventEmitter {
       maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
       minMonthOrderCount: assetConfig.smartMinOrderCount,
       minSurplusAmount: assetConfig.smartMinSurplus,
+      minFinishRate: assetConfig.smartMinFinishRate,
       ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers,
     });
 
