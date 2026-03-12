@@ -127,7 +127,7 @@ async function startServices(): Promise<void> {
   // API Server — dashboard endpoints + webhook receiver
   if (BYBIT_CONFIG.enableWebhook) {
     apiServer = createBybitApiServer({
-      port: parseInt(process.env.BYBIT_WEBHOOK_PORT || '3002'),
+      port: parseInt(process.env.PORT || process.env.BYBIT_WEBHOOK_PORT || '3002'),
       webhookSecret: process.env.BYBIT_WEBHOOK_SECRET,
       webhookPath: process.env.BYBIT_WEBHOOK_PATH || '/webhook/bank-deposit',
     });
@@ -141,7 +141,7 @@ async function startServices(): Promise<void> {
     });
 
     await apiServer.start();
-    log.info({ port: process.env.BYBIT_WEBHOOK_PORT || '3002' }, 'Bybit API Server started');
+    log.info({ port: process.env.PORT || process.env.BYBIT_WEBHOOK_PORT || '3002' }, 'Bybit API Server started');
   }
 
   // Auto-Release — requires order manager

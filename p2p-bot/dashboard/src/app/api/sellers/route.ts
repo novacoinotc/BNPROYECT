@@ -167,7 +167,12 @@ export async function GET(request: NextRequest) {
         if (proxyResult.success && proxyResult.data) {
           return NextResponse.json(proxyResult.data);
         }
-        console.log(`Bot proxy failed for merchant ${context.merchantId}, falling back...`);
+        // Merchant has a dedicated bot (Bybit/OKX) — do NOT fall back to Binance
+        console.log(`Bot proxy failed for merchant ${context.merchantId}: ${proxyResult.error}`);
+        return NextResponse.json(
+          { success: false, error: `Bot no disponible: ${proxyResult.error}`, sellers: [] },
+          { status: 502 }
+        );
       }
     }
 
