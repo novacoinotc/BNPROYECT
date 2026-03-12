@@ -370,6 +370,25 @@ export class BybitAutoRelease extends EventEmitter {
 
     selected.pending.bankMatch = payment;
 
+    // Mark payment as MATCHED in DB (prevents double-spend across merchants)
+    try {
+      const matched = await db.matchPaymentToOrder(
+        payment.transactionId,
+        selected.orderNumber,
+        'BANK_WEBHOOK'
+      );
+      if (!matched) {
+        log.warn({
+          orderId: selected.orderNumber,
+          transactionId: payment.transactionId,
+        }, 'Bybit: Payment could not be matched in DB (already used?) — blocking release');
+        selected.pending.bankMatch = undefined;
+        return;
+      }
+    } catch (matchError) {
+      log.error({ error: matchError, orderId: selected.orderNumber }, 'Bybit: Failed to match payment in DB');
+    }
+
     try {
       await db.addVerificationStep(
         selected.orderNumber,
@@ -413,6 +432,19 @@ export class BybitAutoRelease extends EventEmitter {
           amount: payment.amount,
           sender: payment.senderName,
         }, 'Bybit: Found existing bank payment match');
+
+        // Mark as MATCHED in DB before using
+        try {
+          const matched = await db.matchPaymentToOrder(
+            payment.transactionId,
+            order.orderNumber,
+            'BANK_WEBHOOK'
+          );
+          if (!matched) {
+            log.warn({ orderId: order.orderNumber, transactionId: payment.transactionId }, 'Bybit: Existing payment already used — skipping');
+            return;
+          }
+        } catch { /* continue */ }
 
         pending.bankMatch = payment as unknown as BankWebhookPayload;
         await this.verifyName(pending);
@@ -756,6 +788,7 @@ export class BybitAutoRelease extends EventEmitter {
 
     // Double-spend protection: check if bankMatch transactionId is used by another pending release
     if (pending.bankMatch?.transactionId) {
+      // Check in-memory first
       for (const [otherOrderNum, otherPending] of this.pendingReleases) {
         if (otherOrderNum !== orderNumber &&
             otherPending.bankMatch?.transactionId === pending.bankMatch.transactionId) {
@@ -770,6 +803,22 @@ export class BybitAutoRelease extends EventEmitter {
           return;
         }
       }
+
+      // Check DB — payment may have been released by another merchant instance
+      try {
+        const doubleSpendCheck = await db.isPaymentAlreadyReleased(pending.bankMatch.transactionId);
+        if (doubleSpendCheck.released) {
+          log.error({
+            orderId: orderNumber,
+            transactionId: pending.bankMatch.transactionId,
+            previousOrder: doubleSpendCheck.orderNumber,
+          }, 'Bybit: DOUBLE-SPEND BLOCKED — payment already released in DB');
+          this.emitRelease('manual_required', orderNumber, 'Payment already released for another order');
+          this.pendingReleases.delete(orderNumber);
+          this.processingOrders.delete(orderNumber);
+          return;
+        }
+      } catch { /* continue with release */ }
     }
 
     pending.attempts++;
@@ -804,7 +853,12 @@ export class BybitAutoRelease extends EventEmitter {
         );
       } catch { /* non-critical */ }
 
-      // Update trusted buyer stats
+      // Mark payment as RELEASED in DB (audit trail + double-spend protection)
+      try {
+        await db.markPaymentReleased(orderNumber);
+      } catch { /* non-critical */ }
+
+      // Update or create trusted buyer
       try {
         const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
         const buyerRealName = pending.order.buyer?.realName || null;
@@ -813,11 +867,25 @@ export class BybitAutoRelease extends EventEmitter {
         if (buyerUserNo) {
           const isTrusted = await db.isTrustedBuyer(buyerNickName, buyerRealName, buyerUserNo);
           if (isTrusted) {
+            // Existing VIP — increment stats
             const orderAmount = parseFloat(pending.order.totalPrice);
             await db.incrementTrustedBuyerStats(buyerUserNo, orderAmount);
+            log.info({ orderId: orderNumber, buyerUserNo, buyerNickName }, 'Bybit: Trusted buyer stats updated');
+          } else {
+            // New buyer — add to VIP list after successful auto-release
+            await db.addTrustedBuyer(
+              buyerNickName,
+              buyerUserNo,
+              buyerRealName || undefined,
+              'bybit-auto-release',
+              `Auto-added after successful release of order ${orderNumber}`
+            );
+            log.info({ orderId: orderNumber, buyerUserNo, buyerNickName, buyerRealName }, 'Bybit: New trusted buyer added after auto-release');
           }
         }
-      } catch { /* non-critical */ }
+      } catch (err) {
+        log.warn({ error: err, orderId: orderNumber }, 'Bybit: Error updating trusted buyer');
+      }
 
       this.emitRelease('release_success', orderNumber, undefined, {
         amount: pending.order.totalPrice,
