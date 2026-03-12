@@ -349,7 +349,10 @@ export class BybitAutoRelease extends EventEmitter {
     }
 
     if (amountMatches.length === 0) {
-      log.debug({ amount: payment.amount, sender: payment.senderName }, 'Bybit: No matching order for payment');
+      log.debug({ amount: payment.amount, sender: payment.senderName }, 'Bybit: No matching order for payment amount');
+
+      // Third-party detection: check if sender matches ANY known buyer in open orders
+      await this.checkThirdPartyPayment(payment);
       return;
     }
 
@@ -858,7 +861,7 @@ export class BybitAutoRelease extends EventEmitter {
         await db.markPaymentReleased(orderNumber);
       } catch { /* non-critical */ }
 
-      // Update or create trusted buyer
+      // Update trusted buyer stats (VIPs are added manually by operator from dashboard)
       try {
         const buyerNickName = pending.order.counterPartNickName || pending.order.buyer?.nickName || '';
         const buyerRealName = pending.order.buyer?.realName || null;
@@ -867,25 +870,12 @@ export class BybitAutoRelease extends EventEmitter {
         if (buyerUserNo) {
           const isTrusted = await db.isTrustedBuyer(buyerNickName, buyerRealName, buyerUserNo);
           if (isTrusted) {
-            // Existing VIP — increment stats
             const orderAmount = parseFloat(pending.order.totalPrice);
             await db.incrementTrustedBuyerStats(buyerUserNo, orderAmount);
             log.info({ orderId: orderNumber, buyerUserNo, buyerNickName }, 'Bybit: Trusted buyer stats updated');
-          } else {
-            // New buyer — add to VIP list after successful auto-release
-            await db.addTrustedBuyer(
-              buyerNickName,
-              buyerUserNo,
-              buyerRealName || undefined,
-              'bybit-auto-release',
-              `Auto-added after successful release of order ${orderNumber}`
-            );
-            log.info({ orderId: orderNumber, buyerUserNo, buyerNickName, buyerRealName }, 'Bybit: New trusted buyer added after auto-release');
           }
         }
-      } catch (err) {
-        log.warn({ error: err, orderId: orderNumber }, 'Bybit: Error updating trusted buyer');
-      }
+      } catch { /* non-critical */ }
 
       this.emitRelease('release_success', orderNumber, undefined, {
         amount: pending.order.totalPrice,
@@ -959,6 +949,60 @@ export class BybitAutoRelease extends EventEmitter {
     ];
     const msgLower = errorMsg.toLowerCase();
     return nonRetryable.some(m => msgLower.includes(m));
+  }
+
+  // ==================== THIRD-PARTY DETECTION ====================
+
+  /**
+   * Check if a bank payment sender is a known buyer.
+   * If sender doesn't match any open order's buyer name → mark as THIRD_PARTY.
+   * If sender IS a known buyer → keep as PENDING (may match later).
+   */
+  private async checkThirdPartyPayment(payment: BankWebhookPayload): Promise<void> {
+    if (!payment.senderName) return;
+
+    try {
+      // Check if sender name matches any buyer in open orders (low threshold 30% = partial name)
+      const knownBuyerCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
+
+      if (knownBuyerCheck.hasMatch) {
+        // Sender is a known buyer — payment stays PENDING, will match when amount aligns
+        log.info({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+        }, 'Bybit: Payment from known buyer — keeping PENDING');
+      } else {
+        // Sender is NOT a known buyer — mark as THIRD_PARTY
+        log.warn({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+        }, 'Bybit: THIRD_PARTY payment detected — sender not recognized');
+
+        await db.markPaymentAsThirdParty(
+          payment.transactionId,
+          `Sender "${payment.senderName}" does not match any buyer in open orders`
+        );
+
+        // Create alert for operator review
+        await db.createAlert({
+          type: 'third_party_payment',
+          severity: 'warning',
+          title: 'Pago de Tercero Detectado (Bybit)',
+          message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ningún comprador conocido`,
+          metadata: {
+            transactionId: payment.transactionId,
+            amount: payment.amount,
+            senderName: payment.senderName,
+            exchange: 'bybit',
+          },
+        });
+      }
+    } catch (error) {
+      // On error, keep as PENDING for safety — don't mark as third-party without confirmation
+      log.error({ error, transactionId: payment.transactionId }, 'Bybit: Error during third-party check');
+    }
   }
 
   // ==================== HELPERS ====================
