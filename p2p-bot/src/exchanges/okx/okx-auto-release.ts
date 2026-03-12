@@ -241,7 +241,26 @@ export class OkxAutoRelease extends EventEmitter {
 
         pending.bankMatch = payment;
 
-        // Save match to DB
+        // Mark payment as MATCHED in DB (prevents double-spend across merchants)
+        try {
+          const matched = await db.matchPaymentToOrder(
+            payment.transactionId,
+            orderNumber,
+            'BANK_WEBHOOK'
+          );
+          if (!matched) {
+            log.warn({
+              orderId: orderNumber,
+              transactionId: payment.transactionId,
+            }, 'OKX: Payment could not be matched in DB (already used?) — blocking release');
+            pending.bankMatch = undefined;
+            return;
+          }
+        } catch (matchError) {
+          log.error({ error: matchError, orderId: orderNumber }, 'OKX: Failed to match payment in DB');
+        }
+
+        // Save verification step
         try {
           await db.addVerificationStep(
             orderNumber,
@@ -260,7 +279,31 @@ export class OkxAutoRelease extends EventEmitter {
       }
     }
 
-    log.debug({ amount: payment.amount, sender: payment.senderName }, 'OKX: No matching order for payment');
+    // No matching order — check for third-party payment
+    log.warn({
+      amount: payment.amount,
+      sender: payment.senderName,
+      transactionId: payment.transactionId,
+    }, 'OKX: No matching order for payment — possible third-party');
+
+    try {
+      await db.markPaymentAsThirdParty(
+        payment.transactionId,
+        `Sender "${payment.senderName}" does not match any buyer in open orders`
+      );
+      await db.createAlert({
+        type: 'third_party_payment',
+        severity: 'warning',
+        title: 'Pago de Tercero Detectado (OKX)',
+        message: `Pago de $${payment.amount} de "${payment.senderName}" no coincide con ningún comprador conocido`,
+        metadata: {
+          exchange: 'okx',
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          senderName: payment.senderName,
+        },
+      });
+    } catch { /* non-critical */ }
   }
 
   private handleBankReversal(payment: BankWebhookPayload): void {
@@ -296,6 +339,24 @@ export class OkxAutoRelease extends EventEmitter {
           amount: payment.amount,
           sender: payment.senderName,
         }, 'OKX: Found existing bank payment match');
+
+        // Mark payment as MATCHED in DB (prevents double-spend across merchants)
+        try {
+          const matched = await db.matchPaymentToOrder(
+            payment.transactionId,
+            order.orderNumber,
+            'BANK_WEBHOOK'
+          );
+          if (!matched) {
+            log.warn({
+              orderId: order.orderNumber,
+              transactionId: payment.transactionId,
+            }, 'OKX: Existing payment could not be matched in DB (already used?) — skipping');
+            return;
+          }
+        } catch (matchError) {
+          log.error({ error: matchError, orderId: order.orderNumber }, 'OKX: Failed to match existing payment in DB');
+        }
 
         pending.bankMatch = payment as unknown as BankWebhookPayload;
         await this.verifyName(pending);
@@ -414,6 +475,9 @@ export class OkxAutoRelease extends EventEmitter {
 
     const totalOrders = buyer.monthOrderCount || 0;
     const completionRate = buyer.monthFinishRate || 0;
+    const kycLevel = buyer.userGrade || 0;
+    const registerDays = buyer.registerDays || 0;
+    const minRegisterDays = parseInt(process.env.MIN_BUYER_REGISTER_DAYS || '60');
 
     if (totalOrders < this.riskConfig.minTotalOrders) {
       failedCriteria.push(`Orders ${totalOrders} < ${this.riskConfig.minTotalOrders}`);
@@ -424,21 +488,32 @@ export class OkxAutoRelease extends EventEmitter {
     if (orderAmount > this.riskConfig.maxAutoReleaseAmount) {
       failedCriteria.push(`Amount $${orderAmount} > $${this.riskConfig.maxAutoReleaseAmount}`);
     }
+    if (registerDays > 0 && registerDays < minRegisterDays) {
+      failedCriteria.push(`Account age ${registerDays}d < ${minRegisterDays}d`);
+    }
 
-    const isTrusted = failedCriteria.length === 0;
+    const passed = failedCriteria.length === 0;
 
-    if (isTrusted) {
-      log.info({ orderId: pending.orderNumber, totalOrders, completionRate }, 'OKX: Buyer risk check PASSED');
+    if (passed) {
+      log.info({
+        orderId: pending.orderNumber,
+        totalOrders,
+        completionRate,
+        kycLevel,
+        registerDays,
+      }, 'OKX: Buyer risk check PASSED');
     } else {
       log.warn({
         orderId: pending.orderNumber,
         totalOrders,
         completionRate,
+        kycLevel,
+        registerDays,
         failures: failedCriteria,
       }, 'OKX: Buyer risk check FAILED');
     }
 
-    return isTrusted;
+    return passed;
   }
 
   /**
@@ -492,6 +567,20 @@ export class OkxAutoRelease extends EventEmitter {
       }
     } catch { /* continue */ }
 
+    // Check if buyer is blacklisted on OKX
+    if (pending.order.buyer?.blocked === '1') {
+      if (!this.loggedBlockedOrders.has(orderNumber)) {
+        log.warn({
+          orderId: orderNumber,
+          buyerNickName: pending.order.buyer?.nickName,
+          buyerUserNo: pending.order.buyer?.userNo,
+        }, 'OKX: Buyer is BLACKLISTED — blocking release');
+        this.loggedBlockedOrders.set(orderNumber, 'blacklisted');
+        this.emitRelease('manual_required', orderNumber, 'Buyer is blacklisted on OKX');
+      }
+      return;
+    }
+
     const hasBankMatch = !!pending.bankMatch;
     const hasNameVerified = pending.nameVerified;
 
@@ -504,24 +593,25 @@ export class OkxAutoRelease extends EventEmitter {
       return;
     }
 
-    // Name must match if bank match exists
+    // CRITICAL: Name verification is ALWAYS required — even for VIP/trusted buyers
+    // Third-party payments are prohibited (fraud/money laundering risk)
     if (hasBankMatch && !hasNameVerified) {
-      // Check trusted buyer bypass
+      if (!this.loggedBlockedOrders.has(orderNumber)) {
+        log.warn({
+          orderId: orderNumber,
+          senderName: pending.bankMatch?.senderName,
+          buyerName: pending.order.buyer?.realName,
+        }, 'OKX: Name mismatch — manual review needed (even VIP cannot bypass)');
+        this.loggedBlockedOrders.set(orderNumber, 'name_mismatch');
+        this.emitRelease('manual_required', orderNumber, 'Name mismatch between bank sender and OKX buyer');
+      }
+      return;
+    }
+
+    // Check trusted buyer (skips risk check, NOT name check)
+    if (!pending.isTrustedBuyer) {
       const isTrusted = await this.checkTrustedBuyer(pending);
       pending.isTrustedBuyer = isTrusted;
-
-      if (!isTrusted) {
-        if (!this.loggedBlockedOrders.has(orderNumber)) {
-          log.warn({
-            orderId: orderNumber,
-            senderName: pending.bankMatch?.senderName,
-            buyerName: pending.order.buyer?.realName,
-          }, 'OKX: Name mismatch — manual review needed');
-          this.loggedBlockedOrders.set(orderNumber, 'name_mismatch');
-          this.emitRelease('manual_required', orderNumber, 'Name mismatch between bank sender and OKX buyer');
-        }
-        return;
-      }
     }
 
     // Buyer risk check
@@ -599,6 +689,43 @@ export class OkxAutoRelease extends EventEmitter {
       attempt: pending.attempts,
     }, 'OKX: Executing crypto release');
 
+    // Fix 3: Double-spend protection — check if payment was already released
+    if (pending.bankMatch?.transactionId) {
+      try {
+        const doubleSpendCheck = await db.isPaymentAlreadyReleased(pending.bankMatch.transactionId);
+        if (doubleSpendCheck.released) {
+          log.error({
+            orderId: orderNumber,
+            transactionId: pending.bankMatch.transactionId,
+            previousOrder: doubleSpendCheck.orderNumber,
+            previousReleasedAt: doubleSpendCheck.releasedAt,
+          }, 'OKX: [DOUBLE-SPEND BLOCKED] Payment already used for another order!');
+
+          try {
+            await db.createAlert({
+              type: 'double_spend_attempt',
+              severity: 'critical',
+              title: 'Intento de Doble Gasto Bloqueado (OKX)',
+              message: `Pago ${pending.bankMatch.transactionId} ya fue usado para orden ${doubleSpendCheck.orderNumber}`,
+              metadata: {
+                exchange: 'okx',
+                currentOrder: orderNumber,
+                previousOrder: doubleSpendCheck.orderNumber,
+                transactionId: pending.bankMatch.transactionId,
+              },
+            });
+          } catch { /* non-critical */ }
+
+          this.pendingReleases.delete(orderNumber);
+          this.emitRelease('release_failed', orderNumber, 'Double-spend attempt blocked');
+          return;
+        }
+      } catch (dsError) {
+        log.error({ error: dsError, orderId: orderNumber }, 'OKX: Failed to check double-spend — blocking release for safety');
+        return;
+      }
+    }
+
     try {
       // OKX release — NO TOTP needed, just verificationType="2"
       await this.okxClient.releaseCrypto(orderNumber);
@@ -623,6 +750,15 @@ export class OkxAutoRelease extends EventEmitter {
           }
         );
       } catch { /* non-critical */ }
+
+      // Fix 4: Mark payment as RELEASED in DB (prevents reuse)
+      if (pending.bankMatch?.transactionId) {
+        try {
+          await db.markPaymentReleased(orderNumber);
+        } catch (markError) {
+          log.error({ error: markError, orderId: orderNumber }, 'OKX: Failed to mark payment as released');
+        }
+      }
 
       // Update trusted buyer stats
       try {
@@ -660,15 +796,79 @@ export class OkxAutoRelease extends EventEmitter {
       // Check if retryable
       const isNonRetryable = this.isNonRetryableError(errorMsg);
 
-      if (isNonRetryable || pending.attempts >= 3) {
+      // Fix 7: Check order status on OKX before deciding to retry
+      if (isNonRetryable) {
+        // Verify order status — might already be completed
+        try {
+          const orderDetail = await this.okxClient.getOrder(orderNumber);
+          const currentStatus = orderDetail?.orderStatus;
+          log.info({ orderId: orderNumber, currentStatus }, 'OKX: Order status after release error');
+
+          if (currentStatus === 'COMPLETED') {
+            log.info({ orderId: orderNumber }, 'OKX: Order already COMPLETED — release was successful');
+            if (pending.bankMatch?.transactionId) {
+              try { await db.markPaymentReleased(orderNumber); } catch { /* */ }
+            }
+            this.emitRelease('release_success', orderNumber, undefined, {
+              amount: pending.order.totalPrice,
+              asset: pending.order.asset,
+              note: 'Detected as completed after API error',
+            });
+            this.pendingReleases.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+            return;
+          } else if (currentStatus === 'CANCELLED') {
+            log.warn({ orderId: orderNumber }, 'OKX: Order was CANCELLED — skipping');
+            this.pendingReleases.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+            return;
+          }
+        } catch (statusError) {
+          log.warn({ orderId: orderNumber, error: statusError }, 'OKX: Could not verify order status');
+        }
+
         log.error({ orderId: orderNumber, attempts: pending.attempts }, 'OKX: Release failed permanently');
         this.emitRelease('release_failed', orderNumber, errorMsg);
         this.pendingReleases.delete(orderNumber);
+      } else if (pending.attempts >= 3) {
+        log.error({ orderId: orderNumber, attempts: pending.attempts }, 'OKX: Release failed after max retries');
+        this.emitRelease('release_failed', orderNumber, errorMsg);
+        this.pendingReleases.delete(orderNumber);
       } else {
-        // Retry
-        log.info({ orderId: orderNumber, nextAttempt: pending.attempts + 1 }, 'OKX: Will retry release');
-        this.releaseQueue.push(orderNumber);
-        setTimeout(() => this.processReleaseQueue(), 5000);
+        // Before retrying, verify order is still in releasable state
+        let shouldRetry = true;
+        try {
+          const orderDetail = await this.okxClient.getOrder(orderNumber);
+          const currentStatus = orderDetail?.orderStatus;
+
+          if (currentStatus === 'COMPLETED') {
+            log.info({ orderId: orderNumber }, 'OKX: Order already COMPLETED — no retry needed');
+            if (pending.bankMatch?.transactionId) {
+              try { await db.markPaymentReleased(orderNumber); } catch { /* */ }
+            }
+            this.emitRelease('release_success', orderNumber, undefined, {
+              amount: pending.order.totalPrice,
+              asset: pending.order.asset,
+              note: 'Detected as completed after API error',
+            });
+            this.pendingReleases.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+            shouldRetry = false;
+          } else if (currentStatus === 'CANCELLED') {
+            log.warn({ orderId: orderNumber }, 'OKX: Order CANCELLED — no retry needed');
+            this.pendingReleases.delete(orderNumber);
+            this.loggedBlockedOrders.delete(orderNumber);
+            shouldRetry = false;
+          }
+        } catch (statusError) {
+          log.warn({ orderId: orderNumber, error: statusError }, 'OKX: Could not verify order status — will retry anyway');
+        }
+
+        if (shouldRetry) {
+          log.info({ orderId: orderNumber, nextAttempt: pending.attempts + 1 }, 'OKX: Will retry release');
+          this.releaseQueue.push(orderNumber);
+          setTimeout(() => this.processReleaseQueue(), 5000);
+        }
       }
     } finally {
       this.processingOrders.delete(orderNumber);

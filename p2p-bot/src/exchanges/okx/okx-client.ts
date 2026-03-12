@@ -488,7 +488,7 @@ export class OkxClient {
    */
   async getP2PBalance(currency: string): Promise<OkxBalanceInfo | null> {
     try {
-      const result = await this.p2pGet<OkxBalanceInfo>('/api/v5/p2p/user/balance', { currency });
+      const result = await this.p2pGet<OkxBalanceInfo>('/api/v5/p2p/user/balance', { currencySymbol: currency });
       return result;
     } catch (error: any) {
       log.warn({ error: error.message, currency }, 'getP2PBalance failed');

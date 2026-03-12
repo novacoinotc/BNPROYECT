@@ -1439,7 +1439,7 @@ export class WebhookReceiver extends EventEmitter {
 // Factory function
 export function createWebhookReceiver(config?: Partial<WebhookConfig>): WebhookReceiver {
   const defaultConfig: WebhookConfig = {
-    port: parseInt(process.env.WEBHOOK_PORT || '3001'),
+    port: parseInt(process.env.PORT || process.env.WEBHOOK_PORT || '3001'),
     webhookSecret: process.env.WEBHOOK_SECRET || 'your-webhook-secret',
     webhookPath: process.env.WEBHOOK_PATH || '/webhook/payment',
     allowedIPs: process.env.WEBHOOK_ALLOWED_IPS?.split(',').map(ip => ip.trim()),

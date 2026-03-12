@@ -79,8 +79,11 @@ export interface OkxCounterpartyDetail {
   userId: string;
   completedOrders: string;
   completionRate: string;
+  cancelledOrders?: string;
   kycLevel?: number;
   registerTime?: string;
+  createdTimestamp?: string;
+  blacklisted?: boolean;
 }
 
 /** OKX payment method */
@@ -306,6 +309,10 @@ export function toOrderData(okxOrder: OkxOrderData): OrderData {
       userGrade: cp.kycLevel || 0,
       monthFinishRate: parseFloat(cp.completionRate) || 0,
       monthOrderCount: parseInt(cp.completedOrders) || 0,
+      blocked: cp.blacklisted ? '1' : '0',
+      registerDays: cp.createdTimestamp
+        ? Math.floor((Date.now() - parseInt(cp.createdTimestamp)) / (1000 * 60 * 60 * 24))
+        : undefined,
     },
   } as OrderData;
 }
