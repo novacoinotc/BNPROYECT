@@ -918,6 +918,24 @@ export class BybitAutoRelease extends EventEmitter {
 
       const isNonRetryable = this.isNonRetryableError(errorMsg);
 
+      // Before giving up or retrying, check if order actually completed on Bybit
+      // (API may have succeeded but response failed)
+      try {
+        const detail = await this.bybitClient.getOrderDetail(orderNumber);
+        if (detail && (detail.status === 30 || detail.status === 40)) {
+          log.info({ orderId: orderNumber, bybitStatus: detail.status }, 'Bybit: Order actually COMPLETED despite error — treating as success');
+          try { await db.markPaymentReleased(orderNumber); } catch { /* non-critical */ }
+          this.emitRelease('release_success', orderNumber, undefined, { amount: pending.order.totalPrice, asset: pending.order.asset });
+          this.pendingReleases.delete(orderNumber);
+          this.loggedBlockedOrders.delete(orderNumber);
+          return;
+        } else if (detail && (detail.status === 50 || detail.status === 60 || detail.status === 70 || detail.status === 100)) {
+          log.warn({ orderId: orderNumber, bybitStatus: detail.status }, 'Bybit: Order CANCELLED on Bybit — stopping retries');
+          this.pendingReleases.delete(orderNumber);
+          return;
+        }
+      } catch { /* continue with retry logic */ }
+
       if (isNonRetryable || pending.attempts >= 3) {
         log.error({ orderId: orderNumber, attempts: pending.attempts }, 'Bybit: Release failed permanently');
         this.emitRelease('release_failed', orderNumber, errorMsg);
