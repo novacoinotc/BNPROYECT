@@ -359,12 +359,7 @@ export class OkxClient {
       });
       return result || [];
     } catch (error: any) {
-      log.warn({
-        error: error.message,
-        status: error.response?.status,
-        responseData: JSON.stringify(error.response?.data),
-        filters,
-      }, 'listOrders failed');
+      log.warn(`listOrders failed: status=${error.response?.status} data=${JSON.stringify(error.response?.data)} msg=${error.message}`);
       return [];
     }
   }
@@ -482,11 +477,7 @@ export class OkxClient {
       const result = await this.p2pGet<OkxUserInfo>('/api/v5/p2p/user/basic-info');
       return result;
     } catch (error: any) {
-      log.warn({
-        error: error.message,
-        status: error.response?.status,
-        responseData: JSON.stringify(error.response?.data),
-      }, 'getUserInfo failed');
+      log.warn(`getUserInfo failed: status=${error.response?.status} data=${JSON.stringify(error.response?.data)} msg=${error.message}`);
       return null;
     }
   }
