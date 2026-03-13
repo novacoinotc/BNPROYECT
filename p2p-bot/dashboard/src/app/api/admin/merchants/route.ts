@@ -131,7 +131,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, name, email, password, binanceNickname, botApiUrl, clabeAccount, bankName, isActive } = body;
+    const { id, name, email, password, binanceNickname, botApiUrl, clabeAccount, bankName, isActive, isAdmin } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
@@ -146,6 +146,7 @@ export async function PUT(request: NextRequest) {
       clabeAccount,
       bankName,
       isActive,
+      isAdmin,
     });
 
     // Update botApiUrl separately
