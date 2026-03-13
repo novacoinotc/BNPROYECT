@@ -230,7 +230,7 @@ export function mapOkxOrderStatus(
   orderStatus: string,
   paymentStatus?: string
 ): OrderStatusString {
-  const os = orderStatus.toLowerCase();
+  const os = (orderStatus || '').toLowerCase();
   const ps = (paymentStatus || '').toLowerCase();
 
   if (os === 'completed' || ps === 'confirmed') {
@@ -280,7 +280,7 @@ export function mapCreatorTypeToGrade(type?: string): number {
 export function toOrderData(okxOrder: OkxOrderData): OrderData {
   const status = mapOkxOrderStatus(okxOrder.orderStatus, okxOrder.paymentStatus);
   const tradeType = mapOkxSide(okxOrder.side);
-  const cp = okxOrder.counterpartyDetail;
+  const cp = okxOrder.counterpartyDetail || {} as OkxCounterpartyDetail;
 
   return {
     // Map orderId → orderNumber for DB compatibility
