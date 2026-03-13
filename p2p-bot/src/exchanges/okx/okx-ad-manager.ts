@@ -155,18 +155,18 @@ export class OkxAdManager {
 
       // Error 55723: "Insufficient balance in your funding account"
       // The ad's availableAmount exceeds the funding balance.
-      // Fix: extract balance from error and retry with reduced availableAmount.
+      // Fix: extract balance from error and retry with reduced totalAmount.
       if (errMsg.includes('55723')) {
         const balanceMatch = errMsg.match(/balance is ([\d,]+\.?\d*)/i);
         if (balanceMatch) {
           const availableBalance = parseFloat(balanceMatch[1].replace(/,/g, ''));
-          // Use 95% of available balance to leave margin for rounding/fees
-          const reducedAmount = Math.floor(availableBalance * 0.95 * 100) / 100;
-          log.warn(`OKX: Insufficient balance — retrying with reduced amount ${reducedAmount} USDT (balance: ${availableBalance})`);
+          // Use 90% of available balance to leave room for locked orders + fees
+          const reducedAmount = Math.floor(availableBalance * 0.90 * 100) / 100;
+          log.warn(`OKX: Insufficient balance (${availableBalance} USDT) — retrying with totalAmount=${reducedAmount}`);
 
           const retryParams: Record<string, any> = {
             ...updateParams,
-            availableAmount: reducedAmount.toFixed(2),
+            totalAmount: reducedAmount.toFixed(2),
           };
           // Recalculate maxOrderLimit with reduced amount
           retryParams.maxOrderLimit = Math.max(1000, Math.floor(reducedAmount * newPrice)).toFixed(2);
