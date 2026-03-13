@@ -278,6 +278,9 @@ export function mapCreatorTypeToGrade(type?: string): number {
  * This is the bridge between OKX API format and our shared data model
  */
 export function toOrderData(okxOrder: OkxOrderData): OrderData {
+  if (!okxOrder.orderId) {
+    throw new Error('OKX order missing orderId — skipping');
+  }
   const status = mapOkxOrderStatus(okxOrder.orderStatus, okxOrder.paymentStatus);
   const tradeType = mapOkxSide(okxOrder.side);
   const cp = okxOrder.counterpartyDetail || {} as OkxCounterpartyDetail;
