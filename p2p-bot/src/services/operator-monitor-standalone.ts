@@ -318,14 +318,28 @@ async function runCheck(config: MonitorConfig): Promise<void> {
 function parseOperatorConfig(): OperatorConfig[] {
   // Method 1: JSON config (preferred)
   // MONITOR_CONFIG=[{"nickname":"VillarrealCrypto","displayName":"VillarrealCrypto","exchange":"binance","apiKey":"xxx","apiSecret":"xxx"}, ...]
-  const jsonConfig = process.env.MONITOR_CONFIG;
+  let jsonConfig = process.env.MONITOR_CONFIG;
   if (jsonConfig) {
+    // Railway sometimes wraps env vars in extra quotes
+    jsonConfig = jsonConfig.trim();
+    if ((jsonConfig.startsWith('"') && jsonConfig.endsWith('"')) ||
+        (jsonConfig.startsWith("'") && jsonConfig.endsWith("'"))) {
+      jsonConfig = jsonConfig.slice(1, -1);
+    }
+    // Unescape any escaped quotes from Railway
+    jsonConfig = jsonConfig.replace(/\\"/g, '"');
+
     try {
       const parsed = JSON.parse(jsonConfig) as OperatorConfig[];
       log.info(`Loaded ${parsed.length} operators from MONITOR_CONFIG JSON`);
       return parsed;
     } catch (e: any) {
-      log.error({ error: e.message }, 'Failed to parse MONITOR_CONFIG JSON');
+      log.error({
+        error: e.message,
+        rawLength: jsonConfig.length,
+        rawStart: jsonConfig.substring(0, 120),
+        rawEnd: jsonConfig.substring(jsonConfig.length - 60),
+      }, 'Failed to parse MONITOR_CONFIG JSON');
     }
   }
 
