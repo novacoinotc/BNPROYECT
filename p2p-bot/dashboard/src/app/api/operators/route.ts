@@ -32,7 +32,9 @@ export async function GET(request: NextRequest) {
 
       const result = await pool.query(
         `SELECT
-          COALESCE(m."binanceNickname", m.name) as nickname,
+          m.id as "merchantId",
+          m.name as "merchantName",
+          m."binanceNickname",
           COUNT(*) FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'SELL')::int as "sellOrders",
           COUNT(*) FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'BUY')::int as "buyOrders",
           COALESCE(SUM(o."totalPrice") FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'SELL'), 0)::numeric as "sellVolume",
@@ -43,7 +45,7 @@ export async function GET(request: NextRequest) {
         JOIN "Merchant" m ON o."merchantId" = m.id
         WHERE COALESCE(o."binanceCreateTime", o."createdAt")::date >= $1
           AND COALESCE(o."binanceCreateTime", o."createdAt")::date <= $2
-        GROUP BY COALESCE(m."binanceNickname", m.name)
+        GROUP BY m.id, m.name, m."binanceNickname"
         ORDER BY "totalVolume" DESC`,
         [startDateStr, endDate]
       );
@@ -53,7 +55,9 @@ export async function GET(request: NextRequest) {
         startDate: startDateStr,
         endDate,
         data: result.rows.map(row => ({
-          nickname: row.nickname,
+          merchantId: row.merchantId,
+          merchantName: row.merchantName,
+          binanceNickname: row.binanceNickname,
           sellOrders: row.sellOrders,
           buyOrders: row.buyOrders,
           sellVolume: parseFloat(row.sellVolume) || 0,

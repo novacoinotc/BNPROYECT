@@ -25,7 +25,9 @@ interface OperatorDaily {
 }
 
 interface OperatorOrders {
-  nickname: string;
+  merchantId: string;
+  merchantName: string;
+  binanceNickname: string | null;
   sellOrders: number;
   buyOrders: number;
   sellVolume: number;
@@ -75,14 +77,26 @@ export default function OperatorsPage() {
     ...dailyData.map(o => o.nickname),
   ])).sort();
 
-  // Match operator nickname to order data
+  // Match operator nickname to merchant order data
+  // Tries: exact merchantName match, then binanceNickname match
   const getOrdersForNick = (nick: string): OperatorOrders | null => {
-    // Exact match first
-    const exact = orderData.find(o => o.nickname === nick);
-    if (exact) return exact;
-    // Strip exchange suffix: "ProcorpCrypto (OKX)" -> "ProcorpCrypto"
+    // 1. Exact match on merchantName (e.g. "ProcorpCrypto (Bybit)" = "ProcorpCrypto (Bybit)")
+    const byName = orderData.find(o => o.merchantName === nick);
+    if (byName) return byName;
+
+    // 2. Match binanceNickname for Binance operators (no exchange suffix)
+    if (!/\s*\((?:OKX|Bybit)\)$/.test(nick)) {
+      const byBinance = orderData.find(o => o.binanceNickname === nick);
+      if (byBinance) return byBinance;
+    }
+
+    // 3. Strip suffix and try merchantName contains base name
     const baseName = nick.replace(/\s*\((?:OKX|Bybit)\)$/, '');
-    return orderData.find(o => o.nickname === baseName) || null;
+    const byPartial = orderData.find(o =>
+      o.merchantName.toLowerCase().includes(baseName.toLowerCase()) ||
+      o.binanceNickname?.toLowerCase() === baseName.toLowerCase()
+    );
+    return byPartial || null;
   };
 
   // Group daily data by nickname for summary
