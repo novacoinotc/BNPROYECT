@@ -97,7 +97,10 @@ export async function GET(request: NextRequest) {
     startDate.setDate(startDate.getDate() - (range - 1));
     const startDateStr = startDate.toISOString().split('T')[0];
 
-    const conditions = [`"checkedAt"::date >= $1`, `"checkedAt"::date <= $2`];
+    // Use CDMX timezone (America/Mexico_City) for date grouping
+    // Snapshots are stored in UTC but work hours are CDMX-based
+    const tz = 'America/Mexico_City';
+    const conditions = [`("checkedAt" AT TIME ZONE '${tz}')::date >= $1`, `("checkedAt" AT TIME ZONE '${tz}')::date <= $2`];
     const params: any[] = [startDateStr, endDate];
 
     if (nickname) {
@@ -108,17 +111,17 @@ export async function GET(request: NextRequest) {
     const result = await pool.query(
       `SELECT
         nickname,
-        "checkedAt"::date as date,
+        ("checkedAt" AT TIME ZONE '${tz}')::date as date,
         COUNT(*)::int as "totalSnapshots",
         COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
         COUNT(*) FILTER (WHERE "lowFunds" = true)::int as "lowFundsSnapshots",
-        ROUND((COUNT(*) FILTER (WHERE "isAdOnline" = true) * 5.0 / 60)::numeric, 2) as "hoursOnline",
-        ROUND((COUNT(*) FILTER (WHERE "lowFunds" = true) * 5.0 / 60)::numeric, 2) as "hoursLowFunds",
+        ROUND((COUNT(*) FILTER (WHERE "isAdOnline" = true) * 2.0 / 60)::numeric, 2) as "hoursOnline",
+        ROUND((COUNT(*) FILTER (WHERE "lowFunds" = true) * 2.0 / 60)::numeric, 2) as "hoursLowFunds",
         ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
         MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
       FROM "OperatorSnapshot"
       WHERE ${conditions.join(' AND ')}
-      GROUP BY nickname, "checkedAt"::date
+      GROUP BY nickname, ("checkedAt" AT TIME ZONE '${tz}')::date
       ORDER BY date DESC, nickname`,
       params
     );
