@@ -88,8 +88,9 @@ async function searchBinance(asset: string, fiat: string, pages: number = 5): Pr
 }
 
 /**
- * Search OKX P2P marketplace (public, but needs proxy)
- * Uses axios because Node's native fetch() ignores the proxy agent
+ * Search OKX P2P marketplace (public pre-login endpoint, needs proxy)
+ * Endpoint: /v3/c2c/tradingOrders/getMarketplaceAdsPrelogin (GET, no auth)
+ * NOTE: /api/v5/p2p/ad/marketplace-list requires API key — can't use it here
  */
 async function searchOkx(asset: string, fiat: string, pages: number = 5): Promise<Array<{
   nickName: string;
@@ -103,14 +104,14 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
     try {
       const params = new URLSearchParams({
         side: 'sell',
-        cryptoCurrency: asset,
-        fiatCurrency: fiat,
-        pageIndex: String(page),
+        cryptoCurrency: asset.toLowerCase(),
+        fiatCurrency: fiat.toLowerCase(),
+        pageNo: String(page),
         pageSize: '20',
       });
 
       const config: AxiosRequestConfig = {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
         timeout: 15000,
       };
       if (agent) {
@@ -118,23 +119,22 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
       }
 
       const res = await axios.get(
-        `https://www.okx.com/api/v5/p2p/ad/marketplace-list?${params}`,
+        `https://www.okx.com/v3/c2c/tradingOrders/getMarketplaceAdsPrelogin?${params}`,
         config
       );
 
       const data = res.data;
-      const wrapper = data?.data?.[0] || data?.data || {};
-      const ads = wrapper?.sellAds || wrapper?.buyAds || (Array.isArray(data?.data) ? data.data : []);
+      const ads = data?.data?.sell || data?.data?.buy || [];
 
-      log.debug({ page, adsCount: ads.length, hasWrapper: !!wrapper?.sellAds }, 'OKX marketplace page');
+      log.debug({ page, adsCount: ads.length }, 'OKX marketplace page');
 
       if (ads.length === 0) break;
 
       for (const ad of ads) {
         results.push({
-          nickName: ad.creator?.nickName || ad.nickName || '',
+          nickName: ad.nickName || '',
           surplusAmount: parseFloat(ad.availableAmount || '0'),
-          price: parseFloat(ad.unitPrice || '0'),
+          price: parseFloat(ad.price || '0'),
         });
       }
     } catch (err: any) {
