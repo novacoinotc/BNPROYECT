@@ -76,11 +76,13 @@ export default function OperatorsPage() {
   ])).sort();
 
   // Match operator nickname to order data
-  // Only match Binance operators (no exchange suffix) — OKX/Bybit orders are in separate DBs
   const getOrdersForNick = (nick: string): OperatorOrders | null => {
-    // If it has an exchange suffix like "(OKX)" or "(Bybit)", don't match — different exchange orders
-    if (/\s*\((?:OKX|Bybit)\)$/.test(nick)) return null;
-    return orderData.find(o => o.nickname === nick) || null;
+    // Exact match first
+    const exact = orderData.find(o => o.nickname === nick);
+    if (exact) return exact;
+    // Strip exchange suffix: "ProcorpCrypto (OKX)" -> "ProcorpCrypto"
+    const baseName = nick.replace(/\s*\((?:OKX|Bybit)\)$/, '');
+    return orderData.find(o => o.nickname === baseName) || null;
   };
 
   // Group daily data by nickname for summary
