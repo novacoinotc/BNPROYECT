@@ -166,17 +166,24 @@ export class OkxPositioning extends EventEmitter {
     if (this.trackedAds.size === 0) return;
 
     for (const [adId, ad] of this.trackedAds) {
-      try {
-        await this.updateSingleAd(ad);
-      } catch (error: any) {
-        ad.errorCount++;
-        if (ad.errorCount % 50 === 1) {
-          log.error({ adId, error: error.message }, 'OKX: Error updating ad');
+      // Skip ads that fail too many times (bad/old ads)
+      if (ad.errorCount >= 5) {
+        if (ad.errorCount === 5) {
+          log.warn(`OKX: Skipping ad ${adId} (${ad.crypto} ${ad.side}) after 5 consecutive failures`);
         }
+        continue;
       }
 
-      // Delay between ads
-      await new Promise(r => setTimeout(r, 200));
+      try {
+        await this.updateSingleAd(ad);
+        ad.errorCount = 0; // Reset on success
+      } catch (error: any) {
+        ad.errorCount++;
+        log.warn(`OKX: Error updating ad ${adId}: ${error.message}`);
+      }
+
+      // Delay between ads to avoid rate limits
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 

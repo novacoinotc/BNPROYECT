@@ -171,7 +171,17 @@ export class OkxClient {
   private async p2pPost<T>(endpoint: string, body: Record<string, any> = {}): Promise<T> {
     const bodyStr = JSON.stringify(body);
     const headers = this.getAuthHeaders('POST', endpoint, bodyStr);
-    const response = await this.p2pClient.post<OkxApiResponse<T>>(endpoint, body, { headers });
+
+    let response;
+    try {
+      response = await this.p2pClient.post<OkxApiResponse<T>>(endpoint, body, { headers });
+    } catch (axiosError: any) {
+      // Extract error details from HTTP error responses (400, 429, etc.)
+      const status = axiosError.response?.status;
+      const data = axiosError.response?.data;
+      const detail = data ? `${data.code || ''} ${data.msg || JSON.stringify(data).substring(0, 200)}` : axiosError.message;
+      throw new Error(`OKX API ${status || 'network'} error on ${endpoint}: ${detail}`);
+    }
 
     if (String(response.data.code) !== '0') {
       throw new Error(`OKX P2P API error: ${response.data.code} - ${response.data.msg}`);
