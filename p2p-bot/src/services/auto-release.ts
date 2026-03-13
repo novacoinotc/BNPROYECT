@@ -335,7 +335,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
    * Handle chat events
    */
   private async handleChatEvent(event: ChatEvent): Promise<void> {
+    // Chat image processing disabled via env var (OCR errors on small images/stickers)
+    const disableChatImages = process.env.DISABLE_CHAT_IMAGE_PROCESSING === 'true';
+
     if (event.type === 'image' && event.message && !event.message.self) {
+      if (disableChatImages) {
+        logger.debug({ orderNo: event.message.orderNo }, '📷 [CHAT] Image processing disabled — skipping');
+        return;
+      }
       const imageUrl = event.message.imageUrl || '';
       const orderNo = event.message.orderNo;
 

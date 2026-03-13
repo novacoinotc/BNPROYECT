@@ -139,7 +139,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Batch check which buyers are trusted (1 query, not N+1)
-    const buyerUserNos = orders.map((o: any) => o.buyerUserNo).filter(Boolean) as string[];
+    // Filter out "unknown" to prevent false VIP matches (all orders with unknown userNo would match)
+    const buyerUserNos = orders.map((o: any) => o.buyerUserNo).filter((v: any) => v && v !== 'unknown') as string[];
     const trustedBuyers = buyerUserNos.length > 0
       ? await prisma.trustedBuyer.findMany({
           where: {

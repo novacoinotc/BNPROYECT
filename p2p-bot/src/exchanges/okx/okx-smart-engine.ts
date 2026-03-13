@@ -28,6 +28,7 @@ export interface OkxSmartResult {
   success: boolean;
   targetPrice: number;
   bestCompetitorPrice: number;
+  bestCompetitorNick: string;
   qualifiedCount: number;
 }
 
@@ -103,8 +104,8 @@ export class OkxSmartEngine {
       if (!ad.creator) return false;
       const nick = ad.creator.nickName;
 
-      // Exclude own ads
-      if (this.config.myNickName && nick === this.config.myNickName) return false;
+      // Exclude own ads (case-insensitive — OKX API may return different casing)
+      if (this.config.myNickName && nick.toLowerCase() === this.config.myNickName.toLowerCase()) return false;
 
       // Exclude ignored advertisers
       if (this.config.ignoredAdvertisers?.length) {
@@ -123,7 +124,20 @@ export class OkxSmartEngine {
     if (ignoredNames.length > 0) {
       log.info({ ignored: ignoredNames }, 'OKX Smart: Filtered out ignored advertisers');
     }
-    log.debug({ total: ads.length, qualified: qualified.length }, 'OKX Smart: Filter results');
+
+    // Log ALL ads with filter results for debugging
+    const adSummary = ads.map((ad, i) => {
+      const nick = ad.creator?.nickName || '?';
+      const price = parseFloat(ad.unitPrice);
+      const grade = ad.creator ? (ad.creator.userGrade || mapCreatorTypeToGrade(ad.creator.type)) : 0;
+      const orders = ad.creator?.completedOrders ?? 0;
+      const avail = parseFloat(ad.availableAmount || '0');
+      const fiat = price * avail;
+      const isSelf = this.config.myNickName && nick.toLowerCase() === this.config.myNickName.toLowerCase();
+      const isQualified = qualified.some(q => q.creator?.nickName === nick && q.unitPrice === ad.unitPrice);
+      return `${nick}@${price.toFixed(2)}(g=${grade},o=${orders},f=${Math.round(fiat)})${isSelf ? '[SELF]' : isQualified ? '[OK]' : '[X]'}`;
+    });
+    log.info({ total: ads.length, qualified: qualified.length, ads: adSummary.slice(0, 20).join(' | ') }, 'OKX Smart: All ads');
 
     if (qualified.length === 0) {
       log.debug('OKX Smart: 0 qualified competitors — keeping current price');
@@ -138,6 +152,11 @@ export class OkxSmartEngine {
     });
 
     const bestPrice = parseFloat(qualified[0].unitPrice);
+    const bestNick = qualified[0].creator?.nickName || '?';
+
+    // Log top 5 qualified competitors
+    const top5 = qualified.slice(0, 5).map(q => `${q.creator?.nickName}@${parseFloat(q.unitPrice).toFixed(2)}`);
+    log.info({ bestNick, bestPrice: bestPrice.toFixed(2), top5 }, 'OKX Smart: Top qualified competitors');
 
     let ourPrice: number;
     if (this.config.matchPrice) {
@@ -163,6 +182,7 @@ export class OkxSmartEngine {
           success: true,
           targetPrice: Math.round(ourPrice * 100) / 100,
           bestCompetitorPrice: parseFloat(aboveFloor[0].unitPrice),
+          bestCompetitorNick: aboveFloor[0].creator?.nickName || '?',
           qualifiedCount: aboveFloor.length,
         };
       } else {
@@ -181,6 +201,7 @@ export class OkxSmartEngine {
       success: true,
       targetPrice: Math.round(ourPrice * 100) / 100,
       bestCompetitorPrice: bestPrice,
+      bestCompetitorNick: bestNick,
       qualifiedCount: qualified.length,
     };
   }

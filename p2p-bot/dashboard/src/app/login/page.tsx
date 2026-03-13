@@ -58,23 +58,9 @@ function LoginForm() {
 
       setMerchantId(data.merchantId);
 
-      if (!webauthnSupported) {
-        // No biometric support — login directly
-        await completeLogin();
-        return;
-      }
-
-      if (data.requires2fa) {
-        // Has passkeys — go to 2FA step
-        setStep('2fa');
-        setIsLoading(false);
-        // Auto-trigger Face ID
-        setTimeout(() => handle2FA(), 300);
-      } else {
-        // No passkeys — force setup
-        setStep('setup-passkey');
-        setIsLoading(false);
-      }
+      // WebAuthn/PassID is only required for order release, not for login
+      // Login with email + password is sufficient
+      await completeLogin();
     } catch (err: any) {
       setErrorMessage(err.message || 'Error de conexion');
       setIsLoading(false);

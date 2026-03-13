@@ -242,7 +242,7 @@ export class OkxPositioning extends EventEmitter {
       const result = await engine.getPrice(ad.crypto, ad.fiat);
       if (result) {
         targetPrice = result.targetPrice;
-        log.info(`OKX smart: targetPrice=${targetPrice}, qualified=${result.qualifiedCount}, bestCompetitor=${result.bestCompetitorPrice}`);
+        log.info(`OKX smart: targetPrice=${targetPrice}, qualified=${result.qualifiedCount}, bestCompetitor=${result.bestCompetitorNick}@${result.bestCompetitorPrice}`);
       } else {
         log.info('OKX smart: no qualified competitors found');
       }

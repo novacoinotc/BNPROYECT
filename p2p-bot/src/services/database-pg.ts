@@ -181,8 +181,8 @@ export async function saveOrder(order: OrderData): Promise<void> {
   // For SELL orders: counterpart is the buyer → buyer.userNo
   // For BUY orders: counterpart is the seller → seller.userNo
   const counterPartUserNo = isSellOrder
-    ? (order.buyer?.userNo || (order as any).counterPartUserNo || (order as any).buyerUserNo || 'unknown')
-    : ((order as any).seller?.userNo || (order as any).counterPartUserNo || (order as any).sellerUserNo || 'unknown');
+    ? (order.buyer?.userNo || (order as any).counterPartUserNo || (order as any).buyerUserNo || null)
+    : ((order as any).seller?.userNo || (order as any).counterPartUserNo || (order as any).sellerUserNo || null);
 
   const buyerUserNo = isSellOrder ? counterPartUserNo : 'self';
   const buyerNickName = isSellOrder ? counterPartNick : 'self';
@@ -209,7 +209,7 @@ export async function saveOrder(order: OrderData): Promise<void> {
     const updateResult = await db.query(
       `UPDATE "Order" SET
         status = $1::"OrderStatus",
-        "buyerUserNo" = CASE WHEN $6::text IS NOT NULL AND $6::text <> 'counterpart' AND $6::text <> 'self' AND $6::text <> '' THEN $6::text ELSE "buyerUserNo" END,
+        "buyerUserNo" = CASE WHEN $6::text IS NOT NULL AND $6::text <> 'counterpart' AND $6::text <> 'self' AND $6::text <> 'unknown' AND $6::text <> '' THEN $6::text ELSE "buyerUserNo" END,
         "buyerRealName" = COALESCE($4, "buyerRealName"),
         "buyerNickName" = CASE WHEN $5 <> 'unknown' AND ("buyerNickName" = 'unknown' OR "buyerNickName" IS NULL) THEN $5 ELSE "buyerNickName" END,
         "paidAt" = CASE WHEN $2 = 'PAID' AND "paidAt" IS NULL THEN NOW() ELSE "paidAt" END,
@@ -1807,11 +1807,12 @@ export async function isTrustedBuyer(
 
   // SECURITY: We REQUIRE buyerUserNo to check trusted status
   // Nickname and realName are NOT reliable identifiers
-  if (!buyerUserNo) {
+  // "unknown" is not a valid userNo — would match ALL orders with missing userNo
+  if (!buyerUserNo || buyerUserNo === 'unknown') {
     logger.debug({
       counterPartNickName,
       buyerRealName,
-    }, '🔍 [TRUSTED BUYER] No userNo provided - cannot verify trusted status');
+    }, '🔍 [TRUSTED BUYER] No valid userNo provided - cannot verify trusted status');
     return false;
   }
 

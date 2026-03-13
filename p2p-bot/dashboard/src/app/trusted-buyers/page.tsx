@@ -141,6 +141,9 @@ export default function TrustedBuyersPage() {
                       {buyer.realName && (
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{buyer.realName}</p>
                       )}
+                      {buyer.buyerUserNo && buyer.buyerUserNo !== 'unknown' && (
+                        <p className="text-[9px] text-gray-600 font-mono mt-0.5 truncate">{buyer.buyerUserNo}</p>
+                      )}
                     </div>
                     <div className="text-right ml-2">
                       <div className="text-sm text-white font-medium">{buyer.ordersAutoReleased} ops</div>
@@ -189,6 +192,9 @@ export default function TrustedBuyersPage() {
                             <span className="text-white font-medium">{buyer.counterPartNickName}</span>
                             {buyer.realName && (
                               <p className="text-xs text-gray-500">{buyer.realName}</p>
+                            )}
+                            {buyer.buyerUserNo && buyer.buyerUserNo !== 'unknown' && (
+                              <p className="text-[10px] text-gray-600 font-mono">{buyer.buyerUserNo}</p>
                             )}
                           </div>
                         </div>
