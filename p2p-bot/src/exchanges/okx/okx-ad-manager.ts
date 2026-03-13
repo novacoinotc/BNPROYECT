@@ -45,8 +45,11 @@ export class OkxAdManager {
 
       const activeAds = ads
         .filter(ad => {
-          // OKX ad statuses: "new" = active/published, "online" = active, "show" = visible
-          // Exclude: "hidden", "offline", "cancelled", "expired"
+          // Only include ads that are listed on the marketplace (actually visible to buyers)
+          const rawAd = ad as any;
+          if (rawAd.isListedOnMarketplace === false || rawAd.isListedOnMarketplace === 'false') return false;
+          if (rawAd.isHidden === true || rawAd.isHidden === 'true') return false;
+
           const status = (ad.status || '').toLowerCase();
           const excludedStatuses = ['hidden', 'offline', 'cancelled', 'expired', 'deleted'];
           return !excludedStatuses.includes(status);
@@ -61,8 +64,12 @@ export class OkxAdManager {
           availableAmount: ad.availableAmount,
         }));
 
-      if (ads.length > 0 && activeAds.length === 0) {
-        log.warn(`OKX ads fetched (${ads.length}) but none passed filter. Statuses: ${ads.map(a => `"${a.status}"`).join(', ')}. AdIds: ${ads.map(a => a.adId).join(', ')}. Raw keys: ${ads.length > 0 ? Object.keys(ads[0]).join(',') : 'none'}`);
+      if (ads.length > 0) {
+        const summary = ads.map(a => {
+          const raw = a as any;
+          return `${a.adId}(${a.side},${a.status},listed=${raw.isListedOnMarketplace},hidden=${raw.isHidden})`;
+        }).join(' | ');
+        log.info(`OKX ads: ${ads.length} total, ${activeAds.length} active. ${summary}`);
       }
 
       log.debug({ count: activeAds.length, side }, 'OKX active ads fetched');
