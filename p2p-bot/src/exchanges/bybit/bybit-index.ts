@@ -13,6 +13,7 @@ import { createBybitAutoRelease, BybitAutoRelease } from './bybit-auto-release.j
 import { createBybitAutoSwap, BybitAutoSwap } from './bybit-auto-swap.js';
 import { createBybitBuyOrderManager, BybitBuyOrderManager } from './bybit-buy-order-manager.js';
 import { createBybitApiServer, BybitApiServer } from './bybit-api-server.js';
+import { createBybitOperatorMonitor } from './bybit-operator-monitor.js';
 import { testConnection, disconnect, isPositioningEnabled, isReleaseEnabled } from '../../services/database-pg.js';
 
 const log = logger.child({ module: 'bybit-main' });
@@ -215,6 +216,12 @@ async function startServices(): Promise<void> {
     });
 
     log.info('Bybit Auto-Buy started');
+  }
+
+  // Operator monitor
+  const operatorMonitor = createBybitOperatorMonitor();
+  if (operatorMonitor) {
+    await operatorMonitor.start();
   }
 
   // Wire service references to API server for dashboard endpoints
