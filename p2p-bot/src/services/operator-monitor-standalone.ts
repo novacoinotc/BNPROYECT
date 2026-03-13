@@ -1,296 +1,384 @@
 // =====================================================
-// STANDALONE OPERATOR MONITOR
+// STANDALONE OPERATOR MONITOR (v2 — Authenticated APIs)
 // Runs as its own Railway service
 // Monitors operators across Binance, OKX, and Bybit
-// Uses direct HTTP calls — no exchange API keys needed
+// Uses authenticated API calls — checks each operator's
+// own ads directly (no marketplace search needed)
 // =====================================================
 
 import 'dotenv/config';
+import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import * as db from './database-pg.js';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import axios, { AxiosRequestConfig } from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 
-const log = logger.child({ module: 'operator-monitor-all' });
+const log = logger.child({ module: 'operator-monitor' });
 
 // ==================== TYPES ====================
 
-interface OperatorEntry {
+interface OperatorConfig {
   nickname: string;
+  displayName: string;
   exchange: 'binance' | 'okx' | 'bybit';
-  displayName: string; // e.g. "ProcorpCrypto (OKX)"
+  apiKey: string;
+  apiSecret: string;
+  passphrase?: string; // OKX only
+}
+
+interface AdStatus {
+  isOnline: boolean;
+  surplusAmount: number | null;
+  adPrice: number | null;
+  onlineAdsCount: number;
 }
 
 interface MonitorConfig {
-  operators: OperatorEntry[];
+  operators: OperatorConfig[];
   lowFundsThreshold: number;
   checkIntervalMs: number;
-  workdayStart: number; // Hour in CDMX timezone
-  workdayEnd: number;   // Hour in CDMX timezone
+  workdayStart: number;
+  workdayEnd: number;
 }
 
-// ==================== MARKETPLACE SEARCH (PUBLIC APIs) ====================
+// ==================== PROXY ====================
 
-/**
- * Get proxy agent for OKX/Bybit (they block US IPs)
- * NOTE: Node's native fetch() does NOT support the `agent` option.
- * We use axios with httpsAgent instead.
- */
 function getProxyAgent(): HttpsProxyAgent<string> | undefined {
   const proxyUrl = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.OKX_PROXY_URL;
   if (!proxyUrl) return undefined;
   return new HttpsProxyAgent(proxyUrl);
 }
 
-/**
- * Search Binance P2P marketplace (public, no auth needed)
- */
-async function searchBinance(asset: string, fiat: string, pages: number = 10): Promise<Array<{
-  nickName: string;
-  surplusAmount: number;
-  price: number;
-}>> {
-  const results: Array<{ nickName: string; surplusAmount: number; price: number }> = [];
+// ==================== BINANCE API ====================
 
-  for (let page = 1; page <= pages; page++) {
-    try {
-      const res = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          asset,
-          fiat,
-          tradeType: 'BUY', // BUY tab = sellers
-          page,
-          rows: 20,
-          publisherType: null,
-        }),
-      });
+async function checkBinanceAds(op: OperatorConfig): Promise<AdStatus> {
+  try {
+    const timestamp = Date.now();
+    const params = `page=1&rows=20&timestamp=${timestamp}`;
+    const signature = crypto.createHmac('sha256', op.apiSecret).update(params).digest('hex');
+    const queryString = `${params}&signature=${signature}`;
 
-      const data = await res.json() as any;
-      const ads = data?.data || [];
-      if (ads.length === 0) break;
-
-      for (const ad of ads) {
-        results.push({
-          nickName: ad.advertiser?.nickName || '',
-          surplusAmount: parseFloat(ad.adv?.surplusAmount || '0'),
-          price: parseFloat(ad.adv?.price || '0'),
-        });
-      }
-    } catch (err) {
-      log.error({ err, page }, 'Binance marketplace search failed');
-      break;
-    }
-  }
-
-  return results;
-}
-
-/**
- * Search OKX P2P marketplace (public pre-login endpoint, needs proxy)
- * Endpoint: /v3/c2c/tradingOrders/getMarketplaceAdsPrelogin (GET, no auth)
- * NOTE: /api/v5/p2p/ad/marketplace-list requires API key — can't use it here
- */
-async function searchOkx(asset: string, fiat: string, pages: number = 5): Promise<Array<{
-  nickName: string;
-  surplusAmount: number;
-  price: number;
-}>> {
-  const results: Array<{ nickName: string; surplusAmount: number; price: number }> = [];
-  const agent = getProxyAgent();
-
-  for (let page = 1; page <= pages; page++) {
-    try {
-      const params = new URLSearchParams({
-        side: 'sell',
-        cryptoCurrency: asset.toLowerCase(),
-        fiatCurrency: fiat.toLowerCase(),
-        currentPage: String(page),
-        numberPerPage: '50',
-      });
-
-      const config: AxiosRequestConfig = {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        timeout: 15000,
-      };
-      if (agent) {
-        config.httpsAgent = agent;
-      }
-
-      const res = await axios.get(
-        `https://www.okx.com/v3/c2c/tradingOrders/getMarketplaceAdsPrelogin?${params}`,
-        config
-      );
-
-      const data = res.data;
-      const ads = data?.data?.sell || data?.data?.buy || [];
-
-      log.debug({ page, adsCount: ads.length }, 'OKX marketplace page');
-
-      if (ads.length === 0) break;
-
-      for (const ad of ads) {
-        results.push({
-          nickName: ad.nickName || '',
-          surplusAmount: parseFloat(ad.availableAmount || '0'),
-          price: parseFloat(ad.price || '0'),
-        });
-      }
-    } catch (err: any) {
-      log.error({ error: err.message, page }, 'OKX marketplace search failed');
-      break;
-    }
-  }
-
-  log.info(`OKX marketplace search complete: ${results.length} sellers found (proxy=${getProxyAgent() ? 'yes' : 'NO'})`);
-  return results;
-}
-
-/**
- * Search Bybit P2P marketplace (public, but needs proxy)
- * Uses axios because Node's native fetch() ignores the proxy agent
- */
-async function searchBybit(asset: string, fiat: string, pages: number = 5): Promise<Array<{
-  nickName: string;
-  surplusAmount: number;
-  price: number;
-}>> {
-  const results: Array<{ nickName: string; surplusAmount: number; price: number }> = [];
-  const agent = getProxyAgent();
-
-  for (let page = 1; page <= pages; page++) {
-    try {
-      const config: AxiosRequestConfig = {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000,
-      };
-      if (agent) {
-        config.httpsAgent = agent;
-      }
-
-      const res = await axios.post(
-        'https://api2.bybit.com/fiat/otc/item/online',
-        {
-          tokenId: asset,
-          currencyId: fiat,
-          side: '1', // 1 = sell
-          page: String(page),
-          size: '50',
+    const response = await axios.get(
+      `https://api.binance.com/sapi/v1/c2c/ads/list?${queryString}`,
+      {
+        headers: {
+          'X-MBX-APIKEY': op.apiKey,
+          'Content-Type': 'application/json',
         },
-        config
-      );
-
-      const data = res.data;
-      const items = data?.result?.items || [];
-      if (items.length === 0) break;
-
-      for (const item of items) {
-        results.push({
-          nickName: item.nickName || '',
-          surplusAmount: parseFloat(item.lastQuantity || '0'),
-          price: parseFloat(item.price || '0'),
-        });
+        timeout: 15000,
       }
-    } catch (err: any) {
-      log.error({ error: err.message, page }, 'Bybit marketplace search failed');
-      break;
-    }
-  }
+    );
 
-  log.info(`Bybit marketplace search complete: ${results.length} sellers found (proxy=${getProxyAgent() ? 'yes' : 'NO'})`);
-  return results;
+    const data = response.data?.data;
+    if (!data) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+
+    // Response can be { sellList, buyList } or array
+    let allAds: any[] = [];
+    if (data.sellList || data.buyList) {
+      allAds = [...(data.sellList || []), ...(data.buyList || [])];
+    } else if (Array.isArray(data)) {
+      allAds = data;
+    }
+
+    // Filter online SELL ads (advStatus 1 = online)
+    const onlineSellAds = allAds.filter((ad: any) =>
+      (ad.advStatus === 1 || ad.advStatus === '1') &&
+      (ad.tradeType === 'SELL' || ad.tradeType === 1)
+    );
+
+    if (onlineSellAds.length === 0) {
+      // Check if there are ANY online ads (buy too)
+      const anyOnline = allAds.filter((ad: any) => ad.advStatus === 1 || ad.advStatus === '1');
+      if (anyOnline.length > 0) {
+        const best = anyOnline[0];
+        return {
+          isOnline: true,
+          surplusAmount: parseFloat(best.surplusAmount || '0'),
+          adPrice: parseFloat(best.price || '0'),
+          onlineAdsCount: anyOnline.length,
+        };
+      }
+      return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+    }
+
+    // Get best sell ad (lowest price)
+    const best = onlineSellAds.sort((a: any, b: any) =>
+      parseFloat(a.price || '0') - parseFloat(b.price || '0')
+    )[0];
+
+    return {
+      isOnline: true,
+      surplusAmount: parseFloat(best.surplusAmount || '0'),
+      adPrice: parseFloat(best.price || '0'),
+      onlineAdsCount: onlineSellAds.length,
+    };
+  } catch (error: any) {
+    log.error({ operator: op.displayName, error: error.message }, 'Binance API check failed');
+    return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+  }
+}
+
+// ==================== OKX API ====================
+
+async function checkOkxAds(op: OperatorConfig): Promise<AdStatus> {
+  try {
+    const endpoint = '/api/v5/p2p/ad/active-list';
+    const timestamp = new Date().toISOString();
+    const prehash = timestamp + 'GET' + endpoint;
+    const signature = crypto.createHmac('sha256', op.apiSecret).update(prehash).digest('base64');
+
+    const agent = getProxyAgent();
+    const config: AxiosRequestConfig = {
+      headers: {
+        'OK-ACCESS-KEY': op.apiKey,
+        'OK-ACCESS-SIGN': signature,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': op.passphrase || '',
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    };
+    if (agent) config.httpsAgent = agent;
+
+    const response = await axios.get(`https://www.okx.com${endpoint}`, config);
+
+    const data = response.data?.data;
+    if (!data) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+
+    // Parse OKX response: can be [{ sellAds: [], buyAds: [] }] or { sellAds: [], buyAds: [] }
+    let sellAds: any[] = [];
+    if (Array.isArray(data) && data[0]) {
+      sellAds = data[0].sellAds || data[0].sell || [];
+    } else if (data.sellAds || data.sell) {
+      sellAds = data.sellAds || data.sell || [];
+    }
+
+    // All ads returned by active-list are active
+    if (sellAds.length === 0) {
+      // Check buy ads too
+      let buyAds: any[] = [];
+      if (Array.isArray(data) && data[0]) {
+        buyAds = data[0].buyAds || data[0].buy || [];
+      } else if (data.buyAds || data.buy) {
+        buyAds = data.buyAds || data.buy || [];
+      }
+
+      if (buyAds.length > 0) {
+        const best = buyAds[0];
+        return {
+          isOnline: true,
+          surplusAmount: parseFloat(best.availableAmount || best.surplusAmount || '0'),
+          adPrice: parseFloat(best.unitPrice || best.price || '0'),
+          onlineAdsCount: buyAds.length,
+        };
+      }
+      return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+    }
+
+    // Get best sell ad (lowest price)
+    const best = sellAds.sort((a: any, b: any) =>
+      parseFloat(a.unitPrice || a.price || '0') - parseFloat(b.unitPrice || b.price || '0')
+    )[0];
+
+    return {
+      isOnline: true,
+      surplusAmount: parseFloat(best.availableAmount || best.surplusAmount || '0'),
+      adPrice: parseFloat(best.unitPrice || best.price || '0'),
+      onlineAdsCount: sellAds.length,
+    };
+  } catch (error: any) {
+    log.error({ operator: op.displayName, error: error.message }, 'OKX API check failed');
+    return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+  }
+}
+
+// ==================== BYBIT API ====================
+
+async function checkBybitAds(op: OperatorConfig): Promise<AdStatus> {
+  try {
+    const endpoint = '/v5/p2p/item/personal/list';
+    const body = JSON.stringify({});
+    const recvWindow = '5000';
+    const timestamp = Date.now().toString();
+    const prehash = timestamp + op.apiKey + recvWindow + body;
+    const signature = crypto.createHmac('sha256', op.apiSecret).update(prehash).digest('hex');
+
+    const agent = getProxyAgent();
+    const config: AxiosRequestConfig = {
+      headers: {
+        'X-BAPI-API-KEY': op.apiKey,
+        'X-BAPI-TIMESTAMP': timestamp,
+        'X-BAPI-SIGN': signature,
+        'X-BAPI-RECV-WINDOW': recvWindow,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    };
+    if (agent) config.httpsAgent = agent;
+
+    const response = await axios.post(`https://api.bybit.com${endpoint}`, {}, config);
+
+    const result = response.data?.result;
+    if (!result?.items) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+
+    // status 10 = online, side 1 = sell
+    const onlineSellAds = result.items.filter((ad: any) =>
+      ad.status === 10 && ad.side === 1
+    );
+
+    if (onlineSellAds.length === 0) {
+      // Check any online ads (buy too)
+      const anyOnline = result.items.filter((ad: any) => ad.status === 10);
+      if (anyOnline.length > 0) {
+        const best = anyOnline[0];
+        return {
+          isOnline: true,
+          surplusAmount: parseFloat(best.lastQuantity || best.quantity || '0'),
+          adPrice: parseFloat(best.price || '0'),
+          onlineAdsCount: anyOnline.length,
+        };
+      }
+      return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+    }
+
+    // Get best sell ad (lowest price)
+    const best = onlineSellAds.sort((a: any, b: any) =>
+      parseFloat(a.price || '0') - parseFloat(b.price || '0')
+    )[0];
+
+    return {
+      isOnline: true,
+      surplusAmount: parseFloat(best.lastQuantity || best.quantity || '0'),
+      adPrice: parseFloat(best.price || '0'),
+      onlineAdsCount: onlineSellAds.length,
+    };
+  } catch (error: any) {
+    log.error({ operator: op.displayName, error: error.message }, 'Bybit API check failed');
+    return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+  }
 }
 
 // ==================== MONITOR ====================
 
-/**
- * Get current hour in CDMX timezone (America/Mexico_City)
- */
 function getCdmxHour(): number {
   const now = new Date();
   const cdmxTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Mexico_City' }));
   return cdmxTime.getHours();
 }
 
-async function runCheck(config: MonitorConfig): Promise<void> {
-  // Group operators by exchange
-  const binanceOps = config.operators.filter(o => o.exchange === 'binance');
-  const okxOps = config.operators.filter(o => o.exchange === 'okx');
-  const bybitOps = config.operators.filter(o => o.exchange === 'bybit');
-
-  // Search all exchanges in parallel
-  const [binanceAds, okxAds, bybitAds] = await Promise.all([
-    binanceOps.length > 0 ? searchBinance('USDT', 'MXN') : Promise.resolve([]),
-    okxOps.length > 0 ? searchOkx('USDT', 'MXN') : Promise.resolve([]),
-    bybitOps.length > 0 ? searchBybit('USDT', 'MXN') : Promise.resolve([]),
-  ]);
-
-  log.info(`Marketplace results: Binance=${binanceAds.length}, OKX=${okxAds.length}, Bybit=${bybitAds.length}`);
-
-  // Log OKX nicknames found for debugging
-  if (okxAds.length > 0) {
-    const okxNicks = okxAds.map(a => `${a.nickName}@${a.price.toFixed(2)}`).slice(0, 10);
-    log.info(`OKX sellers found: ${okxNicks.join(', ')}${okxAds.length > 10 ? ` ...+${okxAds.length - 10}` : ''}`);
-  } else {
-    log.warn('OKX: 0 sellers found — check proxy config (HTTP_PROXY/OKX_PROXY_URL)');
+async function checkOperator(op: OperatorConfig): Promise<AdStatus> {
+  switch (op.exchange) {
+    case 'binance': return checkBinanceAds(op);
+    case 'okx': return checkOkxAds(op);
+    case 'bybit': return checkBybitAds(op);
   }
+}
 
+async function runCheck(config: MonitorConfig): Promise<void> {
   const cdmxHour = getCdmxHour();
   const isWorkHour = cdmxHour >= config.workdayStart && cdmxHour < config.workdayEnd;
 
-  // Check each operator
-  for (const op of config.operators) {
-    let ads: typeof binanceAds;
-    switch (op.exchange) {
-      case 'binance': ads = binanceAds; break;
-      case 'okx': ads = okxAds; break;
-      case 'bybit': ads = bybitAds; break;
-    }
+  // Check all operators in parallel
+  const results = await Promise.all(
+    config.operators.map(async (op) => {
+      const status = await checkOperator(op);
+      return { op, status };
+    })
+  );
 
-    // Match by exact name or by normalized name (strip dashes/underscores for fuzzy match)
-    const normalize = (s: string) => s.toLowerCase().replace(/[-_]/g, '');
-    const found = ads.find(a =>
-      a.nickName.toLowerCase() === op.nickname.toLowerCase() ||
-      normalize(a.nickName) === normalize(op.nickname)
-    );
-    const isAdOnline = !!found;
+  for (const { op, status } of results) {
+    const lowFunds = status.surplusAmount !== null && status.surplusAmount < config.lowFundsThreshold;
 
-    if (!isAdOnline) {
-      log.info(`${op.displayName}: NOT FOUND in ${op.exchange} results (searching for "${op.nickname}" in ${ads.length} ads)`);
+    if (status.isOnline) {
+      log.info(
+        `✅ ${op.displayName}: ONLINE (${status.onlineAdsCount} ads, best price ${status.adPrice?.toFixed(2)}, ${status.surplusAmount?.toFixed(0)} USDT)`
+      );
     } else {
-      log.info(`${op.displayName}: ONLINE (matched "${found.nickName}" at ${found.price.toFixed(2)}, ${found.surplusAmount.toFixed(0)} USDT)`);
+      log.info(`❌ ${op.displayName}: OFFLINE`);
     }
-    const surplusAmount = found?.surplusAmount ?? null;
-    const adPrice = found?.price ?? null;
-    const lowFunds = surplusAmount !== null && surplusAmount < config.lowFundsThreshold;
 
     await db.saveOperatorSnapshot({
       nickname: op.displayName,
-      isAdOnline,
-      surplusAmount,
-      adPrice,
+      isAdOnline: status.isOnline,
+      surplusAmount: status.surplusAmount,
+      adPrice: status.adPrice,
       lowFunds,
     });
 
-    if (!isAdOnline && isWorkHour) {
-      log.warn({ operator: op.displayName, cdmxHour },
-        `⚠️ ${op.displayName} OFFLINE during work hours`);
+    if (!status.isOnline && isWorkHour) {
+      log.warn(`⚠️ ${op.displayName} OFFLINE during work hours (${cdmxHour}:00 CDMX)`);
     } else if (lowFunds && isWorkHour) {
-      log.warn({ operator: op.displayName, surplusAmount: surplusAmount?.toFixed(2) },
-        `💸 ${op.displayName} LOW FUNDS: ${surplusAmount?.toFixed(2)} USDT`);
+      log.warn(`💸 ${op.displayName} LOW FUNDS: ${status.surplusAmount?.toFixed(2)} USDT`);
     }
   }
 }
 
 // ==================== MAIN ====================
 
+function parseOperatorConfig(): OperatorConfig[] {
+  // Method 1: JSON config (preferred)
+  // MONITOR_CONFIG=[{"nickname":"VillarrealCrypto","displayName":"VillarrealCrypto","exchange":"binance","apiKey":"xxx","apiSecret":"xxx"}, ...]
+  const jsonConfig = process.env.MONITOR_CONFIG;
+  if (jsonConfig) {
+    try {
+      const parsed = JSON.parse(jsonConfig) as OperatorConfig[];
+      log.info(`Loaded ${parsed.length} operators from MONITOR_CONFIG JSON`);
+      return parsed;
+    } catch (e: any) {
+      log.error({ error: e.message }, 'Failed to parse MONITOR_CONFIG JSON');
+    }
+  }
+
+  // Method 2: Individual env vars per operator
+  // MONITOR_OPS=VillarrealCrypto:binance,MisterShops:binance,ProcorpCrypto:okx,...
+  // MONITOR_VILLARREALCRYPTO_KEY=xxx
+  // MONITOR_VILLARREALCRYPTO_SECRET=xxx
+  const opsList = process.env.MONITOR_OPS;
+  if (opsList) {
+    const operators: OperatorConfig[] = [];
+    const entries = opsList.split(',').map(s => s.trim()).filter(Boolean);
+
+    for (const entry of entries) {
+      const [nickname, exchange] = entry.split(':');
+      if (!nickname || !exchange) continue;
+
+      // Normalize key name: strip special chars, uppercase
+      const keyName = nickname.replace(/[-_\s]/g, '').toUpperCase();
+      const apiKey = process.env[`MONITOR_${keyName}_KEY`] || '';
+      const apiSecret = process.env[`MONITOR_${keyName}_SECRET`] || '';
+      const passphrase = process.env[`MONITOR_${keyName}_PASSPHRASE`];
+
+      if (!apiKey || !apiSecret) {
+        log.warn(`Missing API keys for ${nickname} (MONITOR_${keyName}_KEY/SECRET)`);
+        continue;
+      }
+
+      let displayName = nickname;
+      if (exchange === 'okx') displayName = `${nickname} (OKX)`;
+      if (exchange === 'bybit') displayName = `${nickname} (Bybit)`;
+
+      operators.push({
+        nickname,
+        displayName,
+        exchange: exchange as 'binance' | 'okx' | 'bybit',
+        apiKey,
+        apiSecret,
+        passphrase,
+      });
+    }
+
+    log.info(`Loaded ${operators.length} operators from MONITOR_OPS env vars`);
+    return operators;
+  }
+
+  return [];
+}
+
 async function main(): Promise<void> {
   log.info('='.repeat(50));
-  log.info('Operator Monitor Service Starting...');
+  log.info('Operator Monitor v2 (Authenticated APIs)');
   log.info('='.repeat(50));
 
-  // Test DB
   const dbOk = await db.testConnection();
   if (!dbOk) {
     log.error('Database connection failed');
@@ -298,26 +386,12 @@ async function main(): Promise<void> {
   }
   log.info('Database connected');
 
-  // Parse operator config
-  const operators: OperatorEntry[] = [];
-
-  const binanceNicks = (process.env.BINANCE_OPERATORS || '').split(',').map(n => n.trim()).filter(Boolean);
-  for (const nick of binanceNicks) {
-    operators.push({ nickname: nick, exchange: 'binance', displayName: nick });
-  }
-
-  const okxNicks = (process.env.OKX_OPERATORS || '').split(',').map(n => n.trim()).filter(Boolean);
-  for (const nick of okxNicks) {
-    operators.push({ nickname: nick, exchange: 'okx', displayName: `${nick} (OKX)` });
-  }
-
-  const bybitNicks = (process.env.BYBIT_OPERATORS || '').split(',').map(n => n.trim()).filter(Boolean);
-  for (const nick of bybitNicks) {
-    operators.push({ nickname: nick, exchange: 'bybit', displayName: `${nick} (Bybit)` });
-  }
+  const operators = parseOperatorConfig();
 
   if (operators.length === 0) {
-    log.error('No operators configured. Set BINANCE_OPERATORS, OKX_OPERATORS, BYBIT_OPERATORS');
+    log.error('No operators configured. Set MONITOR_CONFIG (JSON) or MONITOR_OPS + per-operator keys');
+    log.error('Example MONITOR_CONFIG:');
+    log.error('[{"nickname":"VillarrealCrypto","displayName":"VillarrealCrypto","exchange":"binance","apiKey":"xxx","apiSecret":"xxx"}]');
     process.exit(1);
   }
 
@@ -330,11 +404,11 @@ async function main(): Promise<void> {
   };
 
   log.info({
-    operators: operators.map(o => o.displayName),
+    operators: operators.map(o => `${o.displayName} (${o.exchange})`),
     intervalMinutes: config.checkIntervalMs / 60000,
     workday: `${config.workdayStart}:00 - ${config.workdayEnd}:00 (CDMX)`,
     lowFundsThreshold: config.lowFundsThreshold,
-    proxy: process.env.HTTP_PROXY ? 'configured' : 'none',
+    proxy: getProxyAgent() ? 'configured' : 'none',
   }, 'Operator Monitor configured');
 
   // First check immediately
