@@ -153,6 +153,35 @@ export class OkxAdManager {
         }
       }
 
+      // Error 55723: "Insufficient balance in your funding account"
+      // The ad's availableAmount exceeds the funding balance.
+      // Fix: extract balance from error and retry with reduced availableAmount.
+      if (errMsg.includes('55723')) {
+        const balanceMatch = errMsg.match(/balance is ([\d,]+\.?\d*)/i);
+        if (balanceMatch) {
+          const availableBalance = parseFloat(balanceMatch[1].replace(/,/g, ''));
+          // Use 95% of available balance to leave margin for rounding/fees
+          const reducedAmount = Math.floor(availableBalance * 0.95 * 100) / 100;
+          log.warn(`OKX: Insufficient balance — retrying with reduced amount ${reducedAmount} USDT (balance: ${availableBalance})`);
+
+          const retryParams: Record<string, any> = {
+            ...updateParams,
+            availableAmount: reducedAmount.toFixed(2),
+          };
+          // Recalculate maxOrderLimit with reduced amount
+          retryParams.maxOrderLimit = Math.max(1000, Math.floor(reducedAmount * newPrice)).toFixed(2);
+
+          try {
+            const result = await this.client.updateAd(adId, retryParams);
+            log.info(`OKX: Ad updated with reduced amount ${result.oldAdId} -> ${result.newAdId} at ${priceStr} (${reducedAmount} USDT)`);
+            return result;
+          } catch (retryError: any) {
+            log.error(`OKX: Retry with reduced amount failed: ${retryError.message}`);
+            return null;
+          }
+        }
+      }
+
       log.error(`OKX: Failed to update ad ${adId} to ${priceStr}: ${errMsg}`);
       return null;
     }
