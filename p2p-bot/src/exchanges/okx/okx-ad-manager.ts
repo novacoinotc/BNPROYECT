@@ -111,34 +111,56 @@ export class OkxAdManager {
     } catch (error: any) {
       const errMsg = error.message || '';
 
-      // Handle "Insufficient balance" — retry with current available balance
+      // Handle "Insufficient balance" — cancel old ad, then create new one with available balance
       if (errMsg.includes('55723') || errMsg.toLowerCase().includes('insufficient balance')) {
-        log.warn(`OKX: Insufficient balance for ad ${adId} — retrying with current balance`);
+        log.warn(`OKX: Insufficient balance for ad ${adId} — doing manual cancel+create`);
         try {
-          // Fetch current funding balance (P2P ads use funding account)
-          const balances = await this.client.getFundingBalance('USDT');
-          const balance = balances.find(b => b.ccy === 'USDT');
-          if (balance) {
-            const available = parseFloat(balance.availBal || '0');
-            if (available > 10) {
-              // Use 99% of available to leave buffer for fees/rounding
+          // 1. Get ad details before cancelling (to preserve payment methods, limits, etc.)
+          const adDetail = await this.client.getAd(adId);
+          if (adDetail) {
+            // 2. Cancel the old ad (releases reserved USDT back to funding)
+            await this.client.cancelAd(adId);
+            log.info(`OKX: Cancelled old ad ${adId}`);
+
+            // 3. Small delay to let balance settle
+            await new Promise(r => setTimeout(r, 1000));
+
+            // 4. Fetch funding balance (should now include released amount)
+            const balances = await this.client.getFundingBalance('USDT');
+            const balance = balances.find(b => b.ccy === 'USDT');
+            const available = parseFloat(balance?.availBal || '0');
+
+            if (available >= 10) {
+              // Use 99% to leave buffer
               const safeAmount = Math.floor(available * 0.99 * 100) / 100;
-              log.info(`OKX: Funding balance=${available}, using safeAmount=${safeAmount} for retry`);
-              const updateParams: Record<string, any> = {
+              log.info(`OKX: Funding balance after cancel=${available.toFixed(2)}, creating new ad with ${safeAmount}`);
+
+              // 5. Recreate ad with available balance at new price
+              const rawAd = adDetail as any;
+              const paymentMethods = (adDetail.paymentMethods || []).map((pm: any) => pm.id || pm.paymentMethodId || pm);
+              const newAdId = await this.client.createAd({
+                side: adDetail.side,
+                cryptoCurrency: adDetail.cryptoCurrency,
+                fiatCurrency: adDetail.fiatCurrency,
                 unitPrice: priceStr,
                 availableAmount: safeAmount.toFixed(2),
-              };
-              if (adType === 'floating_market') {
-                updateParams.type = 'limit';
-              }
+                minAmount: adDetail.minAmount,
+                maxAmount: adDetail.maxAmount,
+                paymentMethods: paymentMethods,
+                remark: rawAd.remark || undefined,
+                autoReply: rawAd.autoReply || undefined,
+              });
 
-              const result = await this.client.updateAd(adId, updateParams);
-              log.info(`OKX: Ad updated with adjusted balance (${available.toFixed(2)} USDT) ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
-              return result;
+              log.info(`OKX: Cancel+Create success! ${adId} -> ${newAdId} at ${priceStr} (${safeAmount} USDT)`);
+              return { oldAdId: adId, newAdId };
+            } else {
+              log.error(`OKX: Funding balance too low after cancel (${available}) — cannot recreate ad`);
             }
+          } else {
+            log.error(`OKX: Cannot get ad detail for ${adId} — skipping cancel+create`);
           }
-        } catch (retryError: any) {
-          log.error(`OKX: Retry with balance also failed for ad ${adId}: ${retryError.message}`);
+        } catch (recreateError: any) {
+          log.error(`OKX: Cancel+Create failed for ad ${adId}: ${recreateError.message}`);
         }
       }
 
