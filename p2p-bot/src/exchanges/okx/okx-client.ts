@@ -328,8 +328,9 @@ export class OkxClient {
    */
   async getAd(adId: string): Promise<OkxAdData | null> {
     try {
-      const result = await this.p2pGet<OkxAdData>('/api/v5/p2p/ad', { adId });
-      return result;
+      const result = await this.p2pGet<any>('/api/v5/p2p/ad', { adId });
+      log.info({ adId, rawKeys: result ? Object.keys(result).join(',') : 'null', raw: JSON.stringify(result).substring(0, 500) }, 'getAd raw response');
+      return result as OkxAdData;
     } catch (error: any) {
       log.error({ error: error.message, adId }, 'getAd failed');
       return null;

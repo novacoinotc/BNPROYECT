@@ -118,43 +118,59 @@ export class OkxAdManager {
           // 1. Get ad details before cancelling (to preserve payment methods, limits, etc.)
           const adDetail = await this.client.getAd(adId);
           if (adDetail) {
-            // 2. Cancel the old ad (releases reserved USDT back to funding)
-            await this.client.cancelAd(adId);
-            log.info(`OKX: Cancelled old ad ${adId}`);
+            const rawAd = adDetail as any;
+            log.info(`OKX: Ad detail keys: ${Object.keys(rawAd).join(',')}`);
+            log.info(`OKX: Ad detail side=${rawAd.side}, tradeType=${rawAd.tradeType}, crypto=${rawAd.cryptoCurrency}, fiat=${rawAd.fiatCurrency}`);
 
-            // 3. Small delay to let balance settle
-            await new Promise(r => setTimeout(r, 1000));
+            // OKX may use 'side' or 'tradeType' for the buy/sell field
+            const side = rawAd.side || rawAd.tradeType;
+            const crypto = rawAd.cryptoCurrency || rawAd.crypto;
+            const fiat = rawAd.fiatCurrency || rawAd.fiat;
+            const minAmt = rawAd.minAmount || rawAd.minOrderAmount;
+            const maxAmt = rawAd.maxAmount || rawAd.maxOrderAmount;
 
-            // 4. Fetch funding balance (should now include released amount)
-            const balances = await this.client.getFundingBalance('USDT');
-            const balance = balances.find(b => b.ccy === 'USDT');
-            const available = parseFloat(balance?.availBal || '0');
-
-            if (available >= 10) {
-              // Use 99% to leave buffer
-              const safeAmount = Math.floor(available * 0.99 * 100) / 100;
-              log.info(`OKX: Funding balance after cancel=${available.toFixed(2)}, creating new ad with ${safeAmount}`);
-
-              // 5. Recreate ad with available balance at new price
-              const rawAd = adDetail as any;
-              const paymentMethods = (adDetail.paymentMethods || []).map((pm: any) => pm.id || pm.paymentMethodId || pm);
-              const newAdId = await this.client.createAd({
-                side: adDetail.side,
-                cryptoCurrency: adDetail.cryptoCurrency,
-                fiatCurrency: adDetail.fiatCurrency,
-                unitPrice: priceStr,
-                availableAmount: safeAmount.toFixed(2),
-                minAmount: adDetail.minAmount,
-                maxAmount: adDetail.maxAmount,
-                paymentMethods: paymentMethods,
-                remark: rawAd.remark || undefined,
-                autoReply: rawAd.autoReply || undefined,
-              });
-
-              log.info(`OKX: Cancel+Create success! ${adId} -> ${newAdId} at ${priceStr} (${safeAmount} USDT)`);
-              return { oldAdId: adId, newAdId };
+            if (!side || !crypto || !fiat) {
+              log.error(`OKX: Missing critical fields from ad detail — side=${side}, crypto=${crypto}, fiat=${fiat}. Raw: ${JSON.stringify(rawAd).substring(0, 300)}`);
             } else {
-              log.error(`OKX: Funding balance too low after cancel (${available}) — cannot recreate ad`);
+              // 2. Cancel the old ad (releases reserved USDT back to funding)
+              await this.client.cancelAd(adId);
+              log.info(`OKX: Cancelled old ad ${adId}`);
+
+              // 3. Small delay to let balance settle
+              await new Promise(r => setTimeout(r, 1000));
+
+              // 4. Fetch funding balance (should now include released amount)
+              const balances = await this.client.getFundingBalance('USDT');
+              const balance = balances.find(b => b.ccy === 'USDT');
+              const available = parseFloat(balance?.availBal || '0');
+
+              if (available >= 10) {
+                // Use 99% to leave buffer
+                const safeAmount = Math.floor(available * 0.99 * 100) / 100;
+                log.info(`OKX: Funding balance after cancel=${available.toFixed(2)}, creating new ad with ${safeAmount}`);
+
+                // 5. Recreate ad with available balance at new price
+                const paymentMethods = (rawAd.paymentMethods || rawAd.paymentMethodIds || []).map((pm: any) =>
+                  typeof pm === 'string' ? pm : (pm.id || pm.paymentMethodId || pm)
+                );
+                const newAdId = await this.client.createAd({
+                  side: side,
+                  cryptoCurrency: crypto,
+                  fiatCurrency: fiat,
+                  unitPrice: priceStr,
+                  availableAmount: safeAmount.toFixed(2),
+                  minAmount: minAmt,
+                  maxAmount: maxAmt,
+                  paymentMethods: paymentMethods,
+                  remark: rawAd.remark || undefined,
+                  autoReply: rawAd.autoReply || undefined,
+                });
+
+                log.info(`OKX: Cancel+Create success! ${adId} -> ${newAdId} at ${priceStr} (${safeAmount} USDT)`);
+                return { oldAdId: adId, newAdId };
+              } else {
+                log.error(`OKX: Funding balance too low after cancel (${available}) — cannot recreate ad`);
+              }
             }
           } else {
             log.error(`OKX: Cannot get ad detail for ${adId} — skipping cancel+create`);
