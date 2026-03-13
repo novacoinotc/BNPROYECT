@@ -158,7 +158,7 @@ export class OkxClient {
     const headers = this.getAuthHeaders('GET', requestPath);
     const response = await this.p2pClient.get<OkxApiResponse<T>>(requestPath, { headers });
 
-    if (response.data.code !== '0') {
+    if (String(response.data.code) !== '0') {
       throw new Error(`OKX P2P API error: ${response.data.code} - ${response.data.msg}`);
     }
 
@@ -173,7 +173,7 @@ export class OkxClient {
     const headers = this.getAuthHeaders('POST', endpoint, bodyStr);
     const response = await this.p2pClient.post<OkxApiResponse<T>>(endpoint, body, { headers });
 
-    if (response.data.code !== '0') {
+    if (String(response.data.code) !== '0') {
       throw new Error(`OKX P2P API error: ${response.data.code} - ${response.data.msg}`);
     }
 
@@ -193,7 +193,7 @@ export class OkxClient {
     const headers = this.getAuthHeaders('GET', requestPath);
     const response = await this.spotClient.get<OkxApiResponse<T>>(requestPath, { headers });
 
-    if (response.data.code !== '0') {
+    if (String(response.data.code) !== '0') {
       throw new Error(`OKX Spot API error: ${response.data.code} - ${response.data.msg}`);
     }
 
@@ -208,7 +208,7 @@ export class OkxClient {
     const headers = this.getAuthHeaders('POST', endpoint, bodyStr);
     const response = await this.spotClient.post<OkxApiResponse<T>>(endpoint, body, { headers });
 
-    if (response.data.code !== '0') {
+    if (String(response.data.code) !== '0') {
       throw new Error(`OKX Spot API error: ${response.data.code} - ${response.data.msg}`);
     }
 
