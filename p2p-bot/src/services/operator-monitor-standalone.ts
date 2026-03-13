@@ -143,7 +143,7 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
     }
   }
 
-  log.info({ totalResults: results.length }, 'OKX marketplace search complete');
+  log.info(`OKX marketplace search complete: ${results.length} sellers found (proxy=${getProxyAgent() ? 'yes' : 'NO'})`);
   return results;
 }
 
@@ -198,7 +198,7 @@ async function searchBybit(asset: string, fiat: string, pages: number = 5): Prom
     }
   }
 
-  log.info({ totalResults: results.length }, 'Bybit marketplace search complete');
+  log.info(`Bybit marketplace search complete: ${results.length} sellers found (proxy=${getProxyAgent() ? 'yes' : 'NO'})`);
   return results;
 }
 
@@ -226,11 +226,15 @@ async function runCheck(config: MonitorConfig): Promise<void> {
     bybitOps.length > 0 ? searchBybit('USDT', 'MXN') : Promise.resolve([]),
   ]);
 
-  log.debug({
-    binanceAds: binanceAds.length,
-    okxAds: okxAds.length,
-    bybitAds: bybitAds.length,
-  }, 'Marketplace search results');
+  log.info(`Marketplace results: Binance=${binanceAds.length}, OKX=${okxAds.length}, Bybit=${bybitAds.length}`);
+
+  // Log OKX nicknames found for debugging
+  if (okxAds.length > 0) {
+    const okxNicks = okxAds.map(a => `${a.nickName}@${a.price.toFixed(2)}`).slice(0, 10);
+    log.info(`OKX sellers found: ${okxNicks.join(', ')}${okxAds.length > 10 ? ` ...+${okxAds.length - 10}` : ''}`);
+  } else {
+    log.warn('OKX: 0 sellers found — check proxy config (HTTP_PROXY/OKX_PROXY_URL)');
+  }
 
   const cdmxHour = getCdmxHour();
   const isWorkHour = cdmxHour >= config.workdayStart && cdmxHour < config.workdayEnd;
@@ -246,6 +250,10 @@ async function runCheck(config: MonitorConfig): Promise<void> {
 
     const found = ads.find(a => a.nickName.toLowerCase() === op.nickname.toLowerCase());
     const isAdOnline = !!found;
+
+    if (!isAdOnline) {
+      log.info(`${op.displayName}: NOT FOUND in ${op.exchange} results (searching for "${op.nickname}" in ${ads.length} ads)`);
+    }
     const surplusAmount = found?.surplusAmount ?? null;
     const adPrice = found?.price ?? null;
     const lowFunds = surplusAmount !== null && surplusAmount < config.lowFundsThreshold;
