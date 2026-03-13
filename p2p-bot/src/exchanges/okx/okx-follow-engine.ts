@@ -77,7 +77,7 @@ export class OkxFollowEngine {
       allAds.push(...ads);
 
       const found = ads.filter(ad =>
-        ad.creator.nickName.toLowerCase() === this.config.targetNickName.toLowerCase()
+        ad.creator?.nickName?.toLowerCase() === this.config.targetNickName.toLowerCase()
       );
       targetAds.push(...found);
     }
@@ -136,7 +136,7 @@ export class OkxFollowEngine {
       const competitorsAboveFloor = allAds
         .filter(ad => {
           const price = parseFloat(ad.unitPrice);
-          const nick = ad.creator.nickName.toLowerCase();
+          const nick = ad.creator?.nickName?.toLowerCase() || '';
           const isSelf = myNickName && nick === myNickName;
           const isTarget = nick === this.config.targetNickName.toLowerCase();
           const isIgnored = this.config.ignoredAdvertisers?.some(

@@ -61,6 +61,7 @@ export class OkxSmartEngine {
    */
   private passesFilters(ad: OkxAdData): boolean {
     const creator = ad.creator;
+    if (!creator) return false;
 
     // Filter 1: Minimum user grade
     const grade = creator.userGrade || mapCreatorTypeToGrade(creator.type);
@@ -98,6 +99,7 @@ export class OkxSmartEngine {
 
     // Filter out own ads, ignored, and apply quality filters
     const qualified = ads.filter(ad => {
+      if (!ad.creator) return false;
       const nick = ad.creator.nickName;
 
       // Exclude own ads
