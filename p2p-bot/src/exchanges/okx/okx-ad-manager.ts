@@ -47,14 +47,28 @@ export class OkxAdManager {
 
       const activeAds = ads
         .filter(ad => {
-          // Only include ads that are listed on the marketplace (actually visible to buyers)
           const rawAd = ad as any;
-          if (rawAd.isListedOnMarketplace === false || rawAd.isListedOnMarketplace === 'false') return false;
-          if (rawAd.isHidden === true || rawAd.isHidden === 'true') return false;
+          const status = (ad.status || rawAd.adStatus || rawAd.state || '').toLowerCase();
 
-          const status = (ad.status || '').toLowerCase();
-          const excludedStatuses = ['hidden', 'offline', 'cancelled', 'expired', 'deleted'];
-          return !excludedStatuses.includes(status);
+          // Log every ad during filtering for debugging
+          log.info({
+            adId: ad.adId,
+            status,
+            side: ad.side,
+            crypto: ad.cryptoCurrency,
+            price: ad.unitPrice,
+            rawStatus: ad.status,
+            rawAdStatus: rawAd.adStatus,
+            rawState: rawAd.state,
+            isListedOnMarketplace: rawAd.isListedOnMarketplace,
+            isHidden: rawAd.isHidden,
+          }, `OKX ad filter check: ${ad.adId}`);
+
+          // Only exclude truly dead ads
+          const excludedStatuses = ['cancelled', 'expired', 'deleted'];
+          if (excludedStatuses.includes(status)) return false;
+
+          return true;
         })
         .map(ad => {
           const rawAd = ad as any;

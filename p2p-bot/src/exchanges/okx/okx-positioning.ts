@@ -67,15 +67,16 @@ export class OkxPositioning extends EventEmitter {
     await this.loadConfig();
     await this.discoverActiveAds();
 
+    this.isRunning = true;
+
     if (this.trackedAds.size === 0) {
-      log.warn('OKX Positioning: No active ads found');
-      return;
+      log.warn('OKX Positioning: No active ads found — will keep checking');
+    } else {
+      log.info({ adCount: this.trackedAds.size }, 'OKX Positioning started');
+      await this.runUpdateCycle();
     }
 
-    this.isRunning = true;
-    log.info({ adCount: this.trackedAds.size }, 'OKX Positioning started');
-
-    await this.runUpdateCycle();
+    // Always start the interval — runUpdateCycle() re-discovers ads each cycle
     this.updateInterval = setInterval(() => this.runUpdateCycle(), intervalMs);
   }
 

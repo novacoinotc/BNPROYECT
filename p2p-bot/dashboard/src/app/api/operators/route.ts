@@ -23,6 +23,47 @@ export async function GET(request: NextRequest) {
     const nickname = searchParams.get('nickname') || undefined;
     const view = searchParams.get('view') || 'daily'; // 'daily' | 'current'
 
+    // Order stats view — join Order + Merchant to get volume per operator
+    if (view === 'orders') {
+      const endDate = date;
+      const startDate = new Date(date);
+      startDate.setDate(startDate.getDate() - (range - 1));
+      const startDateStr = startDate.toISOString().split('T')[0];
+
+      const result = await pool.query(
+        `SELECT
+          m."binanceNickname" as nickname,
+          COUNT(*) FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'SELL')::int as "sellOrders",
+          COUNT(*) FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'BUY')::int as "buyOrders",
+          COALESCE(SUM(o."totalPrice") FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'SELL'), 0)::numeric as "sellVolume",
+          COALESCE(SUM(o."totalPrice") FILTER (WHERE o.status = 'COMPLETED' AND o."tradeType" = 'BUY'), 0)::numeric as "buyVolume",
+          COUNT(*) FILTER (WHERE o.status = 'COMPLETED')::int as "totalOrders",
+          COALESCE(SUM(o."totalPrice") FILTER (WHERE o.status = 'COMPLETED'), 0)::numeric as "totalVolume"
+        FROM "Order" o
+        JOIN "Merchant" m ON o."merchantId" = m.id
+        WHERE o."createdAt"::date >= $1 AND o."createdAt"::date <= $2
+          AND m."binanceNickname" IS NOT NULL
+        GROUP BY m."binanceNickname"
+        ORDER BY "totalVolume" DESC`,
+        [startDateStr, endDate]
+      );
+
+      return NextResponse.json({
+        view: 'orders',
+        startDate: startDateStr,
+        endDate,
+        data: result.rows.map(row => ({
+          nickname: row.nickname,
+          sellOrders: row.sellOrders,
+          buyOrders: row.buyOrders,
+          sellVolume: parseFloat(row.sellVolume) || 0,
+          buyVolume: parseFloat(row.buyVolume) || 0,
+          totalOrders: row.totalOrders,
+          totalVolume: parseFloat(row.totalVolume) || 0,
+        })),
+      });
+    }
+
     // Current status view
     if (view === 'current') {
       const result = await pool.query(
