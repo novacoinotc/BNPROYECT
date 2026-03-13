@@ -91,14 +91,21 @@ export class OkxAdManager {
    * IMPORTANT: OKX cancels old ad and creates new one!
    * Returns the new ad ID that must be tracked
    */
-  async updateAdPrice(adId: string, newPrice: number, adType?: string): Promise<OkxAdUpdateResult | null> {
+  async updateAdPrice(adId: string, newPrice: number, adType?: string, availableAmount?: string): Promise<OkxAdUpdateResult | null> {
     const priceStr = newPrice.toFixed(2);
 
     log.info(`OKX: Updating ad ${adId} to ${priceStr} (type=${adType || 'unknown'})`);
 
     try {
-      // Simple update — only send unitPrice
-      const result = await this.client.updateAd(adId, { unitPrice: priceStr });
+      const updateParams: Record<string, any> = { unitPrice: priceStr };
+
+      // Always send maxOrderLimit to prevent "maximum order limit" errors when price decreases
+      if (availableAmount) {
+        const maxFiat = Math.floor(parseFloat(availableAmount) * newPrice);
+        updateParams.maxOrderLimit = maxFiat.toFixed(2);
+      }
+
+      const result = await this.client.updateAd(adId, updateParams);
 
       log.info(`OKX: Ad updated ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
       return result;

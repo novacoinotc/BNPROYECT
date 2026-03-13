@@ -21,6 +21,7 @@ interface TrackedAd {
   crypto: string;
   fiat: string;
   currentPrice: number;
+  availableAmount: string;
   targetPrice: number | null;
   lastUpdate: Date | null;
   updateCount: number;
@@ -141,6 +142,7 @@ export class OkxPositioning extends EventEmitter {
       const existing = this.trackedAds.get(ad.adId);
       if (existing) {
         existing.currentPrice = ad.currentPrice;
+        existing.availableAmount = ad.availableAmount;
       } else {
         this.trackedAds.set(ad.adId, {
           adId: ad.adId,
@@ -148,6 +150,7 @@ export class OkxPositioning extends EventEmitter {
           crypto: ad.crypto,
           fiat: ad.fiat,
           currentPrice: ad.currentPrice,
+          availableAmount: ad.availableAmount,
           targetPrice: null,
           lastUpdate: null,
           updateCount: 0,
@@ -223,7 +226,7 @@ export class OkxPositioning extends EventEmitter {
     if (priceDiff < this.PRICE_UPDATE_THRESHOLD) return;
 
     // Execute update
-    const result = await this.adManager.updateAdPrice(ad.adId, targetPrice, ad.type);
+    const result = await this.adManager.updateAdPrice(ad.adId, targetPrice, ad.type, ad.availableAmount);
 
     if (result) {
       const oldPrice = ad.currentPrice;
