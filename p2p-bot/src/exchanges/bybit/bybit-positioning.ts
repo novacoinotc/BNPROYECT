@@ -12,6 +12,7 @@ import { BybitAdManager } from './bybit-ad-manager.js';
 import { BybitSmartEngine, BybitSmartConfig } from './bybit-smart-engine.js';
 import { BybitFollowEngine, BybitFollowConfig } from './bybit-follow-engine.js';
 import { BybitMyAd } from './bybit-types.js';
+import { getSpotPriceMxn } from '../../utils/spot-price.js';
 
 const log = logger.child({ module: 'bybit-positioning' });
 
@@ -205,6 +206,33 @@ export class BybitPositioning extends EventEmitter {
     }
 
     if (targetPrice === null) return;
+
+    // SPOT PRICE PROTECTION (Bitso) — only for smart mode, MXN fiat
+    // SELL: never sell below Bitso spot price
+    // BUY: never buy above Bitso spot price (+ optional margin)
+    if (assetConfig.mode === 'smart' && ad.currencyId.toUpperCase() === 'MXN') {
+      const spotPrice = await getSpotPriceMxn(ad.tokenId);
+      if (spotPrice !== null) {
+        if (ad.side === 'sell') {
+          const spotFloor = Math.round(spotPrice * 100) / 100;
+          if (targetPrice < spotFloor) {
+            log.warn(
+              `🛑 Bybit [SELL] ${ad.tokenId}: Precio ${targetPrice.toFixed(2)} debajo de spot Bitso ${spotFloor.toFixed(2)} → subido a spot`
+            );
+            targetPrice = spotFloor;
+          }
+        } else if (ad.side === 'buy') {
+          const marginValue = (assetConfig.spotMarginCents ?? 0) / 100;
+          const spotCeiling = Math.round((spotPrice + marginValue) * 100) / 100;
+          if (targetPrice > spotCeiling) {
+            log.warn(
+              `🛑 Bybit [BUY] ${ad.tokenId}: Precio ${targetPrice.toFixed(2)} excede techo spot ${spotCeiling.toFixed(2)} (Bitso ${spotPrice.toFixed(2)}${marginValue > 0 ? ` +${(marginValue * 100).toFixed(0)}¢` : ''}) → capado`
+            );
+            targetPrice = spotCeiling;
+          }
+        }
+      }
+    }
 
     ad.targetPrice = targetPrice;
 

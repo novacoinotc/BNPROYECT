@@ -11,6 +11,7 @@ import { getBotConfig, BotConfig, getPositioningConfigForAd, AssetPositioningCon
 import { OkxAdManager, OkxManagedAd, createOkxAdManager } from './okx-ad-manager.js';
 import { OkxSmartEngine, OkxSmartConfig } from './okx-smart-engine.js';
 import { OkxFollowEngine, OkxFollowConfig } from './okx-follow-engine.js';
+import { getSpotPriceMxn } from '../../utils/spot-price.js';
 
 const log = logger.child({ module: 'okx-positioning' });
 
@@ -250,6 +251,33 @@ export class OkxPositioning extends EventEmitter {
     if (targetPrice === null) {
       log.warn(`OKX positioning: No target price for ad ${ad.adId}`);
       return;
+    }
+
+    // SPOT PRICE PROTECTION (Bitso) — only for smart mode, MXN fiat
+    // SELL: never sell below Bitso spot price
+    // BUY: never buy above Bitso spot price (+ optional margin)
+    if (adConfig.mode === 'smart' && ad.fiat.toUpperCase() === 'MXN') {
+      const spotPrice = await getSpotPriceMxn(ad.crypto);
+      if (spotPrice !== null) {
+        if (ad.side === 'sell') {
+          const spotFloor = Math.round(spotPrice * 100) / 100;
+          if (targetPrice < spotFloor) {
+            log.warn(
+              `🛑 OKX [SELL] ${ad.crypto}: Precio ${targetPrice.toFixed(2)} debajo de spot Bitso ${spotFloor.toFixed(2)} → subido a spot`
+            );
+            targetPrice = spotFloor;
+          }
+        } else if (ad.side === 'buy') {
+          const marginValue = (adConfig.spotMarginCents ?? 0) / 100;
+          const spotCeiling = Math.round((spotPrice + marginValue) * 100) / 100;
+          if (targetPrice > spotCeiling) {
+            log.warn(
+              `🛑 OKX [BUY] ${ad.crypto}: Precio ${targetPrice.toFixed(2)} excede techo spot ${spotCeiling.toFixed(2)} (Bitso ${spotPrice.toFixed(2)}${marginValue > 0 ? ` +${(marginValue * 100).toFixed(0)}¢` : ''}) → capado`
+            );
+            targetPrice = spotCeiling;
+          }
+        }
+      }
     }
 
     ad.targetPrice = targetPrice;
