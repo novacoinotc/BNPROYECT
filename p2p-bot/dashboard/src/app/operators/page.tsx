@@ -75,14 +75,12 @@ export default function OperatorsPage() {
     ...dailyData.map(o => o.nickname),
   ])).sort();
 
-  // Match operator nickname to order data (best-effort: exact or prefix match)
+  // Match operator nickname to order data
+  // Only match Binance operators (no exchange suffix) — OKX/Bybit orders are in separate DBs
   const getOrdersForNick = (nick: string): OperatorOrders | null => {
-    // Exact match first
-    const exact = orderData.find(o => o.nickname === nick);
-    if (exact) return exact;
-    // Strip exchange suffix for matching: "ProcorpCrypto (OKX)" -> "ProcorpCrypto"
-    const baseName = nick.replace(/\s*\((?:OKX|Bybit)\)$/, '');
-    return orderData.find(o => o.nickname === baseName) || null;
+    // If it has an exchange suffix like "(OKX)" or "(Bybit)", don't match — different exchange orders
+    if (/\s*\((?:OKX|Bybit)\)$/.test(nick)) return null;
+    return orderData.find(o => o.nickname === nick) || null;
   };
 
   // Group daily data by nickname for summary
@@ -319,17 +317,21 @@ export default function OperatorsPage() {
                     )}
                   </div>
 
-                  {/* Order Volume — show if available */}
+                  {/* Order Volume — show if available (Binance operators only) */}
                   {summary.orders && summary.orders.totalOrders > 0 && (
                     <div className="mt-2 pt-2 border-t border-gray-700/50">
-                      <div className="grid grid-cols-3 gap-1.5 text-xs">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
                         <div className="text-center">
-                          <div className="text-gray-500 text-[10px]">Ordenes</div>
-                          <div className="text-white font-bold">{summary.orders.totalOrders}</div>
+                          <div className="text-gray-500 text-[10px]">Ventas</div>
+                          <div className="text-emerald-400 font-bold">{summary.orders.sellOrders}</div>
                         </div>
                         <div className="text-center">
                           <div className="text-gray-500 text-[10px]">Vol. Venta</div>
                           <div className="text-emerald-400 font-bold">{formatMXN(summary.orders.sellVolume)}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-gray-500 text-[10px]">Compras</div>
+                          <div className="text-blue-400 font-bold">{summary.orders.buyOrders}</div>
                         </div>
                         <div className="text-center">
                           <div className="text-gray-500 text-[10px]">Vol. Compra</div>

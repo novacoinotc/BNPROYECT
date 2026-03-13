@@ -9,6 +9,7 @@ import 'dotenv/config';
 import { logger } from '../utils/logger.js';
 import * as db from './database-pg.js';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import axios, { AxiosRequestConfig } from 'axios';
 
 const log = logger.child({ module: 'operator-monitor-all' });
 
@@ -32,6 +33,8 @@ interface MonitorConfig {
 
 /**
  * Get proxy agent for OKX/Bybit (they block US IPs)
+ * NOTE: Node's native fetch() does NOT support the `agent` option.
+ * We use axios with httpsAgent instead.
  */
 function getProxyAgent(): HttpsProxyAgent<string> | undefined {
   const proxyUrl = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.OKX_PROXY_URL;
@@ -86,6 +89,7 @@ async function searchBinance(asset: string, fiat: string, pages: number = 5): Pr
 
 /**
  * Search OKX P2P marketplace (public, but needs proxy)
+ * Uses axios because Node's native fetch() ignores the proxy agent
  */
 async function searchOkx(asset: string, fiat: string, pages: number = 5): Promise<Array<{
   nickName: string;
@@ -105,22 +109,25 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
         pageSize: '20',
       });
 
-      const fetchOptions: RequestInit = {
-        method: 'GET',
+      const config: AxiosRequestConfig = {
         headers: { 'Content-Type': 'application/json' },
+        timeout: 15000,
       };
       if (agent) {
-        (fetchOptions as any).agent = agent;
+        config.httpsAgent = agent;
       }
 
-      const res = await fetch(
+      const res = await axios.get(
         `https://www.okx.com/api/v5/p2p/ad/marketplace-list?${params}`,
-        fetchOptions
+        config
       );
 
-      const data = await res.json() as any;
+      const data = res.data;
       const wrapper = data?.data?.[0] || data?.data || {};
       const ads = wrapper?.sellAds || wrapper?.buyAds || (Array.isArray(data?.data) ? data.data : []);
+
+      log.debug({ page, adsCount: ads.length, hasWrapper: !!wrapper?.sellAds }, 'OKX marketplace page');
+
       if (ads.length === 0) break;
 
       for (const ad of ads) {
@@ -130,17 +137,19 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
           price: parseFloat(ad.unitPrice || '0'),
         });
       }
-    } catch (err) {
-      log.error({ err, page }, 'OKX marketplace search failed');
+    } catch (err: any) {
+      log.error({ error: err.message, page }, 'OKX marketplace search failed');
       break;
     }
   }
 
+  log.info({ totalResults: results.length }, 'OKX marketplace search complete');
   return results;
 }
 
 /**
  * Search Bybit P2P marketplace (public, but needs proxy)
+ * Uses axios because Node's native fetch() ignores the proxy agent
  */
 async function searchBybit(asset: string, fiat: string, pages: number = 5): Promise<Array<{
   nickName: string;
@@ -152,27 +161,27 @@ async function searchBybit(asset: string, fiat: string, pages: number = 5): Prom
 
   for (let page = 1; page <= pages; page++) {
     try {
-      const fetchOptions: RequestInit = {
-        method: 'POST',
+      const config: AxiosRequestConfig = {
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        timeout: 15000,
+      };
+      if (agent) {
+        config.httpsAgent = agent;
+      }
+
+      const res = await axios.post(
+        'https://api2.bybit.com/fiat/otc/item/online',
+        {
           tokenId: asset,
           currencyId: fiat,
           side: '1', // 1 = sell
           page: String(page),
           size: '20',
-        }),
-      };
-      if (agent) {
-        (fetchOptions as any).agent = agent;
-      }
-
-      const res = await fetch(
-        'https://api2.bybit.com/fiat/otc/item/online',
-        fetchOptions
+        },
+        config
       );
 
-      const data = await res.json() as any;
+      const data = res.data;
       const items = data?.result?.items || [];
       if (items.length === 0) break;
 
@@ -183,12 +192,13 @@ async function searchBybit(asset: string, fiat: string, pages: number = 5): Prom
           price: parseFloat(item.price || '0'),
         });
       }
-    } catch (err) {
-      log.error({ err, page }, 'Bybit marketplace search failed');
+    } catch (err: any) {
+      log.error({ error: err.message, page }, 'Bybit marketplace search failed');
       break;
     }
   }
 
+  log.info({ totalResults: results.length }, 'Bybit marketplace search complete');
   return results;
 }
 
