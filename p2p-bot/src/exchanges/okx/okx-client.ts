@@ -176,10 +176,12 @@ export class OkxClient {
     try {
       response = await this.p2pClient.post<OkxApiResponse<T>>(endpoint, body, { headers });
     } catch (axiosError: any) {
-      // Extract error details from HTTP error responses (400, 429, etc.)
+      // Extract error details from HTTP error responses (400, 401, 429, etc.)
       const status = axiosError.response?.status;
       const data = axiosError.response?.data;
-      const detail = data ? `${data.code || ''} ${data.msg || JSON.stringify(data).substring(0, 200)}` : axiosError.message;
+      const headers = axiosError.response?.headers;
+      const detail = data ? `${data.code || ''} ${data.msg || JSON.stringify(data).substring(0, 300)}` : axiosError.message;
+      log.error({ status, endpoint, body: bodyStr.substring(0, 200), responseData: JSON.stringify(data).substring(0, 300), responseHeaders: headers ? JSON.stringify(headers).substring(0, 200) : 'none' }, 'p2pPost error details');
       throw new Error(`OKX API ${status || 'network'} error on ${endpoint}: ${detail}`);
     }
 
@@ -476,12 +478,11 @@ export class OkxClient {
   /**
    * Release crypto to buyer
    * POST /api/v5/p2p/order/release-crypto
-   * OKX uses verificationType="2" — NO TOTP/2FA code needed
    */
   async releaseCrypto(orderId: string): Promise<void> {
+    log.info({ orderId }, 'Attempting release-crypto call');
     await this.p2pPost('/api/v5/p2p/order/release-crypto', {
       orderId,
-      verificationType: '2',
     });
     log.info({ orderId }, 'Crypto released');
   }
