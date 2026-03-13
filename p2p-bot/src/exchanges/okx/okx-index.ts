@@ -113,6 +113,10 @@ async function initializeServices(): Promise<void> {
       const webhookReceiver = createWebhookReceiver();
       autoRelease.connectWebhook(webhookReceiver);
 
+      // Add OKX API endpoints to the webhook server
+      const app = webhookReceiver.getApp();
+      setupApiEndpoints(app);
+
       // Start webhook if not already running
       await webhookReceiver.start();
       log.info('Webhook receiver connected to OKX Auto-Release');
@@ -120,6 +124,108 @@ async function initializeServices(): Promise<void> {
       log.warn('Could not start webhook receiver — bank payment matching disabled');
     }
   }
+}
+
+// ==================== API ENDPOINTS ====================
+
+function setupApiEndpoints(app: import('express').Application): void {
+  const client = getOkxClient();
+
+  // Sellers endpoint — used by dashboard to show OKX competitors
+  app.get('/api/sellers', async (req, res) => {
+    try {
+      const asset = (req.query.asset as string) || 'USDT';
+      const fiat = (req.query.fiat as string) || 'MXN';
+      const tradeType = (req.query.tradeType as string) || 'SELL';
+      const rows = parseInt(req.query.rows as string) || 20;
+
+      // Dashboard: SELL panel sends tradeType=BUY (wants seller ads to compare)
+      const side: 'buy' | 'sell' = tradeType === 'BUY' ? 'sell' : 'buy';
+
+      const perPage = 20;
+      const pages = Math.ceil(rows / perPage);
+      let allAds: import('./okx-types.js').OkxAdData[] = [];
+
+      for (let page = 1; page <= pages; page++) {
+        const ads = await client.searchAds(side, asset, fiat, page, perPage);
+        allAds.push(...ads);
+        if (ads.length < perPage) break;
+      }
+
+      const sellers = allAds.slice(0, rows).map((ad, idx) => ({
+        position: idx + 1,
+        userNo: ad.creator.userId || ad.creator.merchantId,
+        nickName: ad.creator.nickName,
+        price: ad.unitPrice,
+        surplusAmount: ad.availableAmount,
+        minAmount: ad.minAmount,
+        maxAmount: ad.maxAmount,
+        isOnline: ad.creator.isOnline ?? true,
+        userGrade: ad.creator.userGrade || 0,
+        monthFinishRate: ad.creator.completionRate || 0,
+        monthOrderCount: ad.creator.completedOrders || 0,
+        positiveRate: ad.creator.completionRate || 0,
+        proMerchant: (ad.creator.userGrade || 0) >= 2,
+      }));
+
+      res.json({
+        success: true,
+        sellers,
+        asset,
+        fiat,
+        tradeType,
+        timestamp: new Date().toISOString(),
+        source: 'okx-proxy',
+      });
+    } catch (error: any) {
+      log.error({ error: error.message }, 'OKX sellers fetch error');
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Ads endpoint — used by dashboard to show our own OKX ads
+  app.get('/api/ads', async (_req, res) => {
+    try {
+      const sellAds = await client.getActiveAds('sell', OKX_CONFIG.tradingAsset, OKX_CONFIG.tradingFiat);
+      const buyAds = await client.getActiveAds('buy', OKX_CONFIG.tradingAsset, OKX_CONFIG.tradingFiat);
+      const userInfo = await client.getUserInfo();
+
+      res.json({
+        success: true,
+        sellAds: sellAds.map(ad => ({
+          advNo: ad.adId,
+          price: ad.unitPrice,
+          surplusAmount: ad.availableAmount,
+          minSingleTransAmount: ad.minAmount,
+          maxSingleTransAmount: ad.maxAmount,
+          tradableQuantity: ad.availableAmount,
+          asset: ad.cryptoCurrency,
+          fiat: ad.fiatCurrency,
+          tradeType: 'SELL',
+          advStatus: ad.status === 'online' ? 1 : 0,
+        })),
+        buyAds: buyAds.map(ad => ({
+          advNo: ad.adId,
+          price: ad.unitPrice,
+          surplusAmount: ad.availableAmount,
+          minSingleTransAmount: ad.minAmount,
+          maxSingleTransAmount: ad.maxAmount,
+          tradableQuantity: ad.availableAmount,
+          asset: ad.cryptoCurrency,
+          fiat: ad.fiatCurrency,
+          tradeType: 'BUY',
+          advStatus: ad.status === 'online' ? 1 : 0,
+        })),
+        merchant: userInfo ? { nickName: userInfo.nickName } : null,
+        source: 'okx-proxy',
+      });
+    } catch (error: any) {
+      log.error({ error: error.message }, 'OKX ads fetch error');
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  log.info('OKX API endpoints registered (/api/sellers, /api/ads)');
 }
 
 function setupEventHandlers(): void {
