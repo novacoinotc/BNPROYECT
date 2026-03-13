@@ -97,7 +97,6 @@ export class OkxAdManager {
     log.info(`OKX: Updating ad ${adId} to ${priceStr} (type=${adType || 'unknown'})`);
 
     try {
-      // floating_market ads need to be converted to limit type to set unitPrice
       const updateParams: Record<string, any> = {
         unitPrice: priceStr,
       };
@@ -107,15 +106,40 @@ export class OkxAdManager {
 
       const result = await this.client.updateAd(adId, updateParams);
 
-      log.info({
-        oldAdId: result.oldAdId,
-        newAdId: result.newAdId,
-        price: priceStr,
-      }, 'OKX: Ad price updated (new ID created)');
-
+      log.info(`OKX: Ad updated ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
       return result;
     } catch (error: any) {
-      log.error(`OKX: Failed to update ad ${adId} to ${priceStr}: ${error.message}`);
+      const errMsg = error.message || '';
+
+      // Handle "Insufficient balance" — retry with current available balance
+      if (errMsg.includes('55723') || errMsg.toLowerCase().includes('insufficient balance')) {
+        log.warn(`OKX: Insufficient balance for ad ${adId} — retrying with current balance`);
+        try {
+          // Fetch current funding balance (P2P ads use funding account)
+          const balances = await this.client.getFundingBalance('USDT');
+          const balance = balances.find(b => b.ccy === 'USDT');
+          if (balance) {
+            const available = parseFloat(balance.availBal || '0');
+            if (available > 0) {
+              const updateParams: Record<string, any> = {
+                unitPrice: priceStr,
+                cryptoAmount: available.toFixed(2),
+              };
+              if (adType === 'floating_market') {
+                updateParams.type = 'limit';
+              }
+
+              const result = await this.client.updateAd(adId, updateParams);
+              log.info(`OKX: Ad updated with adjusted balance (${available.toFixed(2)} USDT) ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
+              return result;
+            }
+          }
+        } catch (retryError: any) {
+          log.error(`OKX: Retry with balance also failed for ad ${adId}: ${retryError.message}`);
+        }
+      }
+
+      log.error(`OKX: Failed to update ad ${adId} to ${priceStr}: ${errMsg}`);
       return null;
     }
   }

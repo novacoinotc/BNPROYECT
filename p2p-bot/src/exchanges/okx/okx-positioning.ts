@@ -171,14 +171,15 @@ export class OkxPositioning extends EventEmitter {
       // Skip ads that fail too many times (bad/old ads)
       if (ad.errorCount >= 5) {
         if (ad.errorCount === 5) {
-          log.warn(`OKX: Skipping ad ${adId} (${ad.crypto} ${ad.side}) after 5 consecutive failures`);
+          log.warn(`OKX: Skipping ad ${adId} (${ad.crypto} ${ad.side}) after 5 consecutive failures — will retry after rediscovery`);
+          ad.errorCount = 6; // Only log once
         }
         continue;
       }
 
       try {
         await this.updateSingleAd(ad);
-        ad.errorCount = 0; // Reset on success
+        // errorCount is managed inside updateSingleAd (reset on success, increment on failure)
       } catch (error: any) {
         ad.errorCount++;
         log.warn(`OKX: Error updating ad ${adId}: ${error.message}`);
@@ -240,6 +241,7 @@ export class OkxPositioning extends EventEmitter {
       ad.currentPrice = targetPrice;
       ad.lastUpdate = new Date();
       ad.updateCount++;
+      ad.errorCount = 0; // Reset on success
 
       log.info({
         crypto: ad.crypto,
