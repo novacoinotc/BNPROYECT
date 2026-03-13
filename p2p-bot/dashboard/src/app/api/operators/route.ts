@@ -108,6 +108,9 @@ export async function GET(request: NextRequest) {
       conditions.push(`nickname = $${params.length}`);
     }
 
+    // Calculate hours using actual interval per operator/day:
+    // interval_minutes = time_span / (total_snapshots - 1)
+    // hoursOnline = online_snapshots * interval_minutes / 60
     const result = await pool.query(
       `SELECT
         nickname,
@@ -115,8 +118,20 @@ export async function GET(request: NextRequest) {
         COUNT(*)::int as "totalSnapshots",
         COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
         COUNT(*) FILTER (WHERE "lowFunds" = true)::int as "lowFundsSnapshots",
-        ROUND((COUNT(*) FILTER (WHERE "isAdOnline" = true) * 2.0 / 60)::numeric, 2) as "hoursOnline",
-        ROUND((COUNT(*) FILTER (WHERE "lowFunds" = true) * 2.0 / 60)::numeric, 2) as "hoursLowFunds",
+        ROUND((
+          COUNT(*) FILTER (WHERE "isAdOnline" = true) *
+          CASE WHEN COUNT(*) > 1
+            THEN EXTRACT(EPOCH FROM (MAX("checkedAt") - MIN("checkedAt"))) / (COUNT(*) - 1) / 3600.0
+            ELSE 0
+          END
+        )::numeric, 1) as "hoursOnline",
+        ROUND((
+          COUNT(*) FILTER (WHERE "lowFunds" = true) *
+          CASE WHEN COUNT(*) > 1
+            THEN EXTRACT(EPOCH FROM (MAX("checkedAt") - MIN("checkedAt"))) / (COUNT(*) - 1) / 3600.0
+            ELSE 0
+          END
+        )::numeric, 1) as "hoursLowFunds",
         ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
         MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
       FROM "OperatorSnapshot"
