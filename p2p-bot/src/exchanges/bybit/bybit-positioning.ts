@@ -184,6 +184,17 @@ export class BybitPositioning extends EventEmitter {
 
     let targetPrice: number | null = null;
 
+    log.info({
+      mode: assetConfig.mode,
+      followTarget: assetConfig.followTarget,
+      matchPrice: assetConfig.matchPrice,
+      undercutCents: assetConfig.undercutCents,
+      adId: ad.adId,
+      side: ad.side,
+      token: ad.tokenId,
+      price: ad.currentPrice,
+    }, `Bybit positioning: ${ad.side} ${ad.tokenId} mode=${assetConfig.mode}`);
+
     if (assetConfig.mode === 'follow' && assetConfig.followTarget) {
       ad.mode = 'follow';
       const engine = this.getFollowEngine(ad, assetConfig);
@@ -191,6 +202,7 @@ export class BybitPositioning extends EventEmitter {
 
       if (result) {
         targetPrice = result.targetPrice;
+        log.info(`Bybit follow: target=${result.targetNickName}@${result.targetAdPrice} -> our=${result.targetPrice}`);
       } else {
         // Fallback to smart if target not found
         ad.mode = 'smart';
@@ -238,7 +250,10 @@ export class BybitPositioning extends EventEmitter {
 
     // Check if update needed
     const priceDiff = Math.round(Math.abs(ad.currentPrice - targetPrice) * 100) / 100;
-    if (priceDiff < this.PRICE_UPDATE_THRESHOLD) return;
+    if (priceDiff < this.PRICE_UPDATE_THRESHOLD) {
+      log.debug(`Bybit positioning: ${ad.tokenId} price=${ad.currentPrice} target=${targetPrice} diff=${priceDiff} < threshold, skipping`);
+      return;
+    }
 
     // Execute update
     const success = await this.adManager.updateAdPrice(ad.adId, targetPrice.toFixed(2));
