@@ -106,8 +106,8 @@ async function searchOkx(asset: string, fiat: string, pages: number = 5): Promis
         side: 'sell',
         cryptoCurrency: asset.toLowerCase(),
         fiatCurrency: fiat.toLowerCase(),
-        pageNo: String(page),
-        pageSize: '20',
+        currentPage: String(page),
+        numberPerPage: '50',
       });
 
       const config: AxiosRequestConfig = {
@@ -248,11 +248,18 @@ async function runCheck(config: MonitorConfig): Promise<void> {
       case 'bybit': ads = bybitAds; break;
     }
 
-    const found = ads.find(a => a.nickName.toLowerCase() === op.nickname.toLowerCase());
+    // Match by exact name or by normalized name (strip dashes/underscores for fuzzy match)
+    const normalize = (s: string) => s.toLowerCase().replace(/[-_]/g, '');
+    const found = ads.find(a =>
+      a.nickName.toLowerCase() === op.nickname.toLowerCase() ||
+      normalize(a.nickName) === normalize(op.nickname)
+    );
     const isAdOnline = !!found;
 
     if (!isAdOnline) {
       log.info(`${op.displayName}: NOT FOUND in ${op.exchange} results (searching for "${op.nickname}" in ${ads.length} ads)`);
+    } else {
+      log.info(`${op.displayName}: ONLINE (matched "${found.nickName}" at ${found.price.toFixed(2)}, ${found.surplusAmount.toFixed(0)} USDT)`);
     }
     const surplusAmount = found?.surplusAmount ?? null;
     const adPrice = found?.price ?? null;
