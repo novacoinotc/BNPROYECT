@@ -505,6 +505,52 @@ export async function findUnmatchedPaymentsByAmount(
 }
 
 /**
+ * Find THIRD_PARTY payments within amount tolerance (race condition recovery)
+ * Used when: order becomes PAID but payment arrived earlier and was mis-classified
+ */
+export async function findThirdPartyPaymentsByAmount(
+  expectedAmount: number,
+  tolerancePercent: number = 1,
+  maxAgeMinutes: number = 60
+): Promise<Array<{
+  id: string;
+  transactionId: string;
+  amount: number;
+  senderName: string;
+  senderAccount: string;
+  createdAt: Date;
+}>> {
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const tolerance = expectedAmount * (tolerancePercent / 100);
+  const minAmount = expectedAmount - tolerance;
+  const maxAmount = expectedAmount + tolerance;
+  const minTime = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+
+  const merchantFilter = merchantId ? 'AND "merchantId" = $4' : '';
+  const params = merchantId
+    ? [minAmount, maxAmount, minTime, merchantId]
+    : [minAmount, maxAmount, minTime];
+
+  const result = await db.query(
+    `SELECT id, "transactionId", amount, "senderName", "senderAccount", "createdAt"
+     FROM "Payment"
+     WHERE status = 'THIRD_PARTY'
+       AND amount BETWEEN $1 AND $2
+       AND "createdAt" >= $3
+       ${merchantFilter}
+     ORDER BY "createdAt" DESC
+     LIMIT 10`,
+    params
+  );
+
+  return result.rows.map(row => ({
+    ...row,
+    amount: typeof row.amount === 'string' ? parseFloat(row.amount) : Number(row.amount),
+  }));
+}
+
+/**
  * Find orders awaiting payment verification (BUYER_PAYED status)
  * Used when: bank webhook arrives -> search for orders waiting for this payment
  */

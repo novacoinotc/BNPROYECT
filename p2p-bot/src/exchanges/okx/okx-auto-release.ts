@@ -220,15 +220,15 @@ export class OkxAutoRelease extends EventEmitter {
       sender: payment.senderName,
     }, 'OKX: Processing bank payment');
 
-    // Try to match to a pending OKX order
+    // STEP 1: Try to match in-memory (pendingReleases — orders already PAID)
     for (const [orderNumber, pending] of this.pendingReleases) {
-      if (pending.bankMatch) continue; // Already matched
+      if (pending.bankMatch) continue;
 
       const order = pending.order;
       if (order.orderStatus !== 'BUYER_PAYED') continue;
 
       const expectedAmount = parseFloat(order.totalPrice);
-      const tolerance = expectedAmount * 0.01; // 1% tolerance
+      const tolerance = expectedAmount * 0.01;
       const amountDiff = Math.abs(expectedAmount - payment.amount);
 
       if (amountDiff <= tolerance) {
@@ -237,54 +237,98 @@ export class OkxAutoRelease extends EventEmitter {
           expected: expectedAmount,
           received: payment.amount,
           sender: payment.senderName,
-        }, 'OKX: Bank payment matched to order');
+        }, 'OKX: Bank payment matched to order (in-memory)');
 
-        pending.bankMatch = payment;
-
-        // Mark payment as MATCHED in DB (prevents double-spend across merchants)
-        try {
-          const matched = await db.matchPaymentToOrder(
-            payment.transactionId,
-            orderNumber,
-            'BANK_WEBHOOK'
-          );
-          if (!matched) {
-            log.warn({
-              orderId: orderNumber,
-              transactionId: payment.transactionId,
-            }, 'OKX: Payment could not be matched in DB (already used?) — blocking release');
-            pending.bankMatch = undefined;
-            return;
-          }
-        } catch (matchError) {
-          log.error({ error: matchError, orderId: orderNumber }, 'OKX: Failed to match payment in DB');
-        }
-
-        // Save verification step
-        try {
-          await db.addVerificationStep(
-            orderNumber,
-            VerificationStatus.PAYMENT_MATCHED,
-            `Bank payment matched: $${payment.amount} from ${payment.senderName}`,
-            { transactionId: payment.transactionId, sender: payment.senderName }
-          );
-        } catch { /* non-critical */ }
-
-        // Verify name
-        await this.verifyName(pending);
-
-        // Check readiness
-        await this.checkReadyForRelease(orderNumber);
-        return;
+        const matched = await this.matchAndVerifyPayment(pending, payment);
+        if (matched) return;
       }
     }
 
-    // No matching order — check for third-party payment
+    // STEP 2: Smart match — search DB for order by amount AND buyer name
+    // This handles the case where payment arrives BEFORE buyer marks as paid
+    try {
+      const smartMatch = await db.findOrderByAmountAndName(
+        payment.amount,
+        payment.senderName,
+        1 // 1% tolerance
+      );
+
+      if (smartMatch) {
+        log.info({
+          orderNumber: smartMatch.orderNumber,
+          transactionId: payment.transactionId,
+          buyerRealName: smartMatch.buyerRealName,
+          nameMatchScore: smartMatch.nameMatchScore,
+        }, 'OKX: Smart match — payment matched by amount AND name in DB');
+
+        // Match payment in DB
+        const matchSuccess = await db.matchPaymentToOrder(
+          payment.transactionId,
+          smartMatch.orderNumber,
+          'BANK_WEBHOOK'
+        );
+
+        if (!matchSuccess) {
+          log.warn({ transactionId: payment.transactionId }, 'OKX: Smart match payment could not be matched in DB');
+          return;
+        }
+
+        try {
+          await db.addVerificationStep(
+            smartMatch.orderNumber,
+            VerificationStatus.PAYMENT_MATCHED,
+            `Smart match: $${payment.amount} from ${payment.senderName} (${(smartMatch.nameMatchScore * 100).toFixed(0)}%)`,
+            { transactionId: payment.transactionId, sender: payment.senderName, matchType: 'smart_match' }
+          );
+        } catch { /* non-critical */ }
+
+        // If order is already in pendingReleases, update it
+        const pending = this.pendingReleases.get(smartMatch.orderNumber);
+        if (pending) {
+          pending.bankMatch = payment;
+          await this.verifyName(pending);
+          await this.checkReadyForRelease(smartMatch.orderNumber);
+        } else {
+          // Order not yet PAID in memory — it will pick up the matched payment via tryMatchExistingPayments
+          log.info({ orderNumber: smartMatch.orderNumber }, 'OKX: Payment pre-matched — will auto-link when order becomes PAID');
+        }
+        return;
+      }
+    } catch (error) {
+      log.error({ error }, 'OKX: Error during smart payment matching');
+    }
+
+    // STEP 3: Check if sender is a KNOWN buyer in any open order
+    // If known → keep as PENDING (will match later when order becomes PAID)
+    // If unknown → mark as THIRD_PARTY
+    try {
+      const knownBuyerCheck = await db.hasOrderWithMatchingBuyerName(payment.senderName, 0.3);
+
+      if (knownBuyerCheck.hasMatch) {
+        log.info({
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          sender: payment.senderName,
+          potentialOrders: knownBuyerCheck.matchedOrders?.map((o: any) => ({
+            orderNumber: o.orderNumber,
+            buyerRealName: o.buyerRealName,
+          })),
+        }, 'OKX: Payment from known buyer — keeping as PENDING for later match');
+        // Payment stays as PENDING in DB — will be found by tryMatchExistingPayments
+        return;
+      }
+    } catch (error) {
+      log.error({ error, transactionId: payment.transactionId }, 'OKX: Error checking known buyer');
+      // On error, keep as PENDING for safety
+      return;
+    }
+
+    // STEP 4: Sender is NOT a known buyer — mark as THIRD_PARTY
     log.warn({
       amount: payment.amount,
       sender: payment.senderName,
       transactionId: payment.transactionId,
-    }, 'OKX: No matching order for payment — possible third-party');
+    }, 'OKX: Payment sender not recognized — marking as THIRD_PARTY');
 
     try {
       await db.markPaymentAsThirdParty(
@@ -306,6 +350,44 @@ export class OkxAutoRelease extends EventEmitter {
     } catch { /* non-critical */ }
   }
 
+  /**
+   * Helper: match a payment to a pending order, verify name, and check readiness
+   */
+  private async matchAndVerifyPayment(pending: PendingRelease, payment: BankWebhookPayload): Promise<boolean> {
+    pending.bankMatch = payment;
+
+    try {
+      const matched = await db.matchPaymentToOrder(
+        payment.transactionId,
+        pending.orderNumber,
+        'BANK_WEBHOOK'
+      );
+      if (!matched) {
+        log.warn({
+          orderId: pending.orderNumber,
+          transactionId: payment.transactionId,
+        }, 'OKX: Payment could not be matched in DB (already used?) — blocking release');
+        pending.bankMatch = undefined;
+        return false;
+      }
+    } catch (matchError) {
+      log.error({ error: matchError, orderId: pending.orderNumber }, 'OKX: Failed to match payment in DB');
+    }
+
+    try {
+      await db.addVerificationStep(
+        pending.orderNumber,
+        VerificationStatus.PAYMENT_MATCHED,
+        `Bank payment matched: $${payment.amount} from ${payment.senderName}`,
+        { transactionId: payment.transactionId, sender: payment.senderName }
+      );
+    } catch { /* non-critical */ }
+
+    await this.verifyName(pending);
+    await this.checkReadyForRelease(pending.orderNumber);
+    return true;
+  }
+
   private handleBankReversal(payment: BankWebhookPayload): void {
     // Find order matched to this payment
     for (const [orderNumber, pending] of this.pendingReleases) {
@@ -321,6 +403,7 @@ export class OkxAutoRelease extends EventEmitter {
 
   /**
    * Try to match existing payments (already in DB) to a new order
+   * Searches PENDING payments first, then THIRD_PARTY (may have been mis-classified due to timing)
    */
   private async tryMatchExistingPayments(order: OrderData): Promise<void> {
     const pending = this.pendingReleases.get(order.orderNumber);
@@ -328,8 +411,24 @@ export class OkxAutoRelease extends EventEmitter {
 
     try {
       const expectedAmount = parseFloat(order.totalPrice);
-      // Search for recent unmatched payments within tolerance
-      const recentPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1);
+
+      // First: search for PENDING unmatched payments within tolerance
+      let recentPayments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1);
+
+      // Second: if no PENDING found, also check THIRD_PARTY payments (race condition recovery)
+      if (recentPayments.length === 0) {
+        try {
+          recentPayments = await db.findThirdPartyPaymentsByAmount(expectedAmount, 1);
+          if (recentPayments.length > 0) {
+            log.info({
+              orderId: order.orderNumber,
+              paymentId: recentPayments[0].transactionId,
+            }, 'OKX: Recovering THIRD_PARTY payment that arrived before PAID status');
+          }
+        } catch {
+          // findThirdPartyPaymentsByAmount may not exist yet — fall through
+        }
+      }
 
       if (recentPayments.length > 0) {
         const payment = recentPayments[0];
@@ -340,7 +439,7 @@ export class OkxAutoRelease extends EventEmitter {
           sender: payment.senderName,
         }, 'OKX: Found existing bank payment match');
 
-        // Mark payment as MATCHED in DB (prevents double-spend across merchants)
+        // Mark payment as MATCHED in DB
         try {
           const matched = await db.matchPaymentToOrder(
             payment.transactionId,
@@ -359,6 +458,16 @@ export class OkxAutoRelease extends EventEmitter {
         }
 
         pending.bankMatch = payment as unknown as BankWebhookPayload;
+
+        try {
+          await db.addVerificationStep(
+            order.orderNumber,
+            VerificationStatus.PAYMENT_MATCHED,
+            `Existing payment matched: $${payment.amount} from ${payment.senderName}`,
+            { transactionId: payment.transactionId, sender: payment.senderName, matchType: 'existing_payment' }
+          );
+        } catch { /* non-critical */ }
+
         await this.verifyName(pending);
       }
     } catch (error) {

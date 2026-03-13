@@ -39,8 +39,16 @@ export class OkxAdManager {
     try {
       const ads = await this.client.getActiveAds(side);
 
+      if (ads.length === 0) {
+        log.warn({ side }, 'OKX getActiveAds returned 0 ads from API');
+      }
+
       const activeAds = ads
-        .filter(ad => !ad.status || ad.status === 'online')
+        .filter(ad => {
+          // Accept ads without status field OR with online/show status
+          const status = (ad.status || '').toLowerCase();
+          return !status || status === 'online' || status === 'show';
+        })
         .map(ad => ({
           adId: ad.adId,
           side: ad.side,
@@ -51,10 +59,14 @@ export class OkxAdManager {
           availableAmount: ad.availableAmount,
         }));
 
+      if (ads.length > 0 && activeAds.length === 0) {
+        log.warn({ rawCount: ads.length, statuses: ads.map(a => a.status) }, 'OKX ads fetched but none passed filter');
+      }
+
       log.debug({ count: activeAds.length, side }, 'OKX active ads fetched');
       return activeAds;
     } catch (error: any) {
-      log.error({ error: error.message }, 'Failed to fetch OKX active ads');
+      log.error(`Failed to fetch OKX active ads: ${error.message}`);
       return [];
     }
   }

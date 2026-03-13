@@ -269,10 +269,32 @@ export class OkxClient {
     if (fiatCurrency) params.fiatCurrency = fiatCurrency;
 
     try {
-      const result = await this.p2pGet<OkxAdData[]>('/api/v5/p2p/ad/active-list', params);
-      return result || [];
+      const result = await this.p2pGet<any>('/api/v5/p2p/ad/active-list', params);
+
+      if (!result) return [];
+
+      // OKX may return [{buyAds:[], sellAds:[]}] wrapper — same as searchAds
+      if (Array.isArray(result)) {
+        const wrapper = result[0];
+        if (wrapper?.sellAds || wrapper?.buyAds) {
+          const allAds: OkxAdData[] = [
+            ...(wrapper.sellAds || []),
+            ...(wrapper.buyAds || []),
+          ];
+          log.debug({ sellCount: wrapper.sellAds?.length || 0, buyCount: wrapper.buyAds?.length || 0 }, 'getActiveAds: extracted from wrapper');
+          return allAds;
+        }
+        return result as OkxAdData[];
+      }
+
+      // Single object response
+      if (typeof result === 'object' && (result.sellAds || result.buyAds)) {
+        return [...(result.sellAds || []), ...(result.buyAds || [])];
+      }
+
+      return [];
     } catch (error: any) {
-      log.error({ error: error.message }, 'getActiveAds failed');
+      log.error(`getActiveAds failed: ${error.message}`);
       return [];
     }
   }
