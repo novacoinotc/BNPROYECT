@@ -196,6 +196,8 @@ export class OkxPositioning extends EventEmitter {
   private async updateSingleAd(ad: TrackedAd): Promise<void> {
     let targetPrice: number | null = null;
 
+    log.info(`OKX positioning: mode=${this.currentMode}, followTarget=${this.followTarget}, ad=${ad.adId} (${ad.side} ${ad.crypto} @ ${ad.currentPrice})`);
+
     if (this.currentMode === 'follow' && this.followTarget) {
       ad.mode = 'follow';
       const engine = this.getFollowEngine(ad);
@@ -203,7 +205,9 @@ export class OkxPositioning extends EventEmitter {
 
       if (result) {
         targetPrice = result.targetPrice;
+        log.info(`OKX follow result: target=${result.targetNickName} price=${result.targetFoundPrice} -> our=${result.targetPrice}`);
       } else {
+        log.warn('OKX follow returned null — falling back to smart');
         // Fallback to smart
         ad.mode = 'smart';
         const smartEngine = this.getSmartEngine(ad);
@@ -215,15 +219,22 @@ export class OkxPositioning extends EventEmitter {
       const engine = this.getSmartEngine(ad);
       const result = await engine.getPrice(ad.crypto, ad.fiat);
       if (result) targetPrice = result.targetPrice;
+      log.info(`OKX smart result: targetPrice=${targetPrice}`);
     }
 
-    if (targetPrice === null) return;
+    if (targetPrice === null) {
+      log.warn(`OKX positioning: No target price for ad ${ad.adId}`);
+      return;
+    }
 
     ad.targetPrice = targetPrice;
 
     // Check if update needed
     const priceDiff = Math.round(Math.abs(ad.currentPrice - targetPrice) * 100) / 100;
-    if (priceDiff < this.PRICE_UPDATE_THRESHOLD) return;
+    if (priceDiff < this.PRICE_UPDATE_THRESHOLD) {
+      log.debug(`OKX positioning: Price diff ${priceDiff} < threshold ${this.PRICE_UPDATE_THRESHOLD}, skipping`);
+      return;
+    }
 
     // Execute update
     const result = await this.adManager.updateAdPrice(ad.adId, targetPrice, ad.type, ad.availableAmount);
