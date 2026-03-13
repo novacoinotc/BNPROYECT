@@ -165,7 +165,8 @@ export class OkxOrderManager extends EventEmitter {
 
       log.info({ savedCount, activeTracking: this.activeOrders.size }, 'OKX order sync complete');
     } catch (error) {
-      log.error({ error }, 'Failed to sync OKX orders');
+      const err = error as Error;
+      log.warn(`Failed to sync OKX orders: ${err.message} ${err.stack?.split('\n')[1]?.trim() || ''}`);
     }
   }
 
@@ -344,7 +345,8 @@ export class OkxOrderManager extends EventEmitter {
         }
       }
     } catch (error) {
-      log.error({ error }, 'Error checking stale OKX orders');
+      const err = error as Error;
+      log.warn(`Error checking stale OKX orders: ${err.message}`);
     } finally {
       this.isCheckingStale = false;
     }
