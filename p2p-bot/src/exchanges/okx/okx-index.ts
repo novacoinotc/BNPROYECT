@@ -152,20 +152,20 @@ function setupApiEndpoints(app: import('express').Application): void {
         if (ads.length < perPage) break;
       }
 
-      const sellers = allAds.slice(0, rows).map((ad, idx) => ({
+      const sellers = allAds.filter(ad => ad.creator).slice(0, rows).map((ad, idx) => ({
         position: idx + 1,
-        userNo: ad.creator.userId || ad.creator.merchantId,
-        nickName: ad.creator.nickName,
+        userNo: ad.creator?.userId || ad.creator?.merchantId || '',
+        nickName: ad.creator?.nickName || 'unknown',
         price: ad.unitPrice,
         surplusAmount: ad.availableAmount,
         minAmount: ad.minAmount,
         maxAmount: ad.maxAmount,
-        isOnline: ad.creator.isOnline ?? true,
-        userGrade: ad.creator.userGrade || 0,
-        monthFinishRate: ad.creator.completionRate || 0,
-        monthOrderCount: ad.creator.completedOrders || 0,
-        positiveRate: ad.creator.completionRate || 0,
-        proMerchant: (ad.creator.userGrade || 0) >= 2,
+        isOnline: ad.creator?.isOnline ?? true,
+        userGrade: ad.creator?.userGrade || 0,
+        monthFinishRate: ad.creator?.completionRate || 0,
+        monthOrderCount: ad.creator?.completedOrders || 0,
+        positiveRate: ad.creator?.completionRate || 0,
+        proMerchant: (ad.creator?.userGrade || 0) >= 2,
       }));
 
       res.json({
