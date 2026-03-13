@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node -e \"const b=process.env.BOT_MODE; if(b==='bybit') require('child_process').execSync('node dist/exchanges/bybit/bybit-index.js',{stdio:'inherit'}); else if(b==='okx') require('child_process').execSync('node dist/exchanges/okx/okx-index.js',{stdio:'inherit'}); else require('child_process').execSync('node dist/index.js',{stdio:'inherit'});\"",
+    "start": "node -e \"const b=process.env.BOT_MODE; if(b==='bybit') require('child_process').execSync('node dist/exchanges/bybit/bybit-index.js',{stdio:'inherit'}); else if(b==='okx') require('child_process').execSync('node dist/exchanges/okx/okx-index.js',{stdio:'inherit'}); else if(b==='monitor') require('child_process').execSync('node dist/services/operator-monitor-standalone.js',{stdio:'inherit'}); else require('child_process').execSync('node dist/index.js',{stdio:'inherit'});\"",
     "start:bybit": "npx tsx src/exchanges/bybit/bybit-index.ts",
     "start:okx": "npx tsx src/exchanges/okx/okx-index.ts",
     "test:api": "tsx src/test-api.ts",

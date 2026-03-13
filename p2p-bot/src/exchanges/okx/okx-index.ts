@@ -12,7 +12,6 @@ import { createOkxOrderManager, OkxOrderManager } from './okx-order-manager.js';
 import { createOkxAutoRelease, OkxAutoRelease } from './okx-auto-release.js';
 import { createOkxPositioning, OkxPositioning } from './okx-positioning.js';
 import { createOkxAutoSwap, OkxAutoSwap } from './okx-auto-swap.js';
-import { createOkxOperatorMonitor, OkxOperatorMonitor } from './okx-operator-monitor.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from '../../services/database-pg.js';
 
 const log = logger.child({ module: 'okx-main' });
@@ -293,11 +292,6 @@ async function startServices(): Promise<void> {
     log.info('OKX Auto-Swap started');
   }
 
-  // Start operator monitor
-  const operatorMonitor = createOkxOperatorMonitor();
-  if (operatorMonitor) {
-    await operatorMonitor.start();
-  }
 }
 
 // ==================== POSITIONING CHECK ====================
