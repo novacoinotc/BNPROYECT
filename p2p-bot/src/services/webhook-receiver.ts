@@ -308,16 +308,7 @@ export class WebhookReceiver extends EventEmitter {
     // NovaCorp SPEI transfer status webhook (sent/scattered/returned/failed/canceled)
     this.app.post('/webhook/spei-status', this.handleSpeiStatusWebhook.bind(this));
 
-    // 404 handler
-    this.app.use((_req, res) => {
-      res.status(404).json({ error: 'Not found' });
-    });
-
-    // Error handler
-    this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-      logger.error({ error: err }, 'Webhook error');
-      res.status(500).json({ error: 'Internal server error' });
-    });
+    // Note: 404/error handlers are registered in start() to allow external route additions via getApp()
   }
 
   // ==================== PROXY HANDLERS ====================
@@ -1379,6 +1370,15 @@ export class WebhookReceiver extends EventEmitter {
       }
 
       try {
+        // Register 404/error handlers last (after any external routes added via getApp())
+        this.app.use((_req: Request, res: Response) => {
+          res.status(404).json({ error: 'Not found' });
+        });
+        this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+          logger.error({ error: err }, 'Webhook error');
+          res.status(500).json({ error: 'Internal server error' });
+        });
+
         this.server = this.app.listen(this.config.port, () => {
           this.isRunning = true;
 
