@@ -24,6 +24,7 @@ interface OperatorConfig {
   apiKey: string;
   apiSecret: string;
   passphrase?: string; // OKX only
+  proxyUrl?: string;   // Per-operator proxy
 }
 
 interface AdStatus {
@@ -43,8 +44,8 @@ interface MonitorConfig {
 
 // ==================== PROXY ====================
 
-function getProxyAgent(): HttpsProxyAgent<string> | undefined {
-  const proxyUrl = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.OKX_PROXY_URL;
+function getProxyAgent(op?: OperatorConfig): HttpsProxyAgent<string> | undefined {
+  const proxyUrl = op?.proxyUrl || process.env.HTTP_PROXY || process.env.HTTPS_PROXY;
   if (!proxyUrl) return undefined;
   return new HttpsProxyAgent(proxyUrl);
 }
@@ -93,16 +94,19 @@ function parseBinanceAds(data: any): AdStatus {
 
 async function checkBinanceAds(op: OperatorConfig): Promise<AdStatus> {
   const headers = { 'X-MBX-APIKEY': op.apiKey, 'Content-Type': 'application/json' };
+  const agent = getProxyAgent(op);
 
   // POST /sapi/v1/c2c/ads/listWithPagination (confirmed working endpoint)
   try {
     const timestamp = Date.now();
     const params = `timestamp=${timestamp}`;
     const sig = binanceSign(params, op.apiSecret);
+    const config: AxiosRequestConfig = { headers, timeout: 15000 };
+    if (agent) config.httpsAgent = agent;
     const response = await axios.post(
       `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${params}&signature=${sig}`,
       { page: 1, rows: 20 },
-      { headers, timeout: 15000 }
+      config
     );
     return parseBinanceAds(response.data?.data);
   } catch (error: any) {
@@ -128,7 +132,7 @@ async function checkOkxAds(op: OperatorConfig): Promise<AdStatus> {
     const prehash = timestamp + 'GET' + endpoint;
     const signature = crypto.createHmac('sha256', op.apiSecret).update(prehash).digest('base64');
 
-    const agent = getProxyAgent();
+    const agent = getProxyAgent(op);
     const config: AxiosRequestConfig = {
       headers: {
         'OK-ACCESS-KEY': op.apiKey,
@@ -199,7 +203,7 @@ async function checkBybitAds(op: OperatorConfig): Promise<AdStatus> {
     const prehash = timestamp + op.apiKey + recvWindow + body;
     const signature = crypto.createHmac('sha256', op.apiSecret).update(prehash).digest('hex');
 
-    const agent = getProxyAgent();
+    const agent = getProxyAgent(op);
     const config: AxiosRequestConfig = {
       headers: {
         'X-BAPI-API-KEY': op.apiKey,
@@ -369,6 +373,7 @@ function parseOperatorConfig(): OperatorConfig[] {
       const apiKey = process.env[`MONITOR_${keyName}_${exchUp}_KEY`] || process.env[`MONITOR_${keyName}_KEY`] || '';
       const apiSecret = process.env[`MONITOR_${keyName}_${exchUp}_SECRET`] || process.env[`MONITOR_${keyName}_SECRET`] || '';
       const passphrase = process.env[`MONITOR_${keyName}_${exchUp}_PASSPHRASE`] || process.env[`MONITOR_${keyName}_PASSPHRASE`];
+      const proxyUrl = process.env[`MONITOR_${keyName}_${exchUp}_PROXY`] || process.env[`MONITOR_${keyName}_PROXY`];
 
       if (!apiKey || !apiSecret) {
         log.warn(`Missing API keys for ${nickname}:${exchange} (tried MONITOR_${keyName}_${exchUp}_KEY and MONITOR_${keyName}_KEY)`);
@@ -386,6 +391,7 @@ function parseOperatorConfig(): OperatorConfig[] {
         apiKey,
         apiSecret,
         passphrase,
+        proxyUrl,
       });
     }
 
@@ -426,11 +432,13 @@ async function main(): Promise<void> {
   };
 
   log.info({
-    operators: operators.map(o => `${o.displayName} (${o.exchange})`),
+    operators: operators.map(o => {
+      const proxyIp = o.proxyUrl ? o.proxyUrl.match(/@([^:]+)/)?.[1] || 'yes' : 'none';
+      return `${o.displayName} (proxy=${proxyIp})`;
+    }),
     intervalMinutes: config.checkIntervalMs / 60000,
     workday: `${config.workdayStart}:00 - ${config.workdayEnd}:00 (CDMX)`,
     lowFundsThreshold: config.lowFundsThreshold,
-    proxy: getProxyAgent() ? 'configured' : 'none',
   }, 'Operator Monitor configured');
 
   // First check immediately
