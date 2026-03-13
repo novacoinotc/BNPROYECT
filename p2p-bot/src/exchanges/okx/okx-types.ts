@@ -130,6 +130,9 @@ export interface OkxAdParams {
   fiatCurrency: string;
   unitPrice: string;
   availableAmount?: string;
+  cryptoAmount?: string;       // Cryptocurrency quantity (used in update to resize ad)
+  minOrderLimit?: string;
+  maxOrderLimit?: string;
   minAmount?: string;
   maxAmount?: string;
   paymentMethods?: string[];  // payment method IDs

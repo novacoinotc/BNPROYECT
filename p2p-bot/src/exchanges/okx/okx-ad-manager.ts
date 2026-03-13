@@ -163,13 +163,12 @@ export class OkxAdManager {
           // Use 85% of available balance to leave room for locked orders + fees
           const reducedAmount = Math.floor(availableBalance * 0.85 * 100) / 100;
           const maxFiat = Math.max(1000, Math.floor(reducedAmount * newPrice));
-          log.warn(`OKX: Insufficient balance (${availableBalance} USDT) — retrying with amount=${reducedAmount}, maxOrderLimit=${maxFiat}`);
+          log.warn(`OKX: Insufficient balance (${availableBalance} USDT) — retrying with cryptoAmount=${reducedAmount}, maxOrderLimit=${maxFiat}`);
 
-          // Try with both totalAmount AND availableAmount to cover OKX's internal logic
+          // OKX Update Ad API uses `cryptoAmount` for the cryptocurrency quantity
           const retryParams: Record<string, any> = {
             unitPrice: priceStr,
-            totalAmount: reducedAmount.toFixed(2),
-            availableAmount: reducedAmount.toFixed(2),
+            cryptoAmount: reducedAmount.toFixed(2),
             maxOrderLimit: maxFiat.toFixed(2),
           };
 
