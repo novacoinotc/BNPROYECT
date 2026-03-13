@@ -114,8 +114,9 @@ export class OkxAdManager {
       const updateParams: Record<string, any> = { unitPrice: priceStr };
 
       // Always send maxOrderLimit to prevent "maximum order limit" errors when price decreases
+      // OKX requires minimum 1000 MXN for maxOrderLimit
       if (availableAmount) {
-        const maxFiat = Math.floor(parseFloat(availableAmount) * newPrice);
+        const maxFiat = Math.max(1000, Math.floor(parseFloat(availableAmount) * newPrice));
         updateParams.maxOrderLimit = maxFiat.toFixed(2);
       }
 

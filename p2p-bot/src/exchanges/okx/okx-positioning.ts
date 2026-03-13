@@ -94,6 +94,9 @@ export class OkxPositioning extends EventEmitter {
   private async loadConfig(): Promise<void> {
     try {
       this.dbConfig = await getBotConfig();
+      if (this.dbConfig?.ignoredAdvertisers?.length) {
+        log.info({ ignored: this.dbConfig.ignoredAdvertisers }, 'OKX config: ignoredAdvertisers loaded');
+      }
     } catch (error: any) {
       log.error({ error: error.message }, 'OKX: Failed to load config');
     }
@@ -196,8 +199,8 @@ export class OkxPositioning extends EventEmitter {
         log.warn(`OKX: Error updating ad ${adId}: ${error.message}`);
       }
 
-      // Delay between ads to avoid rate limits
-      await new Promise(r => setTimeout(r, 500));
+      // Delay between ads to avoid rate limits (OKX 429s at <2s)
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 

@@ -98,6 +98,7 @@ export class OkxSmartEngine {
     if (ads.length === 0) return null;
 
     // Filter out own ads, ignored, and apply quality filters
+    const ignoredNames: string[] = [];
     const qualified = ads.filter(ad => {
       if (!ad.creator) return false;
       const nick = ad.creator.nickName;
@@ -110,12 +111,18 @@ export class OkxSmartEngine {
         const isIgnored = this.config.ignoredAdvertisers.some(
           ignored => ignored.toLowerCase() === nick.toLowerCase()
         );
-        if (isIgnored) return false;
+        if (isIgnored) {
+          ignoredNames.push(`${nick}@${parseFloat(ad.unitPrice).toFixed(2)}`);
+          return false;
+        }
       }
 
       return this.passesFilters(ad);
     });
 
+    if (ignoredNames.length > 0) {
+      log.info({ ignored: ignoredNames }, 'OKX Smart: Filtered out ignored advertisers');
+    }
     log.debug({ total: ads.length, qualified: qualified.length }, 'OKX Smart: Filter results');
 
     if (qualified.length === 0) {
