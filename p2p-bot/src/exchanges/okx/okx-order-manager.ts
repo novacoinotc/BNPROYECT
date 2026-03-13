@@ -40,6 +40,7 @@ export class OkxOrderManager extends EventEmitter {
   private isRunning = false;
   private isPolling = false;
   private isCheckingStale = false;
+  private lastStaleError: string | null = null;
 
   constructor(config: OkxOrderManagerConfig) {
     super();
@@ -345,7 +346,12 @@ export class OkxOrderManager extends EventEmitter {
       }
     } catch (error) {
       const err = error as Error;
-      log.warn(`Error checking stale OKX orders: ${err.message}`);
+      // Only log once per unique error to avoid noise
+      const msg = err.message || 'unknown';
+      if (!this.lastStaleError || this.lastStaleError !== msg) {
+        log.warn(`Error checking stale OKX orders: ${msg}`);
+        this.lastStaleError = msg;
+      }
     } finally {
       this.isCheckingStale = false;
     }

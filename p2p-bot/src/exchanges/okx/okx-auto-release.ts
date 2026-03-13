@@ -604,22 +604,9 @@ export class OkxAutoRelease extends EventEmitter {
     const passed = failedCriteria.length === 0;
 
     if (passed) {
-      log.info({
-        orderId: pending.orderNumber,
-        totalOrders,
-        completionRate,
-        kycLevel,
-        registerDays,
-      }, 'OKX: Buyer risk check PASSED');
+      log.info(`OKX: Buyer risk check PASSED — order=${pending.orderNumber} orders=${totalOrders} rate=${(completionRate * 100).toFixed(0)}% age=${registerDays}d amount=$${orderAmount}`);
     } else {
-      log.warn({
-        orderId: pending.orderNumber,
-        totalOrders,
-        completionRate,
-        kycLevel,
-        registerDays,
-        failures: failedCriteria,
-      }, 'OKX: Buyer risk check FAILED');
+      log.warn(`OKX: Buyer risk check FAILED — order=${pending.orderNumber} orders=${totalOrders} rate=${(completionRate * 100).toFixed(0)}% age=${registerDays}d amount=$${orderAmount} | FAILED: ${failedCriteria.join(', ')}`);
     }
 
     return passed;

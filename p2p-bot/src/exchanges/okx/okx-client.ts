@@ -271,7 +271,17 @@ export class OkxClient {
     try {
       const result = await this.p2pGet<any>('/api/v5/p2p/ad/active-list', params);
 
-      if (!result) return [];
+      if (!result) {
+        log.warn('getActiveAds: API returned null/empty');
+        return [];
+      }
+
+      // Log raw response structure for debugging
+      if (Array.isArray(result)) {
+        log.debug(`getActiveAds: array response, length=${result.length}, keys=${result.length > 0 ? Object.keys(result[0]).join(',') : 'empty'}`);
+      } else {
+        log.debug(`getActiveAds: object response, keys=${Object.keys(result).join(',')}`);
+      }
 
       // OKX may return [{buyAds:[], sellAds:[]}] wrapper — same as searchAds
       if (Array.isArray(result)) {
@@ -281,7 +291,7 @@ export class OkxClient {
             ...(wrapper.sellAds || []),
             ...(wrapper.buyAds || []),
           ];
-          log.debug({ sellCount: wrapper.sellAds?.length || 0, buyCount: wrapper.buyAds?.length || 0 }, 'getActiveAds: extracted from wrapper');
+          log.info(`getActiveAds: found ${wrapper.sellAds?.length || 0} sell + ${wrapper.buyAds?.length || 0} buy ads`);
           return allAds;
         }
         return result as OkxAdData[];
@@ -289,9 +299,12 @@ export class OkxClient {
 
       // Single object response
       if (typeof result === 'object' && (result.sellAds || result.buyAds)) {
-        return [...(result.sellAds || []), ...(result.buyAds || [])];
+        const allAds = [...(result.sellAds || []), ...(result.buyAds || [])];
+        log.info(`getActiveAds: found ${allAds.length} ads from object wrapper`);
+        return allAds;
       }
 
+      log.warn(`getActiveAds: unexpected response type: ${typeof result}`);
       return [];
     } catch (error: any) {
       log.error(`getActiveAds failed: ${error.message}`);

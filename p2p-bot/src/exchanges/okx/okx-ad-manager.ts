@@ -60,7 +60,7 @@ export class OkxAdManager {
         }));
 
       if (ads.length > 0 && activeAds.length === 0) {
-        log.warn({ rawCount: ads.length, statuses: ads.map(a => a.status) }, 'OKX ads fetched but none passed filter');
+        log.warn(`OKX ads fetched (${ads.length}) but none passed filter. Statuses: ${ads.map(a => `"${a.status}"`).join(', ')}. AdIds: ${ads.map(a => a.adId).join(', ')}. Raw keys: ${ads.length > 0 ? Object.keys(ads[0]).join(',') : 'none'}`);
       }
 
       log.debug({ count: activeAds.length, side }, 'OKX active ads fetched');
