@@ -135,9 +135,8 @@ export class OkxOrderManager extends EventEmitter {
 
       let savedCount = 0;
       for (const okxOrder of allOkxOrders.values()) {
-        const order = toOrderData(okxOrder);
-
         try {
+          const order = toOrderData(okxOrder);
           await saveOrder(order);
           savedCount++;
 

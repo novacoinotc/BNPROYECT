@@ -257,7 +257,7 @@ export function mapOkxOrderStatus(
  * OKX uses 'buy'/'sell' lowercase, we use 'BUY'/'SELL'
  */
 export function mapOkxSide(side: string): TradeType {
-  return side.toLowerCase() === 'sell' ? TradeType.SELL : TradeType.BUY;
+  return (side || '').toLowerCase() === 'sell' ? TradeType.SELL : TradeType.BUY;
 }
 
 /**
