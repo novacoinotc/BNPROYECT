@@ -81,7 +81,7 @@ export class OkxAutoRelease extends EventEmitter {
     this.okxClient = getOkxClient();
 
     this.riskConfig = {
-      minTotalOrders: parseInt(process.env.MIN_BUYER_TOTAL_ORDERS || '100'),
+      minTotalOrders: parseInt(process.env.MIN_BUYER_TOTAL_ORDERS || '30'),
       min30DayOrders: parseInt(process.env.MIN_BUYER_30DAY_ORDERS || '15'),
       minCompletionRate: parseFloat(process.env.MIN_BUYER_POSITIVE_RATE || '0.85'),
       maxAutoReleaseAmount: config.maxAutoReleaseAmount,
