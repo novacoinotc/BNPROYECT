@@ -68,6 +68,14 @@ export class OkxAdManager {
           const excludedStatuses = ['cancelled', 'expired', 'deleted'];
           if (excludedStatuses.includes(status)) return false;
 
+          // Skip hidden ads — only manage visible/marketplace-listed ads
+          // This prevents OKX error 55147 ("duplicate price") when multiple ads
+          // exist for the same pair and the bot tries to set them all to the same price
+          if (rawAd.isHidden === true || rawAd.isHidden === 'true') {
+            log.info({ adId: ad.adId, price: ad.unitPrice, crypto: ad.cryptoCurrency }, 'OKX: Skipping hidden ad');
+            return false;
+          }
+
           return true;
         })
         .map(ad => {
@@ -104,30 +112,84 @@ export class OkxAdManager {
    * Update ad price
    * IMPORTANT: OKX cancels old ad and creates new one!
    * Returns the new ad ID that must be tracked
+   * Handles error 55147 (duplicate price) by canceling conflicting hidden ads
    */
   async updateAdPrice(adId: string, newPrice: number, adType?: string, availableAmount?: string): Promise<OkxAdUpdateResult | null> {
     const priceStr = newPrice.toFixed(2);
 
     log.info(`OKX: Updating ad ${adId} to ${priceStr} (type=${adType || 'unknown'})`);
 
+    const updateParams: Record<string, any> = { unitPrice: priceStr };
+
+    // Always send maxOrderLimit to prevent "maximum order limit" errors when price decreases
+    // OKX requires minimum 1000 MXN for maxOrderLimit
+    if (availableAmount) {
+      const maxFiat = Math.max(1000, Math.floor(parseFloat(availableAmount) * newPrice));
+      updateParams.maxOrderLimit = maxFiat.toFixed(2);
+    }
+
     try {
-      const updateParams: Record<string, any> = { unitPrice: priceStr };
-
-      // Always send maxOrderLimit to prevent "maximum order limit" errors when price decreases
-      // OKX requires minimum 1000 MXN for maxOrderLimit
-      if (availableAmount) {
-        const maxFiat = Math.max(1000, Math.floor(parseFloat(availableAmount) * newPrice));
-        updateParams.maxOrderLimit = maxFiat.toFixed(2);
-      }
-
       const result = await this.client.updateAd(adId, updateParams);
-
       log.info(`OKX: Ad updated ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
       return result;
     } catch (error: any) {
       const errMsg = error.message || '';
+
+      // Error 55147: "You already have a sell ad with the same price on the marketplace"
+      // This happens when a hidden ad already exists at the target price.
+      // Fix: find and cancel the conflicting hidden ad, then retry.
+      if (errMsg.includes('55147')) {
+        log.warn(`OKX: Duplicate price conflict at ${priceStr} — looking for hidden ad to cancel`);
+        const resolved = await this.resolveHiddenPriceConflict(adId, newPrice);
+        if (resolved) {
+          try {
+            const result = await this.client.updateAd(adId, updateParams);
+            log.info(`OKX: Ad updated after conflict resolution ${result.oldAdId} -> ${result.newAdId} at ${priceStr}`);
+            return result;
+          } catch (retryError: any) {
+            log.error(`OKX: Retry failed after conflict resolution: ${retryError.message}`);
+            return null;
+          }
+        }
+      }
+
       log.error(`OKX: Failed to update ad ${adId} to ${priceStr}: ${errMsg}`);
       return null;
+    }
+  }
+
+  /**
+   * Find and cancel a hidden ad that conflicts with the target price.
+   * Called when error 55147 occurs — a hidden ad at the same price blocks the update.
+   */
+  private async resolveHiddenPriceConflict(currentAdId: string, targetPrice: number): Promise<boolean> {
+    try {
+      const allAds = await this.client.getActiveAds();
+      const priceStr = targetPrice.toFixed(2);
+
+      const conflicting = allAds.find(ad => {
+        const rawAd = ad as any;
+        const isHidden = rawAd.isHidden === true || rawAd.isHidden === 'true';
+        const samePrice = parseFloat(ad.unitPrice).toFixed(2) === priceStr;
+        const notSelf = ad.adId !== currentAdId;
+        return isHidden && samePrice && notSelf;
+      });
+
+      if (!conflicting) {
+        log.warn(`OKX: No hidden ad found at ${priceStr} to cancel`);
+        return false;
+      }
+
+      log.info({ conflictAdId: conflicting.adId, price: priceStr }, 'OKX: Canceling conflicting hidden ad');
+      await this.client.cancelAd(conflicting.adId);
+      log.info({ conflictAdId: conflicting.adId }, 'OKX: Conflicting hidden ad cancelled successfully');
+
+      // Small delay to let OKX process the cancellation
+      await new Promise(r => setTimeout(r, 1000));
+      return true;
+    } catch (error: any) {
+      log.error({ error: error.message }, 'OKX: Failed to resolve hidden price conflict');
+      return false;
     }
   }
 
