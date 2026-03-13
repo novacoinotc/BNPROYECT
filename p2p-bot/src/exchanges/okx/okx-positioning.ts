@@ -26,6 +26,7 @@ interface TrackedAd {
   updateCount: number;
   errorCount: number;
   mode: 'smart' | 'follow' | 'idle';
+  type: string; // 'limit' or 'floating_market'
 }
 
 export interface OkxPositioningStatus {
@@ -152,6 +153,7 @@ export class OkxPositioning extends EventEmitter {
           updateCount: 0,
           errorCount: 0,
           mode: 'idle',
+          type: ad.type || 'limit',
         });
       }
     }
@@ -220,7 +222,7 @@ export class OkxPositioning extends EventEmitter {
     if (priceDiff < this.PRICE_UPDATE_THRESHOLD) return;
 
     // Execute update
-    const result = await this.adManager.updateAdPrice(ad.adId, targetPrice);
+    const result = await this.adManager.updateAdPrice(ad.adId, targetPrice, ad.type);
 
     if (result) {
       const oldPrice = ad.currentPrice;

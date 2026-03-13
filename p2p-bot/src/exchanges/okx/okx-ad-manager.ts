@@ -18,8 +18,10 @@ export interface OkxManagedAd {
   crypto: string;
   fiat: string;
   currentPrice: number;
-  status: string;   // 'online', 'offline'
+  status: string;   // 'new', 'online', 'offline'
   availableAmount: string;
+  type: string;     // 'limit' or 'floating_market'
+  priceMargin?: string; // For floating_market ads
 }
 
 // ==================== AD MANAGER ====================
@@ -54,22 +56,26 @@ export class OkxAdManager {
           const excludedStatuses = ['hidden', 'offline', 'cancelled', 'expired', 'deleted'];
           return !excludedStatuses.includes(status);
         })
-        .map(ad => ({
-          adId: ad.adId,
-          side: ad.side,
-          crypto: ad.cryptoCurrency,
-          fiat: ad.fiatCurrency,
-          currentPrice: parseFloat(ad.unitPrice),
-          status: ad.status || 'online',
-          availableAmount: ad.availableAmount,
-        }));
+        .map(ad => {
+          const rawAd = ad as any;
+          return {
+            adId: ad.adId,
+            side: ad.side,
+            crypto: ad.cryptoCurrency,
+            fiat: ad.fiatCurrency,
+            currentPrice: parseFloat(ad.unitPrice),
+            status: ad.status || 'new',
+            availableAmount: ad.availableAmount,
+            type: rawAd.type || 'limit',
+            priceMargin: rawAd.priceMargin,
+          };
+        });
 
       if (ads.length > 0) {
-        const summary = ads.map(a => {
-          const raw = a as any;
-          return `${a.adId}(${a.side},${a.status},listed=${raw.isListedOnMarketplace},hidden=${raw.isHidden})`;
+        const summary = activeAds.map(a => {
+          return `${a.adId}(${a.side},${a.crypto},type=${a.type},price=${a.currentPrice})`;
         }).join(' | ');
-        log.info(`OKX ads: ${ads.length} total, ${activeAds.length} active. ${summary}`);
+        log.info(`OKX ads: ${ads.length} total, ${activeAds.length} active. Active: ${summary || 'none'}`);
       }
 
       log.debug({ count: activeAds.length, side }, 'OKX active ads fetched');
@@ -85,15 +91,21 @@ export class OkxAdManager {
    * IMPORTANT: OKX cancels old ad and creates new one!
    * Returns the new ad ID that must be tracked
    */
-  async updateAdPrice(adId: string, newPrice: number): Promise<OkxAdUpdateResult | null> {
+  async updateAdPrice(adId: string, newPrice: number, adType?: string): Promise<OkxAdUpdateResult | null> {
     const priceStr = newPrice.toFixed(2);
 
-    log.info({ adId, newPrice: priceStr }, 'OKX: Updating ad price');
+    log.info(`OKX: Updating ad ${adId} to ${priceStr} (type=${adType || 'unknown'})`);
 
     try {
-      const result = await this.client.updateAd(adId, {
+      // floating_market ads need to be converted to limit type to set unitPrice
+      const updateParams: Record<string, any> = {
         unitPrice: priceStr,
-      });
+      };
+      if (adType === 'floating_market') {
+        updateParams.type = 'limit';
+      }
+
+      const result = await this.client.updateAd(adId, updateParams);
 
       log.info({
         oldAdId: result.oldAdId,
