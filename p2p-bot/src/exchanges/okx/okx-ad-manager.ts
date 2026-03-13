@@ -45,9 +45,11 @@ export class OkxAdManager {
 
       const activeAds = ads
         .filter(ad => {
-          // Accept ads without status field OR with online/show status
+          // OKX ad statuses: "new" = active/published, "online" = active, "show" = visible
+          // Exclude: "hidden", "offline", "cancelled", "expired"
           const status = (ad.status || '').toLowerCase();
-          return !status || status === 'online' || status === 'show';
+          const excludedStatuses = ['hidden', 'offline', 'cancelled', 'expired', 'deleted'];
+          return !excludedStatuses.includes(status);
         })
         .map(ad => ({
           adId: ad.adId,
