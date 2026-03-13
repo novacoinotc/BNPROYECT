@@ -381,16 +381,19 @@ export class OkxClient {
    * Get optimal price for a trading pair
    * GET /api/v5/p2p/ad/optimal-price
    */
-  async getOptimalPrice(cryptoCurrency: string, fiatCurrency: string): Promise<string> {
+  async getOptimalPrice(cryptoCurrency: string, fiatCurrency: string): Promise<{ buyPrice: string; sellPrice: string }> {
     try {
-      const result = await this.p2pGet<{ optimalPrice: string }>('/api/v5/p2p/ad/optimal-price', {
+      const result = await this.p2pGet<{ currentHighestBuyAdPrice: string; currentLowestSellAdPrice: string }>('/api/v5/p2p/ad/optimal-price', {
         cryptoCurrency,
         fiatCurrency,
       });
-      return result.optimalPrice || '0';
+      return {
+        buyPrice: result.currentHighestBuyAdPrice || '0',
+        sellPrice: result.currentLowestSellAdPrice || '0',
+      };
     } catch (error: any) {
       log.warn({ error: error.message, cryptoCurrency, fiatCurrency }, 'getOptimalPrice failed');
-      return '0';
+      return { buyPrice: '0', sellPrice: '0' };
     }
   }
 
@@ -723,8 +726,14 @@ interface OkxCounterpartyInfo {
   realName: string;
   completedOrders: string;
   completionRate: string;
-  kycLevel: number;
-  registerTime: string;
+  cancelledOrders: string;
+  completedSellOrders: string;
+  kycLevel: string;
+  acceptStatus: string;
+  avgPaymentTimeInSeconds: string;
+  avgCompletionTimeInSeconds: string;
+  createdTimestamp: string;
+  hasAlreadyTraded: boolean;
 }
 
 // ==================== SINGLETON ====================
