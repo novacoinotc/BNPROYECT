@@ -2,11 +2,12 @@
 // OKX MULTI-AD POSITIONING COORDINATOR
 // Manages positioning for all active OKX ads
 // Handles OKX's ad ID change on update
+// Uses getPositioningConfigForAd() like Binance/Bybit
 // =====================================================
 
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger.js';
-import { getBotConfig, BotConfig } from '../../services/database-pg.js';
+import { getBotConfig, BotConfig, getPositioningConfigForAd, AssetPositioningConfig } from '../../services/database-pg.js';
 import { OkxAdManager, OkxManagedAd, createOkxAdManager } from './okx-ad-manager.js';
 import { OkxSmartEngine, OkxSmartConfig } from './okx-smart-engine.js';
 import { OkxFollowEngine, OkxFollowConfig } from './okx-follow-engine.js';
@@ -44,22 +45,14 @@ export interface OkxPositioningStatus {
 
 export class OkxPositioning extends EventEmitter {
   private adManager: OkxAdManager;
-  private smartEngines: Map<string, OkxSmartEngine> = new Map(); // key: "side-crypto-fiat"
+  private smartEngines: Map<string, OkxSmartEngine> = new Map();
   private followEngines: Map<string, OkxFollowEngine> = new Map();
   private trackedAds: Map<string, TrackedAd> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
-  // Config from DB
-  private currentMode = 'smart';
-  private followTarget: string | null = null;
-  private undercutCents = 1;
-  private matchPrice = false;
-  private smartMinOrderCount = 10;
-  private smartMinSurplus = 100;
-  private ignoredAdvertisers: string[] = [];
-  private spotPriceCeiling: number | null = null; // For BUY ads
-  private spotPriceFloor: number | null = null;   // For SELL ads
+  // Full DB config — used by getPositioningConfigForAd()
+  private dbConfig: BotConfig | null = null;
 
   private readonly PRICE_UPDATE_THRESHOLD = 0.01;
 
@@ -71,10 +64,7 @@ export class OkxPositioning extends EventEmitter {
   // ==================== LIFECYCLE ====================
 
   async start(intervalMs: number = 12000): Promise<void> {
-    // Load config
     await this.loadConfig();
-
-    // Discover active ads
     await this.discoverActiveAds();
 
     if (this.trackedAds.size === 0) {
@@ -83,16 +73,9 @@ export class OkxPositioning extends EventEmitter {
     }
 
     this.isRunning = true;
-    log.info({
-      adCount: this.trackedAds.size,
-      mode: this.currentMode,
-      target: this.followTarget,
-    }, 'OKX Positioning started');
+    log.info({ adCount: this.trackedAds.size }, 'OKX Positioning started');
 
-    // Initial update
     await this.runUpdateCycle();
-
-    // Schedule periodic updates
     this.updateInterval = setInterval(() => this.runUpdateCycle(), intervalMs);
   }
 
@@ -109,27 +92,35 @@ export class OkxPositioning extends EventEmitter {
 
   private async loadConfig(): Promise<void> {
     try {
-      const config = await getBotConfig();
-      const oldMode = this.currentMode;
-
-      this.currentMode = config.positioningMode || 'smart';
-      this.followTarget = config.followTargetNickName || null;
-      this.undercutCents = config.undercutCents || 1;
-      this.matchPrice = config.matchPrice ?? false;
-      this.smartMinOrderCount = config.smartMinOrderCount ?? 10;
-      this.smartMinSurplus = config.smartMinSurplus ?? 100;
-      this.ignoredAdvertisers = config.ignoredAdvertisers ?? [];
-
-      // Load spot price limits from env
-      const floorEnv = process.env.OKX_PRICE_FLOOR;
-      this.spotPriceFloor = floorEnv ? parseFloat(floorEnv) : null;
-
-      if (oldMode !== this.currentMode) {
-        log.info({ oldMode, newMode: this.currentMode }, 'OKX: Mode changed');
-      }
+      this.dbConfig = await getBotConfig();
     } catch (error: any) {
       log.error({ error: error.message }, 'OKX: Failed to load config');
     }
+  }
+
+  /**
+   * Get per-ad config using the same function as Binance/Bybit.
+   * Reads from positioningConfigs["SELL:USDT"] with fallback to global defaults.
+   */
+  private getAdConfig(ad: TrackedAd): AssetPositioningConfig {
+    if (!this.dbConfig) {
+      return {
+        enabled: true,
+        mode: 'smart',
+        followTarget: null,
+        matchPrice: false,
+        undercutCents: 1,
+        minPrice: null,
+        maxPrice: null,
+        spotMarginCents: 0,
+        smartMinOrderCount: 10,
+        smartMinSurplus: 100,
+        smartMinFinishRate: 0,
+      };
+    }
+    const tradeType = ad.side === 'sell' ? 'SELL' : 'BUY';
+    const asset = ad.crypto.toUpperCase();
+    return getPositioningConfigForAd(this.dbConfig, tradeType, asset);
   }
 
   // ==================== AD DISCOVERY ====================
@@ -179,18 +170,26 @@ export class OkxPositioning extends EventEmitter {
     if (this.trackedAds.size === 0) return;
 
     for (const [adId, ad] of this.trackedAds) {
-      // Skip ads that fail too many times (bad/old ads)
+      // Skip ads that fail too many times
       if (ad.errorCount >= 5) {
         if (ad.errorCount === 5) {
-          log.warn(`OKX: Skipping ad ${adId} (${ad.crypto} ${ad.side}) after 5 consecutive failures — will retry after rediscovery`);
-          ad.errorCount = 6; // Only log once
+          log.warn(`OKX: Skipping ad ${adId} (${ad.crypto} ${ad.side}) after 5 consecutive failures`);
+          ad.errorCount = 6;
         }
         continue;
       }
 
+      // Get per-ad config from DB (reads positioningConfigs["SELL:USDT"] etc.)
+      const adConfig = this.getAdConfig(ad);
+
+      // Skip disabled ads
+      if (!adConfig.enabled) {
+        log.debug(`OKX: Ad ${adId} (${ad.side} ${ad.crypto}) disabled in config, skipping`);
+        continue;
+      }
+
       try {
-        await this.updateSingleAd(ad);
-        // errorCount is managed inside updateSingleAd (reset on success, increment on failure)
+        await this.updateSingleAd(ad, adConfig);
       } catch (error: any) {
         ad.errorCount++;
         log.warn(`OKX: Error updating ad ${adId}: ${error.message}`);
@@ -201,33 +200,47 @@ export class OkxPositioning extends EventEmitter {
     }
   }
 
-  private async updateSingleAd(ad: TrackedAd): Promise<void> {
+  private async updateSingleAd(ad: TrackedAd, adConfig: AssetPositioningConfig): Promise<void> {
     let targetPrice: number | null = null;
 
-    log.info(`OKX positioning: mode=${this.currentMode}, followTarget=${this.followTarget}, ad=${ad.adId} (${ad.side} ${ad.crypto} @ ${ad.currentPrice})`);
+    log.info({
+      mode: adConfig.mode,
+      followTarget: adConfig.followTarget,
+      matchPrice: adConfig.matchPrice,
+      undercutCents: adConfig.undercutCents,
+      minOrders: adConfig.smartMinOrderCount,
+      minSurplus: adConfig.smartMinSurplus,
+      adId: ad.adId,
+      side: ad.side,
+      crypto: ad.crypto,
+      price: ad.currentPrice,
+    }, `OKX positioning: ${ad.side} ${ad.crypto} mode=${adConfig.mode}`);
 
-    if (this.currentMode === 'follow' && this.followTarget) {
+    if (adConfig.mode === 'follow' && adConfig.followTarget) {
       ad.mode = 'follow';
-      const engine = this.getFollowEngine(ad);
+      const engine = this.getFollowEngine(ad, adConfig);
       const result = await engine.getPrice(ad.crypto, ad.fiat);
 
       if (result) {
         targetPrice = result.targetPrice;
-        log.info(`OKX follow result: target=${result.targetNickName} price=${result.targetFoundPrice} -> our=${result.targetPrice}`);
+        log.info(`OKX follow: target=${result.targetNickName} price=${result.targetFoundPrice} -> our=${result.targetPrice}`);
       } else {
         log.warn('OKX follow returned null — falling back to smart');
-        // Fallback to smart
         ad.mode = 'smart';
-        const smartEngine = this.getSmartEngine(ad);
+        const smartEngine = this.getSmartEngine(ad, adConfig);
         const smartResult = await smartEngine.getPrice(ad.crypto, ad.fiat);
         if (smartResult) targetPrice = smartResult.targetPrice;
       }
     } else {
       ad.mode = 'smart';
-      const engine = this.getSmartEngine(ad);
+      const engine = this.getSmartEngine(ad, adConfig);
       const result = await engine.getPrice(ad.crypto, ad.fiat);
-      if (result) targetPrice = result.targetPrice;
-      log.info(`OKX smart result: targetPrice=${targetPrice}`);
+      if (result) {
+        targetPrice = result.targetPrice;
+        log.info(`OKX smart: targetPrice=${targetPrice}, qualified=${result.qualifiedCount}, bestCompetitor=${result.bestCompetitorPrice}`);
+      } else {
+        log.info('OKX smart: no qualified competitors found');
+      }
     }
 
     if (targetPrice === null) {
@@ -240,7 +253,7 @@ export class OkxPositioning extends EventEmitter {
     // Check if update needed
     const priceDiff = Math.round(Math.abs(ad.currentPrice - targetPrice) * 100) / 100;
     if (priceDiff < this.PRICE_UPDATE_THRESHOLD) {
-      log.debug(`OKX positioning: Price diff ${priceDiff} < threshold ${this.PRICE_UPDATE_THRESHOLD}, skipping`);
+      log.debug(`OKX positioning: Price diff ${priceDiff} < threshold, skipping`);
       return;
     }
 
@@ -253,7 +266,6 @@ export class OkxPositioning extends EventEmitter {
 
       // CRITICAL: OKX creates new ad on update — track new ID
       if (result.newAdId && result.newAdId !== oldAdId) {
-        // Remove old tracking, add new
         this.trackedAds.delete(oldAdId);
         ad.adId = result.newAdId;
         this.trackedAds.set(result.newAdId, ad);
@@ -263,7 +275,7 @@ export class OkxPositioning extends EventEmitter {
       ad.currentPrice = targetPrice;
       ad.lastUpdate = new Date();
       ad.updateCount++;
-      ad.errorCount = 0; // Reset on success
+      ad.errorCount = 0;
 
       log.info({
         crypto: ad.crypto,
@@ -288,55 +300,52 @@ export class OkxPositioning extends EventEmitter {
 
   // ==================== ENGINE MANAGEMENT ====================
 
-  private getSmartEngine(ad: TrackedAd): OkxSmartEngine {
+  private getSmartEngine(ad: TrackedAd, adConfig: AssetPositioningConfig): OkxSmartEngine {
     const key = `${ad.side}-${ad.crypto}-${ad.fiat}`;
     let engine = this.smartEngines.get(key);
 
     if (!engine) {
       engine = new OkxSmartEngine(ad.side, {
-        undercutCents: this.undercutCents,
-        minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
-        maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
         myNickName: process.env.OKX_MY_NICKNAME,
       });
       this.smartEngines.set(key, engine);
     }
 
-    // Update config each cycle
+    // Update config each cycle from per-ad DB config
     engine.updateConfig({
-      undercutCents: this.undercutCents,
-      matchPrice: this.matchPrice,
-      minMonthOrderCount: this.smartMinOrderCount,
-      minSurplusAmount: this.smartMinSurplus,
-      ignoredAdvertisers: this.ignoredAdvertisers,
-      minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
-      maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
+      undercutCents: adConfig.undercutCents,
+      matchPrice: adConfig.matchPrice,
+      minMonthOrderCount: adConfig.smartMinOrderCount,
+      minSurplusAmount: adConfig.smartMinSurplus,
+      ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers ?? [],
+      minPrice: ad.side === 'sell' ? (adConfig.minPrice ?? null) : undefined,
+      maxPrice: ad.side === 'buy' ? (adConfig.maxPrice ?? null) : undefined,
     });
 
     return engine;
   }
 
-  private getFollowEngine(ad: TrackedAd): OkxFollowEngine {
+  private getFollowEngine(ad: TrackedAd, adConfig: AssetPositioningConfig): OkxFollowEngine {
     const key = `${ad.side}-${ad.crypto}-${ad.fiat}`;
     let engine = this.followEngines.get(key);
 
     if (!engine) {
       engine = new OkxFollowEngine(ad.side, {
-        targetNickName: this.followTarget || '',
-        undercutCents: this.undercutCents,
-        matchPrice: this.matchPrice,
-        minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
-        maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
+        targetNickName: adConfig.followTarget || '',
+        undercutCents: adConfig.undercutCents,
+        matchPrice: adConfig.matchPrice,
+        minPrice: ad.side === 'sell' ? (adConfig.minPrice ?? null) : undefined,
+        maxPrice: ad.side === 'buy' ? (adConfig.maxPrice ?? null) : undefined,
       });
       this.followEngines.set(key, engine);
     }
 
     engine.updateConfig({
-      targetNickName: this.followTarget || '',
-      undercutCents: this.undercutCents,
-      matchPrice: this.matchPrice,
-      minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
-      maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
+      targetNickName: adConfig.followTarget || '',
+      undercutCents: adConfig.undercutCents,
+      matchPrice: adConfig.matchPrice,
+      minPrice: ad.side === 'sell' ? (adConfig.minPrice ?? null) : undefined,
+      maxPrice: ad.side === 'buy' ? (adConfig.maxPrice ?? null) : undefined,
     });
 
     return engine;
@@ -346,11 +355,15 @@ export class OkxPositioning extends EventEmitter {
 
   getStatus(): OkxPositioningStatus {
     const ads = Array.from(this.trackedAds.values());
+    // Use first ad's config for status display
+    const firstAd = ads[0];
+    const adConfig = firstAd ? this.getAdConfig(firstAd) : null;
+
     return {
       isRunning: this.isRunning,
-      mode: this.currentMode,
-      followTarget: this.followTarget,
-      undercutCents: this.undercutCents,
+      mode: adConfig?.mode || 'smart',
+      followTarget: adConfig?.followTarget || null,
+      undercutCents: adConfig?.undercutCents || 1,
       managedAds: ads,
       totalUpdates: ads.reduce((sum, ad) => sum + ad.updateCount, 0),
       totalErrors: ads.reduce((sum, ad) => sum + ad.errorCount, 0),
