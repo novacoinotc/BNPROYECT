@@ -2,6 +2,7 @@
 // OKX P2P TRADING BOT — ENTRY POINT
 // Runs independently from Binance bot
 // npx tsx src/exchanges/okx/okx-index.ts
+// v1.1.0 — insufficient balance retry fix
 // =====================================================
 
 import 'dotenv/config';
