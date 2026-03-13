@@ -229,13 +229,24 @@ export class OkxClient {
     pageSize: number = 20
   ): Promise<OkxAdData[]> {
     try {
-      const result = await this.p2pGet<OkxAdData[]>('/api/v5/p2p/ad/marketplace-list', {
+      const result = await this.p2pGet<any>('/api/v5/p2p/ad/marketplace-list', {
         side,
         cryptoCurrency,
         fiatCurrency,
         pageIndex: String(pageIndex),
         pageSize: String(pageSize),
       });
+      // OKX returns [{ buyAds: [], sellAds: [] }] — extract the right array
+      if (Array.isArray(result)) {
+        const wrapper = result[0];
+        if (wrapper?.sellAds || wrapper?.buyAds) {
+          return side === 'sell' ? (wrapper.sellAds || []) : (wrapper.buyAds || []);
+        }
+        return result;
+      }
+      if (result?.sellAds || result?.buyAds) {
+        return side === 'sell' ? (result.sellAds || []) : (result.buyAds || []);
+      }
       return result || [];
     } catch (error: any) {
       log.error({ error: error.message, side, cryptoCurrency, fiatCurrency }, 'searchAds failed');
