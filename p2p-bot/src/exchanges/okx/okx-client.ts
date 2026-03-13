@@ -479,11 +479,16 @@ export class OkxClient {
    * Release crypto to buyer
    * POST /api/v5/p2p/order/release-crypto
    */
-  async releaseCrypto(orderId: string): Promise<void> {
-    log.info({ orderId }, 'Attempting release-crypto call');
-    await this.p2pPost('/api/v5/p2p/order/release-crypto', {
+  async releaseCrypto(orderId: string, fiatAmount?: string): Promise<void> {
+    const body: Record<string, string> = {
       orderId,
-    });
+      verificationType: '2',
+    };
+    if (fiatAmount) {
+      body.amount = fiatAmount;
+    }
+    log.info({ orderId, fiatAmount }, 'Attempting release-crypto call');
+    await this.p2pPost('/api/v5/p2p/order/release-crypto', body);
     log.info({ orderId }, 'Crypto released');
   }
 

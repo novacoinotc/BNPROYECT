@@ -823,8 +823,9 @@ export class OkxAutoRelease extends EventEmitter {
     }
 
     try {
-      // OKX release — NO TOTP needed, just verificationType="2"
-      await this.okxClient.releaseCrypto(orderNumber);
+      // OKX release needs verificationType="2" + fiat amount
+      const fiatAmount = pending.order.totalPrice || pending.order.amount;
+      await this.okxClient.releaseCrypto(orderNumber, fiatAmount);
 
       log.info({
         orderId: orderNumber,
