@@ -45,7 +45,7 @@ function getProxyAgent(): HttpsProxyAgent<string> | undefined {
 /**
  * Search Binance P2P marketplace (public, no auth needed)
  */
-async function searchBinance(asset: string, fiat: string, pages: number = 5): Promise<Array<{
+async function searchBinance(asset: string, fiat: string, pages: number = 10): Promise<Array<{
   nickName: string;
   surplusAmount: number;
   price: number;
@@ -176,7 +176,7 @@ async function searchBybit(asset: string, fiat: string, pages: number = 5): Prom
           currencyId: fiat,
           side: '1', // 1 = sell
           page: String(page),
-          size: '20',
+          size: '50',
         },
         config
       );
