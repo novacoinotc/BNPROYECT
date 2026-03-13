@@ -103,7 +103,7 @@ export class OkxAdManager {
 
       return result;
     } catch (error: any) {
-      log.error({ adId, newPrice: priceStr, error: error.message }, 'OKX: Failed to update ad price');
+      log.error(`OKX: Failed to update ad ${adId} to ${priceStr}: ${error.message}`);
       return null;
     }
   }
