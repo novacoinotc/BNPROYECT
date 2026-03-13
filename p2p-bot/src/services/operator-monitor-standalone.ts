@@ -51,69 +51,70 @@ function getProxyAgent(): HttpsProxyAgent<string> | undefined {
 
 // ==================== BINANCE API ====================
 
+function binanceSign(queryString: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(queryString).digest('hex');
+}
+
+function parseBinanceAds(data: any): AdStatus {
+  if (!data) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+
+  // Response can be { sellList, buyList } or flat array
+  let allAds: any[] = [];
+  if (data.sellList || data.buyList) {
+    allAds = [...(data.sellList || []), ...(data.buyList || [])];
+  } else if (Array.isArray(data)) {
+    allAds = data;
+  }
+
+  // advStatus: 1=online, 3=paused/offline
+  const onlineAds = allAds.filter((ad: any) =>
+    String(ad.advStatus) === '1'
+  );
+  const onlineSellAds = onlineAds.filter((ad: any) =>
+    ad.tradeType === 'SELL' || String(ad.tradeType) === '1'
+  );
+
+  const bestPool = onlineSellAds.length > 0 ? onlineSellAds : onlineAds;
+  if (bestPool.length === 0) {
+    return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
+  }
+
+  const best = bestPool.sort((a: any, b: any) =>
+    parseFloat(a.price || '0') - parseFloat(b.price || '0')
+  )[0];
+
+  return {
+    isOnline: true,
+    surplusAmount: parseFloat(best.surplusAmount || '0'),
+    adPrice: parseFloat(best.price || '0'),
+    onlineAdsCount: bestPool.length,
+  };
+}
+
 async function checkBinanceAds(op: OperatorConfig): Promise<AdStatus> {
+  const headers = { 'X-MBX-APIKEY': op.apiKey, 'Content-Type': 'application/json' };
+
+  // POST /sapi/v1/c2c/ads/listWithPagination (confirmed working endpoint)
   try {
     const timestamp = Date.now();
-    const params = `page=1&rows=20&timestamp=${timestamp}`;
-    const signature = crypto.createHmac('sha256', op.apiSecret).update(params).digest('hex');
-    const queryString = `${params}&signature=${signature}`;
-
-    const response = await axios.get(
-      `https://api.binance.com/sapi/v1/c2c/ads/list?${queryString}`,
-      {
-        headers: {
-          'X-MBX-APIKEY': op.apiKey,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
+    const params = `timestamp=${timestamp}`;
+    const sig = binanceSign(params, op.apiSecret);
+    const response = await axios.post(
+      `https://api.binance.com/sapi/v1/c2c/ads/listWithPagination?${params}&signature=${sig}`,
+      { page: 1, rows: 20 },
+      { headers, timeout: 15000 }
     );
-
-    const data = response.data?.data;
-    if (!data) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
-
-    // Response can be { sellList, buyList } or array
-    let allAds: any[] = [];
-    if (data.sellList || data.buyList) {
-      allAds = [...(data.sellList || []), ...(data.buyList || [])];
-    } else if (Array.isArray(data)) {
-      allAds = data;
-    }
-
-    // Filter online SELL ads (advStatus 1 = online)
-    const onlineSellAds = allAds.filter((ad: any) =>
-      (ad.advStatus === 1 || ad.advStatus === '1') &&
-      (ad.tradeType === 'SELL' || ad.tradeType === 1)
-    );
-
-    if (onlineSellAds.length === 0) {
-      // Check if there are ANY online ads (buy too)
-      const anyOnline = allAds.filter((ad: any) => ad.advStatus === 1 || ad.advStatus === '1');
-      if (anyOnline.length > 0) {
-        const best = anyOnline[0];
-        return {
-          isOnline: true,
-          surplusAmount: parseFloat(best.surplusAmount || '0'),
-          adPrice: parseFloat(best.price || '0'),
-          onlineAdsCount: anyOnline.length,
-        };
-      }
-      return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
-    }
-
-    // Get best sell ad (lowest price)
-    const best = onlineSellAds.sort((a: any, b: any) =>
-      parseFloat(a.price || '0') - parseFloat(b.price || '0')
-    )[0];
-
-    return {
-      isOnline: true,
-      surplusAmount: parseFloat(best.surplusAmount || '0'),
-      adPrice: parseFloat(best.price || '0'),
-      onlineAdsCount: onlineSellAds.length,
-    };
+    return parseBinanceAds(response.data?.data);
   } catch (error: any) {
-    log.error({ operator: op.displayName, error: error.message }, 'Binance API check failed');
+    const status = error.response?.status;
+    const respData = error.response?.data;
+    log.error({
+      operator: op.displayName,
+      status,
+      respCode: respData?.code,
+      respMsg: respData?.msg,
+      error: error.message,
+    }, 'Binance API check failed');
     return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
   }
 }
@@ -145,38 +146,31 @@ async function checkOkxAds(op: OperatorConfig): Promise<AdStatus> {
     const data = response.data?.data;
     if (!data) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
 
-    // Parse OKX response: can be [{ sellAds: [], buyAds: [] }] or { sellAds: [], buyAds: [] }
-    let sellAds: any[] = [];
-    if (Array.isArray(data) && data[0]) {
-      sellAds = data[0].sellAds || data[0].sell || [];
-    } else if (data.sellAds || data.sell) {
-      sellAds = data.sellAds || data.sell || [];
+    // OKX active-list returns: array of ad objects directly, OR [{ sellAds, buyAds }] wrapper
+    let allAds: any[] = [];
+
+    if (Array.isArray(data)) {
+      if (data.length > 0 && (data[0].sellAds || data[0].buyAds)) {
+        // Wrapper format: [{ sellAds: [], buyAds: [] }]
+        allAds = [...(data[0].sellAds || []), ...(data[0].buyAds || [])];
+      } else {
+        // Direct array of ad objects (confirmed from real API response)
+        allAds = data;
+      }
     }
 
-    // All ads returned by active-list are active
-    if (sellAds.length === 0) {
-      // Check buy ads too
-      let buyAds: any[] = [];
-      if (Array.isArray(data) && data[0]) {
-        buyAds = data[0].buyAds || data[0].buy || [];
-      } else if (data.buyAds || data.buy) {
-        buyAds = data.buyAds || data.buy || [];
-      }
-
-      if (buyAds.length > 0) {
-        const best = buyAds[0];
-        return {
-          isOnline: true,
-          surplusAmount: parseFloat(best.availableAmount || best.surplusAmount || '0'),
-          adPrice: parseFloat(best.unitPrice || best.price || '0'),
-          onlineAdsCount: buyAds.length,
-        };
-      }
+    if (allAds.length === 0) {
       return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
     }
 
-    // Get best sell ad (lowest price)
-    const best = sellAds.sort((a: any, b: any) =>
+    // Filter sell ads (side=sell or tradeType)
+    const sellAds = allAds.filter((ad: any) =>
+      ad.side === 'sell' || ad.tradeType === 'sell'
+    );
+
+    const bestPool = sellAds.length > 0 ? sellAds : allAds;
+
+    const best = bestPool.sort((a: any, b: any) =>
       parseFloat(a.unitPrice || a.price || '0') - parseFloat(b.unitPrice || b.price || '0')
     )[0];
 
@@ -184,10 +178,12 @@ async function checkOkxAds(op: OperatorConfig): Promise<AdStatus> {
       isOnline: true,
       surplusAmount: parseFloat(best.availableAmount || best.surplusAmount || '0'),
       adPrice: parseFloat(best.unitPrice || best.price || '0'),
-      onlineAdsCount: sellAds.length,
+      onlineAdsCount: bestPool.length,
     };
   } catch (error: any) {
-    log.error({ operator: op.displayName, error: error.message }, 'OKX API check failed');
+    const status = error.response?.status;
+    const respData = error.response?.data;
+    log.error({ operator: op.displayName, status, respCode: respData?.code, respMsg: respData?.msg, error: error.message }, 'OKX API check failed');
     return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
   }
 }
