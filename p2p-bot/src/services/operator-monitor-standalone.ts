@@ -316,17 +316,28 @@ async function runCheck(config: MonitorConfig): Promise<void> {
 // ==================== MAIN ====================
 
 function parseOperatorConfig(): OperatorConfig[] {
-  // Method 1: JSON config (preferred)
-  // MONITOR_CONFIG=[{"nickname":"VillarrealCrypto","displayName":"VillarrealCrypto","exchange":"binance","apiKey":"xxx","apiSecret":"xxx"}, ...]
+  // Method 0: Base64-encoded JSON (most reliable for Railway)
+  // MONITOR_CONFIG_B64=<base64 of JSON array>
+  const b64Config = process.env.MONITOR_CONFIG_B64;
+  if (b64Config) {
+    try {
+      const jsonStr = Buffer.from(b64Config.trim(), 'base64').toString('utf-8');
+      const parsed = JSON.parse(jsonStr) as OperatorConfig[];
+      log.info(`Loaded ${parsed.length} operators from MONITOR_CONFIG_B64`);
+      return parsed;
+    } catch (e: any) {
+      log.error({ error: e.message }, 'Failed to parse MONITOR_CONFIG_B64');
+    }
+  }
+
+  // Method 1: JSON config (direct)
   let jsonConfig = process.env.MONITOR_CONFIG;
   if (jsonConfig) {
-    // Railway sometimes wraps env vars in extra quotes
     jsonConfig = jsonConfig.trim();
     if ((jsonConfig.startsWith('"') && jsonConfig.endsWith('"')) ||
         (jsonConfig.startsWith("'") && jsonConfig.endsWith("'"))) {
       jsonConfig = jsonConfig.slice(1, -1);
     }
-    // Unescape any escaped quotes from Railway
     jsonConfig = jsonConfig.replace(/\\"/g, '"');
 
     try {
@@ -337,16 +348,15 @@ function parseOperatorConfig(): OperatorConfig[] {
       log.error({
         error: e.message,
         rawLength: jsonConfig.length,
-        rawStart: jsonConfig.substring(0, 120),
-        rawEnd: jsonConfig.substring(jsonConfig.length - 60),
+        rawFirst50: jsonConfig.substring(0, 50),
       }, 'Failed to parse MONITOR_CONFIG JSON');
     }
   }
 
   // Method 2: Individual env vars per operator
-  // MONITOR_OPS=VillarrealCrypto:binance,MisterShops:binance,ProcorpCrypto:okx,...
-  // MONITOR_VILLARREALCRYPTO_KEY=xxx
-  // MONITOR_VILLARREALCRYPTO_SECRET=xxx
+  // MONITOR_OPS=VillarrealCrypto:binance,MisterShops:binance,ProcorpCrypto:okx,ProcorpCrypto:bybit,MisterOs:bybit
+  // For each entry, tries: MONITOR_{NAME}_{EXCHANGE}_KEY first, then MONITOR_{NAME}_KEY
+  // This handles operators with same name on different exchanges (e.g. ProcorpCrypto on OKX + Bybit)
   const opsList = process.env.MONITOR_OPS;
   if (opsList) {
     const operators: OperatorConfig[] = [];
@@ -356,14 +366,16 @@ function parseOperatorConfig(): OperatorConfig[] {
       const [nickname, exchange] = entry.split(':');
       if (!nickname || !exchange) continue;
 
-      // Normalize key name: strip special chars, uppercase
       const keyName = nickname.replace(/[-_\s]/g, '').toUpperCase();
-      const apiKey = process.env[`MONITOR_${keyName}_KEY`] || '';
-      const apiSecret = process.env[`MONITOR_${keyName}_SECRET`] || '';
-      const passphrase = process.env[`MONITOR_${keyName}_PASSPHRASE`];
+      const exchUp = exchange.toUpperCase();
+
+      // Try exchange-specific key first (for duplicates like ProcorpCrypto on OKX + Bybit)
+      const apiKey = process.env[`MONITOR_${keyName}_${exchUp}_KEY`] || process.env[`MONITOR_${keyName}_KEY`] || '';
+      const apiSecret = process.env[`MONITOR_${keyName}_${exchUp}_SECRET`] || process.env[`MONITOR_${keyName}_SECRET`] || '';
+      const passphrase = process.env[`MONITOR_${keyName}_${exchUp}_PASSPHRASE`] || process.env[`MONITOR_${keyName}_PASSPHRASE`];
 
       if (!apiKey || !apiSecret) {
-        log.warn(`Missing API keys for ${nickname} (MONITOR_${keyName}_KEY/SECRET)`);
+        log.warn(`Missing API keys for ${nickname}:${exchange} (tried MONITOR_${keyName}_${exchUp}_KEY and MONITOR_${keyName}_KEY)`);
         continue;
       }
 
