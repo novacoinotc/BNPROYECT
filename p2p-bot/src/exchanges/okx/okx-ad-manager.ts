@@ -120,10 +120,13 @@ export class OkxAdManager {
           const balance = balances.find(b => b.ccy === 'USDT');
           if (balance) {
             const available = parseFloat(balance.availBal || '0');
-            if (available > 0) {
+            if (available > 10) {
+              // Use 99% of available to leave buffer for fees/rounding
+              const safeAmount = Math.floor(available * 0.99 * 100) / 100;
+              log.info(`OKX: Funding balance=${available}, using safeAmount=${safeAmount} for retry`);
               const updateParams: Record<string, any> = {
                 unitPrice: priceStr,
-                cryptoAmount: available.toFixed(2),
+                availableAmount: safeAmount.toFixed(2),
               };
               if (adType === 'floating_market') {
                 updateParams.type = 'limit';
