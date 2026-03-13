@@ -54,6 +54,7 @@ export class OkxPositioning extends EventEmitter {
   private currentMode = 'smart';
   private followTarget: string | null = null;
   private undercutCents = 1;
+  private matchPrice = false;
   private spotPriceCeiling: number | null = null; // For BUY ads
   private spotPriceFloor: number | null = null;   // For SELL ads
 
@@ -111,6 +112,7 @@ export class OkxPositioning extends EventEmitter {
       this.currentMode = config.positioningMode || 'smart';
       this.followTarget = config.followTargetNickName || null;
       this.undercutCents = config.undercutCents || 1;
+      this.matchPrice = config.matchPrice ?? false;
 
       // Load spot price limits from env
       const floorEnv = process.env.OKX_PRICE_FLOOR;
@@ -297,6 +299,7 @@ export class OkxPositioning extends EventEmitter {
     // Update config each cycle
     engine.updateConfig({
       undercutCents: this.undercutCents,
+      matchPrice: this.matchPrice,
       minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
       maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
     });
@@ -312,7 +315,7 @@ export class OkxPositioning extends EventEmitter {
       engine = new OkxFollowEngine(ad.side, {
         targetNickName: this.followTarget || '',
         undercutCents: this.undercutCents,
-        matchPrice: false,
+        matchPrice: this.matchPrice,
         minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
         maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
       });
@@ -322,6 +325,7 @@ export class OkxPositioning extends EventEmitter {
     engine.updateConfig({
       targetNickName: this.followTarget || '',
       undercutCents: this.undercutCents,
+      matchPrice: this.matchPrice,
       minPrice: ad.side === 'sell' ? this.spotPriceFloor : undefined,
       maxPrice: ad.side === 'buy' ? this.spotPriceCeiling : undefined,
     });
