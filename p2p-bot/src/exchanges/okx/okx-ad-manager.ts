@@ -160,16 +160,18 @@ export class OkxAdManager {
         const balanceMatch = errMsg.match(/balance is ([\d,]+\.?\d*)/i);
         if (balanceMatch) {
           const availableBalance = parseFloat(balanceMatch[1].replace(/,/g, ''));
-          // Use 90% of available balance to leave room for locked orders + fees
-          const reducedAmount = Math.floor(availableBalance * 0.90 * 100) / 100;
-          log.warn(`OKX: Insufficient balance (${availableBalance} USDT) — retrying with totalAmount=${reducedAmount}`);
+          // Use 85% of available balance to leave room for locked orders + fees
+          const reducedAmount = Math.floor(availableBalance * 0.85 * 100) / 100;
+          const maxFiat = Math.max(1000, Math.floor(reducedAmount * newPrice));
+          log.warn(`OKX: Insufficient balance (${availableBalance} USDT) — retrying with amount=${reducedAmount}, maxOrderLimit=${maxFiat}`);
 
+          // Try with both totalAmount AND availableAmount to cover OKX's internal logic
           const retryParams: Record<string, any> = {
-            ...updateParams,
+            unitPrice: priceStr,
             totalAmount: reducedAmount.toFixed(2),
+            availableAmount: reducedAmount.toFixed(2),
+            maxOrderLimit: maxFiat.toFixed(2),
           };
-          // Recalculate maxOrderLimit with reduced amount
-          retryParams.maxOrderLimit = Math.max(1000, Math.floor(reducedAmount * newPrice)).toFixed(2);
 
           try {
             const result = await this.client.updateAd(adId, retryParams);
