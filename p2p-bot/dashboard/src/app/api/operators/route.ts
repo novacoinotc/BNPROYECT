@@ -9,6 +9,7 @@ const pool = new Pool({
 
 // GET /api/operators?date=2026-03-09&range=7
 // Returns operator daily summaries
+// NOTE: Operator data is global — all users see all operators
 export async function GET(request: NextRequest) {
   try {
     const context = await getMerchantContext();
@@ -22,20 +23,14 @@ export async function GET(request: NextRequest) {
     const nickname = searchParams.get('nickname') || undefined;
     const view = searchParams.get('view') || 'daily'; // 'daily' | 'current'
 
-    const merchantId = context.merchantId;
-
     // Current status view
     if (view === 'current') {
-      const merchantFilter = merchantId ? `AND "merchantId" = $1` : '';
-      const params = merchantId ? [merchantId] : [];
-
       const result = await pool.query(
         `SELECT DISTINCT ON (nickname)
           nickname, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
         FROM "OperatorSnapshot"
-        WHERE "checkedAt" > NOW() - INTERVAL '1 hour' ${merchantFilter}
-        ORDER BY nickname, "checkedAt" DESC`,
-        params
+        WHERE "checkedAt" > NOW() - INTERVAL '1 hour'
+        ORDER BY nickname, "checkedAt" DESC`
       );
 
       return NextResponse.json({
@@ -63,10 +58,6 @@ export async function GET(request: NextRequest) {
     if (nickname) {
       params.push(nickname);
       conditions.push(`nickname = $${params.length}`);
-    }
-    if (merchantId) {
-      params.push(merchantId);
-      conditions.push(`"merchantId" = $${params.length}`);
     }
 
     const result = await pool.query(
