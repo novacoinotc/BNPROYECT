@@ -41,7 +41,8 @@ export async function GET(request: NextRequest) {
           COALESCE(SUM(o."totalPrice") FILTER (WHERE o.status = 'COMPLETED'), 0)::numeric as "totalVolume"
         FROM "Order" o
         JOIN "Merchant" m ON o."merchantId" = m.id
-        WHERE o."createdAt"::date >= $1 AND o."createdAt"::date <= $2
+        WHERE COALESCE(o."binanceCreateTime", o."createdAt")::date >= $1
+          AND COALESCE(o."binanceCreateTime", o."createdAt")::date <= $2
           AND m."binanceNickname" IS NOT NULL
         GROUP BY m."binanceNickname"
         ORDER BY "totalVolume" DESC`,
