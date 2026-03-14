@@ -826,6 +826,30 @@ export class BybitAutoRelease extends EventEmitter {
 
     pending.attempts++;
 
+    // CRITICAL: Re-verify order is still BUYER_PAYED before releasing
+    // Prevents race condition where buyer cancels between verification and release
+    try {
+      const freshDetail = await this.bybitClient.getOrderDetail(orderNumber);
+      if (!freshDetail || freshDetail.status !== 20) {
+        const currentStatus = freshDetail?.status ?? 'unknown';
+        log.error({
+          orderId: orderNumber,
+          expectedStatus: 20,
+          actualStatus: currentStatus,
+        }, 'Bybit: ORDER NO LONGER BUYER_PAYED — aborting release (race condition prevented)');
+        this.emitRelease('manual_required', orderNumber, `Order status changed to ${currentStatus} before release`);
+        this.pendingReleases.delete(orderNumber);
+        this.processingOrders.delete(orderNumber);
+        return;
+      }
+    } catch (statusError: any) {
+      log.error({ orderId: orderNumber, error: statusError.message }, 'Bybit: Failed to verify order status before release — aborting for safety');
+      this.emitRelease('manual_required', orderNumber, 'Could not verify order status before release');
+      this.pendingReleases.delete(orderNumber);
+      this.processingOrders.delete(orderNumber);
+      return;
+    }
+
     log.info({
       orderId: orderNumber,
       amount: pending.order.totalPrice,

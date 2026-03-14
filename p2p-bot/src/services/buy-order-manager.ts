@@ -791,7 +791,7 @@ export class BuyOrderManager extends EventEmitter {
 
       // Smart scan for bank name: check all fields for known bank names
       if (!bankName) {
-        const knownBanks = ['bbva', 'banamex', 'santander', 'banorte', 'hsbc', 'scotiabank', 'azteca', 'banco azteca', 'inbursa', 'banregio', 'bajio', 'banbajio', 'afirme', 'multiva', 'mifel', 'monex', 'invex', 'interacciones', 'compartamos', 'bancoppel', 'famsa', 'spin', 'nu', 'hey banco', 'klar', 'stori', 'rappi', 'mercadopago', 'oxxo'];
+        const knownBanks = ['bbva', 'banamex', 'santander', 'banorte', 'hsbc', 'scotiabank', 'azteca', 'banco azteca', 'inbursa', 'banregio', 'bajio', 'banbajio', 'afirme', 'multiva', 'mifel', 'monex', 'invex', 'interacciones', 'compartamos', 'bancoppel', 'famsa', 'spin', 'nu', 'hey banco', 'klar', 'stori', 'rappi', 'mercadopago', 'mercado pago', 'oxxo', 'albo', 'fondeadora', 'cuenca'];
         for (const { value } of allFieldValues) {
           if (knownBanks.some(bank => value.toLowerCase().includes(bank))) {
             bankName = value;
@@ -816,6 +816,32 @@ export class BuyOrderManager extends EventEmitter {
       let speiCode: string | null = null;
       if (beneficiaryAccount && beneficiaryAccount.length === 16) {
         speiCode = this.resolveSpeiCodeForCard(bankName, beneficiaryAccount);
+
+        // STP (90646) does not issue debit cards — if we resolved to STP,
+        // scan ALL field values for fintech bank names (Albo, MercadoPago, etc.)
+        // that sellers mislabel as "STP" payment method
+        if (speiCode === '90646') {
+          const fintechNames: Record<string, string> = {
+            'albo': '90721', 'mercado pago': '90722', 'mercadopago': '90722',
+            'fondeadora': '90699', 'cuenca': '90723', 'klar': '90661',
+            'nu': '90638', 'nubank': '90638', 'spin': '90728', 'stori': '90706',
+            'rappi': '90706', 'cashi': '90715',
+          };
+          for (const { value } of allFieldValues) {
+            const lower = value.toLowerCase().trim();
+            for (const [name, code] of Object.entries(fintechNames)) {
+              if (lower.includes(name)) {
+                logger.info({ orderNumber, foundName: name, oldCode: '90646', newCode: code, fieldValue: value },
+                  '[AUTO-BUY] STP card → found real fintech in field values');
+                speiCode = code;
+                bankName = value;
+                break;
+              }
+            }
+            if (speiCode !== '90646') break;
+          }
+        }
+
         if (!speiCode) {
           logger.warn({
             orderNumber,
@@ -985,7 +1011,23 @@ export class BuyOrderManager extends EventEmitter {
     // First try to convert the bank name we already have to a SPEI code
     if (bankName) {
       const code = this.bankNameToSpeiCode(bankName);
-      if (code) return code;
+      if (code) {
+        // STP (90646) does NOT issue debit cards — if bankName resolves to STP,
+        // the card is actually from a fintech (Albo, MercadoPago, Fondeadora, etc.)
+        // that used STP as backend. Try BIN lookup for the real issuer first.
+        if (code === '90646') {
+          const binCode = this.getBankFromBIN(cardNumber);
+          if (binCode && binCode !== '90646') {
+            logger.info({ bankName, binCode, cardPrefix: cardNumber.slice(0, 6) },
+              '[AUTO-BUY] STP bankName overridden by BIN lookup — STP does not issue cards');
+            return binCode;
+          }
+          // BIN didn't match a specific bank either — flag as uncertain
+          logger.warn({ bankName, cardPrefix: cardNumber.slice(0, 6) },
+            '[AUTO-BUY] Card resolved to STP but STP does not issue cards — dispatch may fail');
+        }
+        return code;
+      }
     }
     // Fallback: identify bank from BIN
     return this.getBankFromBIN(cardNumber);

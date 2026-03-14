@@ -8,6 +8,7 @@ import axios, { AxiosInstance } from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import JSONBigInt from 'json-bigint';
 import { logger } from '../utils/logger.js';
+import { saveOperatorSnapshot } from './database-pg.js';
 
 // Configure json-bigint to convert big integers to strings
 // This prevents precision loss for advNo values like 13844165819849826304
@@ -243,6 +244,21 @@ export async function updateAdPrice(advNo: string, price: number, retryCount: nu
       binanceCode,
       binanceMsg,
     }, `❌ [BINANCE-API] Error updating ad: [${binanceCode}] ${binanceMsg || error.message}`);
+
+    // Error 83230: "taking a break" — operator paused P2P trading in Binance app.
+    // Save an offline snapshot so the operator monitor dashboard reflects the real state.
+    if (binanceCode === 83230 || String(binanceCode) === '83230') {
+      const nickname = process.env.BINANCE_NICKNAME || process.env.BOT_NICKNAME || process.env.RAILWAY_SERVICE_NAME;
+      if (nickname) {
+        saveOperatorSnapshot({
+          nickname,
+          isAdOnline: false,
+          surplusAmount: null,
+          adPrice: null,
+          lowFunds: false,
+        }).catch(() => { /* non-critical */ });
+      }
+    }
 
     return {
       success: false,

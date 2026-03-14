@@ -7,7 +7,7 @@
 import { EventEmitter } from 'events';
 import { BybitClient, getBybitClient } from './bybit-client.js';
 import { logger } from '../../utils/logger.js';
-import { saveOrder, getStaleOrders } from '../../services/database-pg.js';
+import { saveOrder, getStaleOrders, getVerificationTimeline } from '../../services/database-pg.js';
 import {
   BybitOrderData,
   BybitOrderEvent,
@@ -318,12 +318,32 @@ export class BybitOrderManager extends EventEmitter {
         break;
 
       case 'CANCELLED':
-      case 'CANCELLED_BY_SYSTEM':
-        this.activeOrders.delete(newOrder.orderNumber);
-        this.pendingMatches.delete(newOrder.orderNumber);
-        this.emit('order', { type: 'cancelled', order: newOrder } as BybitOrderEvent);
-        log.info({ orderId: newOrder.orderNumber }, 'Bybit order cancelled');
+      case 'CANCELLED_BY_SYSTEM': {
+        // Check if this order was already released — Bybit race condition:
+        // buyer can cancel almost simultaneously with release, resulting in
+        // status=CANCELLED even though crypto was already released successfully.
+        // In that case, treat as COMPLETED instead of CANCELLED.
+        let wasReleased = false;
+        try {
+          const timeline = await getVerificationTimeline(newOrder.orderNumber);
+          wasReleased = timeline.some(step => step.status === 'RELEASED');
+        } catch { /* DB error — proceed with cancel */ }
+
+        if (wasReleased) {
+          log.warn({ orderId: newOrder.orderNumber }, 'Bybit: CANCELLED after RELEASED — ignoring cancel, treating as COMPLETED (Bybit race condition)');
+          this.activeOrders.delete(newOrder.orderNumber);
+          this.pendingMatches.delete(newOrder.orderNumber);
+          newOrder.orderStatus = 'COMPLETED';
+          try { await saveOrder(newOrder); } catch { /* continue */ }
+          this.emit('order', { type: 'released', order: newOrder } as BybitOrderEvent);
+        } else {
+          this.activeOrders.delete(newOrder.orderNumber);
+          this.pendingMatches.delete(newOrder.orderNumber);
+          this.emit('order', { type: 'cancelled', order: newOrder } as BybitOrderEvent);
+          log.info({ orderId: newOrder.orderNumber }, 'Bybit order cancelled');
+        }
         break;
+      }
     }
   }
 

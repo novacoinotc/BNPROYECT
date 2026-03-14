@@ -20,7 +20,6 @@ export interface OkxSmartConfig {
   minPrice?: number | null;      // Price floor for SELL ads
   maxPrice?: number | null;      // Price ceiling for BUY ads
   myNickName?: string;
-  minUserGrade: number;          // 1=common, 2=certified, 3=diamond
   ignoredAdvertisers?: string[];
 }
 
@@ -37,7 +36,6 @@ const DEFAULT_CONFIG: OkxSmartConfig = {
   minSurplusAmount: 100,
   undercutCents: 1,
   matchPrice: false,
-  minUserGrade: 2,
 };
 
 // ==================== SMART ENGINE ====================
@@ -64,11 +62,7 @@ export class OkxSmartEngine {
     const creator = ad.creator;
     if (!creator) return false;
 
-    // Filter 1: Minimum user grade
-    const grade = creator.userGrade || mapCreatorTypeToGrade(creator.type);
-    if (grade < this.config.minUserGrade) return false;
-
-    // Filter 2: Minimum completed orders
+    // Filter 1: Minimum completed orders
     if (creator.completedOrders < this.config.minMonthOrderCount) return false;
 
     // Filter 3: Minimum fiat value available
