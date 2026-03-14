@@ -13,7 +13,8 @@ import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
 import { createTOTPService, TOTPService } from './services/totp-service.js';
-import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from './services/database-pg.js';
+import { testConnection, disconnect, isPositioningEnabled, getBotConfig, saveOperatorSnapshot } from './services/database-pg.js';
+import { fetchMerchantAds } from './services/binance-api.js';
 import { PositioningOrchestrator, createPositioningOrchestrator, PositioningMode } from './services/positioning-orchestrator.js';
 import { SellAdManager, createSellAdManager, BuyAdManager, createBuyAdManager } from './services/positioning/index.js';
 import { BuyOrderManager, createBuyOrderManager } from './services/buy-order-manager.js';
@@ -364,6 +365,27 @@ async function checkPositioningStatus(): Promise<void> {
           buyAdManager = null;
         }
       }
+
+      // Always save operator snapshot for dashboard (even if positioning is off)
+      // This detects break mode: Binance hides ads when operator activates "break"
+      const nickname = process.env.BINANCE_NICKNAME || process.env.BOT_NICKNAME || process.env.RAILWAY_SERVICE_NAME;
+      if (nickname) {
+        try {
+          const myAds = await fetchMerchantAds();
+          const hasOnlineAds = myAds.length > 0;
+          const sellAd = myAds.find(a => a.tradeType === 'SELL');
+          await saveOperatorSnapshot({
+            nickname,
+            isAdOnline: hasOnlineAds,
+            surplusAmount: null,
+            adPrice: sellAd ? sellAd.currentPrice : null,
+            lowFunds: false,
+          });
+        } catch {
+          // Non-critical — don't break positioning check
+        }
+      }
+
       return;
     }
 
