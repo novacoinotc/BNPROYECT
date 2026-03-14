@@ -86,9 +86,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const nickExpr = nicknameCaseExpr('nickname');
+
     // Current status view
     if (view === 'current') {
-      const nickExpr = nicknameCaseExpr('nickname');
       const result = await pool.query(
         `SELECT DISTINCT ON (norm_nick)
           ${nickExpr} as norm_nick, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
@@ -137,10 +138,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Calculate hours using actual interval per operator/day:
-    // interval_minutes = time_span / (total_snapshots - 1)
-    // hoursOnline = online_snapshots * interval_minutes / 60
-    const nickExpr = nicknameCaseExpr('nickname');
+    // Calculate hours based on snapshot ratio within work hours (9am-10pm CDMX).
+    // Each snapshot represents ~1 minute of state. We count online snapshots
+    // during work hours and scale by the actual monitoring span within work hours.
+    // This prevents >100% coverage from overnight snapshots.
+    const workStart = 9;  // 9 AM CDMX
+    const workEnd = 22;   // 10 PM CDMX
     const result = await pool.query(
       `SELECT
         ${nickExpr} as nickname,
@@ -148,20 +151,41 @@ export async function GET(request: NextRequest) {
         COUNT(*)::int as "totalSnapshots",
         COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
         COUNT(*) FILTER (WHERE "lowFunds" = true)::int as "lowFundsSnapshots",
-        ROUND((
-          COUNT(*) FILTER (WHERE "isAdOnline" = true) *
-          CASE WHEN COUNT(*) > 1
-            THEN EXTRACT(EPOCH FROM (MAX("checkedAt") - MIN("checkedAt"))) / (COUNT(*) - 1) / 3600.0
-            ELSE 0
-          END
-        )::numeric, 1) as "hoursOnline",
-        ROUND((
-          COUNT(*) FILTER (WHERE "lowFunds" = true) *
-          CASE WHEN COUNT(*) > 1
-            THEN EXTRACT(EPOCH FROM (MAX("checkedAt") - MIN("checkedAt"))) / (COUNT(*) - 1) / 3600.0
-            ELSE 0
-          END
-        )::numeric, 1) as "hoursLowFunds",
+        -- Only count snapshots within work hours for time calculations
+        COUNT(*) FILTER (
+          WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+        )::int as "workSnapshots",
+        COUNT(*) FILTER (
+          WHERE "isAdOnline" = true
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+        )::int as "workOnlineSnapshots",
+        COUNT(*) FILTER (
+          WHERE "lowFunds" = true
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+        )::int as "workLowFundsSnapshots",
+        -- Hours = (online work snapshots / total work snapshots) × work hours in that period
+        -- Work hours in period = span of work snapshots (capped at 13h)
+        CASE WHEN COUNT(*) FILTER (
+          WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+        ) > 1
+        THEN LEAST(
+          EXTRACT(EPOCH FROM (
+            MAX("checkedAt") FILTER (
+              WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+                AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            ) -
+            MIN("checkedAt") FILTER (
+              WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
+                AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            )
+          )) / 3600.0,
+          13.0
+        )
+        ELSE 0 END as "workSpanHours",
         ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
         MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
       FROM "OperatorSnapshot"
@@ -171,6 +195,24 @@ export async function GET(request: NextRequest) {
       params
     );
 
+    // Post-process: calculate hours from work-hour snapshots
+    const processedRows = result.rows.map(row => {
+      const workSnapshots = parseInt(row.workSnapshots) || 0;
+      const workOnline = parseInt(row.workOnlineSnapshots) || 0;
+      const workLowFunds = parseInt(row.workLowFundsSnapshots) || 0;
+      const workSpan = parseFloat(row.workSpanHours) || 0;
+
+      // hoursOnline = (online work snapshots / total work snapshots) × work span
+      const hoursOnline = workSnapshots > 0
+        ? Math.round((workOnline / workSnapshots) * workSpan * 10) / 10
+        : 0;
+      const hoursLowFunds = workSnapshots > 0
+        ? Math.round((workLowFunds / workSnapshots) * workSpan * 10) / 10
+        : 0;
+
+      return { ...row, hoursOnline, hoursLowFunds };
+    });
+
     // Calculate expected work hours (9 AM to 10 PM = 13 hours)
     const workHoursPerDay = 13;
 
@@ -179,17 +221,17 @@ export async function GET(request: NextRequest) {
       workHoursPerDay,
       startDate: startDateStr,
       endDate,
-      data: result.rows.map(row => ({
+      data: processedRows.map(row => ({
         nickname: row.nickname,
         date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date),
         totalSnapshots: row.totalSnapshots,
         onlineSnapshots: row.onlineSnapshots,
         lowFundsSnapshots: row.lowFundsSnapshots,
-        hoursOnline: parseFloat(row.hoursOnline) || 0,
-        hoursLowFunds: parseFloat(row.hoursLowFunds) || 0,
+        hoursOnline: row.hoursOnline,
+        hoursLowFunds: row.hoursLowFunds,
         avgSurplus: row.avgSurplus ? parseFloat(row.avgSurplus) : null,
         minSurplus: row.minSurplus ? parseFloat(row.minSurplus) : null,
-        coveragePct: Math.round(((parseFloat(row.hoursOnline) || 0) / workHoursPerDay) * 100),
+        coveragePct: Math.min(100, Math.round((row.hoursOnline / workHoursPerDay) * 100)),
       })),
     });
   } catch (error: any) {
