@@ -7,6 +7,24 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// Normalize operator nicknames to canonical form
+// Handles cases where same operator has different nickname formats (e.g. "LadyLee" vs "Lady-lee")
+const NICKNAME_ALIASES: Record<string, string> = {
+  'LadyLee': 'Lady-lee',
+};
+
+function normalizeNickname(nick: string): string {
+  return NICKNAME_ALIASES[nick] || nick;
+}
+
+// Build SQL CASE expression to normalize nicknames in queries
+function nicknameCaseExpr(col: string = 'nickname'): string {
+  const entries = Object.entries(NICKNAME_ALIASES);
+  if (entries.length === 0) return col;
+  const whens = entries.map(([from, to]) => `WHEN ${col} = '${from}' THEN '${to}'`).join(' ');
+  return `CASE ${whens} ELSE ${col} END`;
+}
+
 // GET /api/operators?date=2026-03-09&range=7
 // Returns operator daily summaries
 // NOTE: Operator data is global — all users see all operators
@@ -70,18 +88,19 @@ export async function GET(request: NextRequest) {
 
     // Current status view
     if (view === 'current') {
+      const nickExpr = nicknameCaseExpr('nickname');
       const result = await pool.query(
-        `SELECT DISTINCT ON (nickname)
-          nickname, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
+        `SELECT DISTINCT ON (norm_nick)
+          ${nickExpr} as norm_nick, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
         FROM "OperatorSnapshot"
         WHERE "checkedAt" > NOW() - INTERVAL '1 hour'
-        ORDER BY nickname, "checkedAt" DESC`
+        ORDER BY norm_nick, "checkedAt" DESC`
       );
 
       return NextResponse.json({
         view: 'current',
         operators: result.rows.map(row => ({
-          nickname: row.nickname,
+          nickname: row.norm_nick,
           isAdOnline: row.isAdOnline,
           surplusAmount: row.surplusAmount ? parseFloat(row.surplusAmount) : null,
           adPrice: row.adPrice ? parseFloat(row.adPrice) : null,
@@ -104,16 +123,27 @@ export async function GET(request: NextRequest) {
     const params: any[] = [startDateStr, endDate];
 
     if (nickname) {
-      params.push(nickname);
-      conditions.push(`nickname = $${params.length}`);
+      // Find all raw nicknames that map to this canonical nickname
+      const rawNicks = [nickname, ...Object.entries(NICKNAME_ALIASES)
+        .filter(([, canonical]) => canonical === nickname)
+        .map(([raw]) => raw)];
+      if (rawNicks.length === 1) {
+        params.push(nickname);
+        conditions.push(`nickname = $${params.length}`);
+      } else {
+        const placeholders = rawNicks.map((_, i) => `$${params.length + i + 1}`);
+        params.push(...rawNicks);
+        conditions.push(`nickname IN (${placeholders.join(', ')})`);
+      }
     }
 
     // Calculate hours using actual interval per operator/day:
     // interval_minutes = time_span / (total_snapshots - 1)
     // hoursOnline = online_snapshots * interval_minutes / 60
+    const nickExpr = nicknameCaseExpr('nickname');
     const result = await pool.query(
       `SELECT
-        nickname,
+        ${nickExpr} as nickname,
         ("checkedAt" AT TIME ZONE '${tz}')::date as date,
         COUNT(*)::int as "totalSnapshots",
         COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
@@ -136,7 +166,7 @@ export async function GET(request: NextRequest) {
         MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
       FROM "OperatorSnapshot"
       WHERE ${conditions.join(' AND ')}
-      GROUP BY nickname, ("checkedAt" AT TIME ZONE '${tz}')::date
+      GROUP BY ${nickExpr}, ("checkedAt" AT TIME ZONE '${tz}')::date
       ORDER BY date DESC, nickname`,
       params
     );
