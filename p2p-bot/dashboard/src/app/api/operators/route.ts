@@ -25,6 +25,16 @@ function nicknameCaseExpr(col: string = 'nickname'): string {
   return `CASE ${whens} ELSE ${col} END`;
 }
 
+// Get current date in CDMX timezone
+function getTodayCDMX(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+}
+
+// Get current hour in CDMX timezone (0-23)
+function getCurrentHourCDMX(): number {
+  return parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/Mexico_City', hour: 'numeric', hour12: false }));
+}
+
 // GET /api/operators?date=2026-03-09&range=7
 // Returns operator daily summaries
 // NOTE: Operator data is global — all users see all operators
@@ -36,7 +46,8 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    // Use CDMX date by default (not UTC)
+    const date = searchParams.get('date') || getTodayCDMX();
     const range = parseInt(searchParams.get('range') || '1');
     const nickname = searchParams.get('nickname') || undefined;
     const view = searchParams.get('view') || 'daily'; // 'daily' | 'current'
@@ -139,11 +150,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate hours based on snapshot ratio within work hours (9am-10pm CDMX).
-    // Each snapshot represents ~1 minute of state. We count online snapshots
-    // during work hours and scale by the actual monitoring span within work hours.
-    // This prevents >100% coverage from overnight snapshots.
     const workStart = 9;  // 9 AM CDMX
     const workEnd = 22;   // 10 PM CDMX
+    const fullWorkDay = workEnd - workStart; // 13 hours
     const result = await pool.query(
       `SELECT
         ${nickExpr} as nickname,
@@ -166,8 +175,7 @@ export async function GET(request: NextRequest) {
             AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
             AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
         )::int as "workLowFundsSnapshots",
-        -- Hours = (online work snapshots / total work snapshots) × work hours in that period
-        -- Work hours in period = span of work snapshots (capped at 13h)
+        -- Work span = MAX - MIN of work-hour timestamps (capped at 13h)
         CASE WHEN COUNT(*) FILTER (
           WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
             AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
@@ -183,7 +191,7 @@ export async function GET(request: NextRequest) {
                 AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
             )
           )) / 3600.0,
-          13.0
+          ${fullWorkDay}.0
         )
         ELSE 0 END as "workSpanHours",
         ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
@@ -194,6 +202,10 @@ export async function GET(request: NextRequest) {
       ORDER BY date DESC, nickname`,
       params
     );
+
+    // Determine today's date in CDMX for "is today" check
+    const todayCDMX = getTodayCDMX();
+    const currentHourCDMX = getCurrentHourCDMX();
 
     // Post-process: calculate hours from work-hour snapshots
     const processedRows = result.rows.map(row => {
@@ -210,15 +222,28 @@ export async function GET(request: NextRequest) {
         ? Math.round((workLowFunds / workSnapshots) * workSpan * 10) / 10
         : 0;
 
-      return { ...row, hoursOnline, hoursLowFunds };
-    });
+      // For today: expected hours = elapsed work hours (not full 13h)
+      // For past days: expected hours = full work day (13h)
+      const rowDate = row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date);
+      const isToday = rowDate === todayCDMX;
+      let expectedHours: number;
+      if (isToday) {
+        // Elapsed work hours = current hour - work start (capped at 0 to 13)
+        expectedHours = Math.max(0, Math.min(currentHourCDMX - workStart, fullWorkDay));
+        // Use at least workSpan (actual monitoring span) to avoid division issues
+        if (expectedHours < 1) expectedHours = Math.max(workSpan, 1);
+      } else {
+        expectedHours = fullWorkDay;
+      }
 
-    // Calculate expected work hours (9 AM to 10 PM = 13 hours)
-    const workHoursPerDay = 13;
+      return { ...row, hoursOnline, hoursLowFunds, workSpan, expectedHours };
+    });
 
     return NextResponse.json({
       view: 'daily',
-      workHoursPerDay,
+      workHoursPerDay: fullWorkDay,
+      todayCDMX,
+      currentHourCDMX,
       startDate: startDateStr,
       endDate,
       data: processedRows.map(row => ({
@@ -229,9 +254,14 @@ export async function GET(request: NextRequest) {
         lowFundsSnapshots: row.lowFundsSnapshots,
         hoursOnline: row.hoursOnline,
         hoursLowFunds: row.hoursLowFunds,
+        workSpanHours: Math.round(row.workSpan * 10) / 10,
+        expectedHours: row.expectedHours,
         avgSurplus: row.avgSurplus ? parseFloat(row.avgSurplus) : null,
         minSurplus: row.minSurplus ? parseFloat(row.minSurplus) : null,
-        coveragePct: Math.min(100, Math.round((row.hoursOnline / workHoursPerDay) * 100)),
+        // Coverage = hoursOnline / expected hours for that day
+        coveragePct: row.expectedHours > 0
+          ? Math.min(100, Math.round((row.hoursOnline / row.expectedHours) * 100))
+          : 0,
       })),
     });
   } catch (error: any) {

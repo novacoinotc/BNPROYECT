@@ -19,6 +19,8 @@ interface OperatorDaily {
   lowFundsSnapshots: number;
   hoursOnline: number;
   hoursLowFunds: number;
+  workSpanHours: number;
+  expectedHours: number;
   avgSurplus: number | null;
   minSurplus: number | null;
   coveragePct: number;
@@ -104,6 +106,7 @@ export default function OperatorsPage() {
     const days = dailyData.filter(d => d.nickname === nick);
     const totalHoursOnline = days.reduce((s, d) => s + d.hoursOnline, 0);
     const totalHoursLowFunds = days.reduce((s, d) => s + d.hoursLowFunds, 0);
+    const totalExpectedHours = days.reduce((s, d) => s + d.expectedHours, 0);
     const avgCoverage = days.length > 0
       ? Math.round(days.reduce((s, d) => s + d.coveragePct, 0) / days.length)
       : 0;
@@ -119,6 +122,7 @@ export default function OperatorsPage() {
       daysActive: days.length,
       totalHoursOnline,
       totalHoursLowFunds,
+      totalExpectedHours,
       avgCoverage,
       avgSurplus,
       bestDay,
@@ -265,8 +269,7 @@ export default function OperatorsPage() {
           </div>
           <div className="space-y-3">
             {sorted.map((summary, idx) => {
-              const workHoursTotal = summary.daysActive * 13;
-              const hoursDisconnected = Math.max(0, workHoursTotal - summary.totalHoursOnline);
+              const hoursDisconnected = Math.max(0, summary.totalExpectedHours - summary.totalHoursOnline);
               return (
                 <div
                   key={summary.nickname}
