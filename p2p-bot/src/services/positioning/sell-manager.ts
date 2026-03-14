@@ -8,7 +8,7 @@ import axios from 'axios';
 import { logger } from '../../utils/logger.js';
 import { FollowEngine, FollowConfig } from './follow-engine.js';
 import { SmartEngine, SmartConfig } from './smart-engine.js';
-import { getBotConfig, getPositioningConfigForAd, BotConfig } from '../database-pg.js';
+import { getBotConfig, getPositioningConfigForAd, BotConfig, saveOperatorSnapshot } from '../database-pg.js';
 import { fetchSellAds as fetchSellAdsApi, updateAdPrice as updateAdPriceApi, AdInfo } from '../binance-api.js';
 import { getBinanceClient } from '../binance-client.js';
 
@@ -201,6 +201,21 @@ export class SellAdManager extends EventEmitter {
   private async runCycle(): Promise<void> {
     await this.loadConfig();
     await this.discoverAds();
+
+    // No ads found → operator may be on break or ads offline.
+    // Save offline snapshot so the dashboard ranking reflects the real state.
+    if (this.ads.size === 0) {
+      const nickname = process.env.BINANCE_NICKNAME || process.env.BOT_NICKNAME || process.env.RAILWAY_SERVICE_NAME;
+      if (nickname) {
+        saveOperatorSnapshot({
+          nickname,
+          isAdOnline: false,
+          surplusAmount: null,
+          adPrice: null,
+          lowFunds: false,
+        }).catch(() => { /* non-critical */ });
+      }
+    }
 
     for (const [advNo, ad] of this.ads) {
       try {
