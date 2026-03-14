@@ -219,10 +219,10 @@ export class BybitPositioning extends EventEmitter {
 
     if (targetPrice === null) return;
 
-    // SPOT PRICE PROTECTION (Bitso) — only for smart mode, MXN fiat
+    // SPOT PRICE PROTECTION (Bitso) — all modes, MXN fiat
     // SELL: never sell below Bitso spot price
     // BUY: never buy above Bitso spot price (+ optional margin)
-    if (assetConfig.mode === 'smart' && ad.currencyId.toUpperCase() === 'MXN') {
+    if (ad.currencyId.toUpperCase() === 'MXN') {
       const spotPrice = await getSpotPriceMxn(ad.tokenId);
       if (spotPrice !== null) {
         if (ad.side === 'sell') {

@@ -253,10 +253,10 @@ export class OkxPositioning extends EventEmitter {
       return;
     }
 
-    // SPOT PRICE PROTECTION (Bitso) — only for smart mode, MXN fiat
+    // SPOT PRICE PROTECTION (Bitso) — all modes, MXN fiat
     // SELL: never sell below Bitso spot price
     // BUY: never buy above Bitso spot price (+ optional margin)
-    if (adConfig.mode === 'smart' && ad.fiat.toUpperCase() === 'MXN') {
+    if (ad.fiat.toUpperCase() === 'MXN') {
       const spotPrice = await getSpotPriceMxn(ad.crypto);
       if (spotPrice !== null) {
         if (ad.side === 'sell') {
