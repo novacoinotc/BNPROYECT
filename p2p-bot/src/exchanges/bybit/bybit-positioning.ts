@@ -208,13 +208,19 @@ export class BybitPositioning extends EventEmitter {
         ad.mode = 'smart';
         const smartEngine = this.getSmartEngine(ad, assetConfig);
         const smartResult = await smartEngine.getPrice(ad.tokenId, ad.currencyId);
-        if (smartResult) targetPrice = smartResult.targetPrice;
+        if (smartResult) {
+          targetPrice = smartResult.targetPrice;
+          log.info(`Bybit smart (fallback): targetPrice=${targetPrice}, qualified=${smartResult.qualifiedCount}, bestCompetitor=${smartResult.bestCompetitorNick}@${smartResult.bestCompetitorPrice}`);
+        }
       }
     } else {
       ad.mode = 'smart';
       const engine = this.getSmartEngine(ad, assetConfig);
       const result = await engine.getPrice(ad.tokenId, ad.currencyId);
-      if (result) targetPrice = result.targetPrice;
+      if (result) {
+        targetPrice = result.targetPrice;
+        log.info(`Bybit smart: targetPrice=${targetPrice}, qualified=${result.qualifiedCount}, bestCompetitor=${result.bestCompetitorNick}@${result.bestCompetitorPrice}`);
+      }
     }
 
     if (targetPrice === null) return;

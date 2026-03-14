@@ -29,6 +29,7 @@ export interface BybitSmartResult {
   success: boolean;
   targetPrice: number;
   bestCompetitorPrice: number;
+  bestCompetitorNick: string;
   qualifiedCount: number;
 }
 
@@ -122,10 +123,22 @@ export class BybitSmartEngine {
       return this.passesFilters(ad);
     });
 
-    log.debug({ total: ads.length, qualified: qualified.length }, 'Bybit Smart: Filter results');
+    // Log ALL ads with filter results for debugging
+    const adSummary = ads.map((ad) => {
+      const nick = ad.nickName;
+      const price = parseFloat(ad.price);
+      const grade = mapAuthTagToGrade(ad.authTag || []);
+      const orders = parseInt(ad.recentOrderNum) || 0;
+      const avail = parseFloat(ad.lastQuantity);
+      const fiatVal = price * avail;
+      const isSelf = this.config.myNickName && nick === this.config.myNickName;
+      const isQualified = qualified.some(q => q.nickName === nick && q.price === ad.price);
+      return `${nick}@${price.toFixed(2)}(g=${grade},o=${orders},f=${Math.round(fiatVal)})${isSelf ? '[SELF]' : isQualified ? '[OK]' : '[X]'}`;
+    });
+    log.info({ total: ads.length, qualified: qualified.length, ads: adSummary.slice(0, 20).join(' | ') }, 'Bybit Smart: All ads');
 
     if (qualified.length === 0) {
-      log.debug('Bybit Smart: 0 qualified competitors — keeping current price');
+      log.info('Bybit Smart: 0 qualified competitors — keeping current price');
       return null;
     }
 
@@ -137,10 +150,16 @@ export class BybitSmartEngine {
     });
 
     const bestPrice = parseFloat(qualified[0].price);
+    const bestNick = qualified[0].nickName || '?';
+
+    // Log top 5 qualified competitors
+    const top5 = qualified.slice(0, 5).map(q => `${q.nickName}@${parseFloat(q.price).toFixed(2)}`);
+    log.info({ bestNick, bestPrice: bestPrice.toFixed(2), top5 }, 'Bybit Smart: Top qualified competitors');
 
     let ourPrice: number;
     if (this.config.matchPrice) {
       ourPrice = bestPrice;
+      log.info(`Bybit Smart: matchPrice=true → matching ${bestNick}@${bestPrice.toFixed(2)}`);
     } else {
       const undercutValue = this.config.undercutCents / 100;
       // SELL → go LOWER to attract buyers
@@ -148,6 +167,7 @@ export class BybitSmartEngine {
       ourPrice = this.adSide === 'sell'
         ? bestPrice - undercutValue
         : bestPrice + undercutValue;
+      log.info(`Bybit Smart: undercut ${bestNick}@${bestPrice.toFixed(2)} by ${this.config.undercutCents}¢ → ${ourPrice.toFixed(2)}`);
     }
 
     // Apply price floor for SELL ads
@@ -157,11 +177,12 @@ export class BybitSmartEngine {
       const aboveFloor = qualified.filter(ad => parseFloat(ad.price) >= this.config.minPrice!);
       if (aboveFloor.length > 0) {
         ourPrice = parseFloat(aboveFloor[0].price);
-        log.info({ price: ourPrice.toFixed(2) }, 'Bybit Smart: Matching competitor above floor');
+        log.info({ price: ourPrice.toFixed(2), nick: aboveFloor[0].nickName }, 'Bybit Smart: Matching competitor above floor');
         return {
           success: true,
           targetPrice: Math.round(ourPrice * 100) / 100,
           bestCompetitorPrice: parseFloat(aboveFloor[0].price),
+          bestCompetitorNick: aboveFloor[0].nickName || '?',
           qualifiedCount: aboveFloor.length,
         };
       } else {
@@ -180,6 +201,7 @@ export class BybitSmartEngine {
       success: true,
       targetPrice: Math.round(ourPrice * 100) / 100,
       bestCompetitorPrice: bestPrice,
+      bestCompetitorNick: bestNick,
       qualifiedCount: qualified.length,
     };
   }

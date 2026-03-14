@@ -155,6 +155,7 @@ export class OkxSmartEngine {
     let ourPrice: number;
     if (this.config.matchPrice) {
       ourPrice = bestPrice;
+      log.info(`OKX Smart: matchPrice=true → matching ${bestNick}@${bestPrice.toFixed(2)}`);
     } else {
       const undercutValue = this.config.undercutCents / 100;
       // SELL → go LOWER to attract buyers
@@ -162,6 +163,7 @@ export class OkxSmartEngine {
       ourPrice = this.adType === 'sell'
         ? bestPrice - undercutValue
         : bestPrice + undercutValue;
+      log.info(`OKX Smart: undercut ${bestNick}@${bestPrice.toFixed(2)} by ${this.config.undercutCents}¢ → ${ourPrice.toFixed(2)}`);
     }
 
     // Apply price floor for SELL ads

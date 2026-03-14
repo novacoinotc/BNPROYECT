@@ -2309,8 +2309,8 @@ export function getPositioningConfigForAd(
       mode: assetConfig.mode || tradeTypeMode || 'smart',
       // Per-asset follow target, fallback to trade type target
       followTarget: assetConfig.followTarget || tradeTypeFollowTarget || null,
-      // Per-asset price strategy (fallback to global defaults)
-      matchPrice: assetConfig.matchPrice ?? config.matchPrice ?? false,
+      // Per-asset price strategy (explicit false default — don't inherit global matchPrice)
+      matchPrice: assetConfig.matchPrice ?? false,
       undercutCents: assetConfig.undercutCents ?? config.undercutCents ?? 1,
       minPrice: assetConfig.minPrice ?? null,  // Price floor (null = no limit)
       maxPrice: assetConfig.maxPrice ?? null,  // Price ceiling (null = no limit)

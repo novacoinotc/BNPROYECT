@@ -67,7 +67,7 @@ export default function PositioningPage() {
   const getAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY'): AssetPositioningConfig => {
     const key = `${tradeType}:${asset}`;
     const stored = positioningConfigs[key];
-    return stored || {
+    const defaults: AssetPositioningConfig = {
       enabled: true,
       mode: 'smart',
       followTarget: null,
@@ -78,6 +78,8 @@ export default function PositioningPage() {
       smartMinOrderCount: globalMinOrderCount,
       smartMinSurplus: globalMinSurplus,
     };
+    // Always merge with defaults so missing fields get proper values
+    return { ...defaults, ...stored };
   };
 
   const updateAssetConfig = (asset: string, tradeType: 'SELL' | 'BUY', updates: Partial<AssetPositioningConfig>) => {
