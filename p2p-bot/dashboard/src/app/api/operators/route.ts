@@ -214,27 +214,25 @@ export async function GET(request: NextRequest) {
       const workLowFunds = parseInt(row.workLowFundsSnapshots) || 0;
       const workSpan = parseFloat(row.workSpanHours) || 0;
 
-      // hoursOnline = (online work snapshots / total work snapshots) × work span
-      const hoursOnline = workSnapshots > 0
-        ? Math.round((workOnline / workSnapshots) * workSpan * 10) / 10
-        : 0;
-      const hoursLowFunds = workSnapshots > 0
-        ? Math.round((workLowFunds / workSnapshots) * workSpan * 10) / 10
-        : 0;
-
       // For today: expected hours = elapsed work hours (not full 13h)
       // For past days: expected hours = full work day (13h)
       const rowDate = row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date);
       const isToday = rowDate === todayCDMX;
       let expectedHours: number;
       if (isToday) {
-        // Elapsed work hours = current hour - work start (capped at 0 to 13)
         expectedHours = Math.max(0, Math.min(currentHourCDMX - workStart, fullWorkDay));
-        // Use at least workSpan (actual monitoring span) to avoid division issues
         if (expectedHours < 1) expectedHours = Math.max(workSpan, 1);
       } else {
         expectedHours = fullWorkDay;
       }
+
+      // hoursOnline = (online work snapshots / total work snapshots) × expected hours
+      const hoursOnline = workSnapshots > 0
+        ? Math.round((workOnline / workSnapshots) * expectedHours * 10) / 10
+        : 0;
+      const hoursLowFunds = workSnapshots > 0
+        ? Math.round((workLowFunds / workSnapshots) * expectedHours * 10) / 10
+        : 0;
 
       return { ...row, hoursOnline, hoursLowFunds, workSpan, expectedHours };
     });
