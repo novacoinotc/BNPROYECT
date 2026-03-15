@@ -12,6 +12,7 @@ import { createOkxOrderManager, OkxOrderManager } from './okx-order-manager.js';
 import { createOkxAutoRelease, OkxAutoRelease } from './okx-auto-release.js';
 import { createOkxPositioning, OkxPositioning } from './okx-positioning.js';
 import { createOkxAutoSwap, OkxAutoSwap } from './okx-auto-swap.js';
+import { createOkxBuyOrderManager, OkxBuyOrderManager } from './okx-buy-order-manager.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from '../../services/database-pg.js';
 
 const log = logger.child({ module: 'okx-main' });
@@ -28,6 +29,7 @@ const OKX_CONFIG = {
   enableAutoRelease: process.env.OKX_ENABLE_AUTO_RELEASE === 'true',
   enablePositioning: process.env.OKX_ENABLE_POSITIONING !== 'false',
   enableAutoSwap: process.env.OKX_ENABLE_AUTO_SWAP === 'true',
+  enableAutoBuy: process.env.OKX_ENABLE_AUTO_BUY === 'true',
   enableWebhook: process.env.OKX_ENABLE_WEBHOOK !== 'false',
 };
 
@@ -37,6 +39,7 @@ let orderManager: OkxOrderManager | null = null;
 let autoRelease: OkxAutoRelease | null = null;
 let positioning: OkxPositioning | null = null;
 let autoSwap: OkxAutoSwap | null = null;
+let buyOrderManager: OkxBuyOrderManager | null = null;
 let positioningCheckInterval: NodeJS.Timeout | null = null;
 
 // ==================== INITIALIZATION ====================
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
     autoRelease: OKX_CONFIG.enableAutoRelease,
     positioning: OKX_CONFIG.enablePositioning,
     autoSwap: OKX_CONFIG.enableAutoSwap,
+    autoBuy: OKX_CONFIG.enableAutoBuy,
   }, 'OKX Bot configuration');
 
   // 4. Initialize services
@@ -292,6 +296,19 @@ async function startServices(): Promise<void> {
     log.info('OKX Auto-Swap started');
   }
 
+  // Start auto-buy (SPEI dispatch for BUY orders)
+  if (OKX_CONFIG.enableAutoBuy) {
+    buyOrderManager = createOkxBuyOrderManager();
+    await buyOrderManager.start();
+
+    buyOrderManager.on('buy_order', (event) => {
+      log.info({ type: event.type, orderId: event.orderNumber, amount: event.amount },
+        `OKX BUY DISPATCH: ${event.type}`);
+    });
+
+    log.info('OKX Auto-Buy started');
+  }
+
 }
 
 // ==================== POSITIONING CHECK ====================
@@ -334,6 +351,11 @@ async function shutdown(): Promise<void> {
     autoSwap = null;
   }
 
+  if (buyOrderManager) {
+    buyOrderManager.stop();
+    buyOrderManager = null;
+  }
+
   if (orderManager) {
     orderManager.stop();
     orderManager = null;
@@ -370,5 +392,6 @@ export {
   autoRelease,
   positioning,
   autoSwap,
+  buyOrderManager,
   OKX_CONFIG,
 };
