@@ -314,12 +314,15 @@ async function startServices(): Promise<void> {
     logger.info('Auto-swap module started');
   }
 
-  // Start operator monitor (tracks online hours + volume - only if nicknames configured)
-  operatorMonitor = createOperatorMonitor();
-  if (operatorMonitor) {
-    await operatorMonitor.start();
-    logger.info('Operator monitor started');
-  }
+  // Operator monitor DISABLED — the standalone "Rendimiento OP" Railway service
+  // handles all operators (Binance/OKX/Bybit) using authenticated API calls.
+  // This embedded monitor used marketplace search which created false "offline"
+  // snapshots (10,000+ duplicates/day) polluting the dashboard data.
+  // operatorMonitor = createOperatorMonitor();
+  // if (operatorMonitor) {
+  //   await operatorMonitor.start();
+  //   logger.info('Operator monitor started');
+  // }
 }
 
 // ==================== POSITIONING BOT ====================
