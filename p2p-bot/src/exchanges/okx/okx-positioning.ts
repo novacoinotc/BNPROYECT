@@ -145,7 +145,14 @@ export class OkxPositioning extends EventEmitter {
     for (const ad of activeAds) {
       const existing = this.trackedAds.get(ad.adId);
       if (existing) {
-        existing.currentPrice = ad.currentPrice;
+        // Only update price from API if we haven't updated recently.
+        // OKX cancel+create takes time to propagate — reading too soon
+        // returns stale price, causing oscillation (e.g. 17.91 ↔ 17.93).
+        const recentlyUpdated = existing.lastUpdate &&
+          (Date.now() - existing.lastUpdate.getTime()) < 30000; // 30s grace
+        if (!recentlyUpdated) {
+          existing.currentPrice = ad.currentPrice;
+        }
         existing.availableAmount = ad.availableAmount;
       } else {
         this.trackedAds.set(ad.adId, {
