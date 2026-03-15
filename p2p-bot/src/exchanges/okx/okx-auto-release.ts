@@ -573,35 +573,74 @@ export class OkxAutoRelease extends EventEmitter {
     const orderAmount = parseFloat(pending.order.totalPrice);
     if (orderAmount <= this.config.skipRiskCheckThreshold) return true;
 
-    // OKX provides counterparty stats inline in order data
-    const buyer = pending.order.buyer;
-    if (!buyer) {
-      log.warn({ orderId: pending.orderNumber }, 'OKX: No buyer info for risk check');
-      return false;
+    // Fetch FULL counterparty profile via dedicated API (more reliable than inline data)
+    let totalOrders = 0;
+    let completionRate = 0;
+    let registerDays = 0;
+    let kycLevel = 0;
+
+    try {
+      const cpInfo = await this.okxClient.getCounterpartyInfo(pending.orderNumber);
+      if (cpInfo) {
+        totalOrders = parseInt(cpInfo.completedOrders) || 0;
+        completionRate = parseFloat(cpInfo.completionRate) || 0;
+        kycLevel = parseInt(cpInfo.kycLevel) || 0;
+        if (cpInfo.createdTimestamp) {
+          registerDays = Math.floor((Date.now() - parseInt(cpInfo.createdTimestamp)) / (1000 * 60 * 60 * 24));
+        }
+        log.info({
+          orderId: pending.orderNumber,
+          totalOrders,
+          completionRate,
+          registerDays,
+          kycLevel,
+          nickName: cpInfo.nickName,
+        }, 'OKX: Fetched counterparty profile via API');
+      } else {
+        // Fallback to inline buyer data from order
+        const buyer = pending.order.buyer;
+        if (!buyer) {
+          log.warn({ orderId: pending.orderNumber }, 'OKX: No buyer info for risk check — blocking');
+          await this.saveRiskCheckStep(pending.orderNumber, false, 0, 0, 0, orderAmount, ['No buyer profile available']);
+          return false;
+        }
+        totalOrders = buyer.monthOrderCount || 0;
+        completionRate = buyer.monthFinishRate || 0;
+        kycLevel = buyer.userGrade || 0;
+        registerDays = buyer.registerDays || 0;
+        log.info({ orderId: pending.orderNumber }, 'OKX: Using inline buyer data (API fallback)');
+      }
+    } catch (error: any) {
+      log.warn({ orderId: pending.orderNumber, error: error.message }, 'OKX: getCounterpartyInfo failed — using inline data');
+      const buyer = pending.order.buyer;
+      if (buyer) {
+        totalOrders = buyer.monthOrderCount || 0;
+        completionRate = buyer.monthFinishRate || 0;
+        kycLevel = buyer.userGrade || 0;
+        registerDays = buyer.registerDays || 0;
+      }
     }
 
     const failedCriteria: string[] = [];
-
-    const totalOrders = buyer.monthOrderCount || 0;
-    const completionRate = buyer.monthFinishRate || 0;
-    const kycLevel = buyer.userGrade || 0;
-    const registerDays = buyer.registerDays || 0;
     const minRegisterDays = parseInt(process.env.MIN_BUYER_REGISTER_DAYS || '60');
 
     if (totalOrders < this.riskConfig.minTotalOrders) {
-      failedCriteria.push(`Orders ${totalOrders} < ${this.riskConfig.minTotalOrders}`);
+      failedCriteria.push(`Órdenes ${totalOrders} < ${this.riskConfig.minTotalOrders}`);
     }
     if (completionRate < this.riskConfig.minCompletionRate) {
-      failedCriteria.push(`Rate ${(completionRate * 100).toFixed(1)}% < ${(this.riskConfig.minCompletionRate * 100).toFixed(0)}%`);
+      failedCriteria.push(`Tasa ${(completionRate * 100).toFixed(1)}% < ${(this.riskConfig.minCompletionRate * 100).toFixed(0)}%`);
     }
     if (orderAmount > this.riskConfig.maxAutoReleaseAmount) {
-      failedCriteria.push(`Amount $${orderAmount} > $${this.riskConfig.maxAutoReleaseAmount}`);
+      failedCriteria.push(`Monto $${orderAmount} > $${this.riskConfig.maxAutoReleaseAmount}`);
     }
-    if (registerDays > 0 && registerDays < minRegisterDays) {
-      failedCriteria.push(`Account age ${registerDays}d < ${minRegisterDays}d`);
+    if (registerDays >= 0 && registerDays < minRegisterDays) {
+      failedCriteria.push(`Antigüedad ${registerDays}d < ${minRegisterDays}d`);
     }
 
     const passed = failedCriteria.length === 0;
+
+    // Save risk check result to verification timeline
+    await this.saveRiskCheckStep(pending.orderNumber, passed, totalOrders, completionRate, registerDays, orderAmount, failedCriteria);
 
     if (passed) {
       log.info(`OKX: Buyer risk check PASSED — order=${pending.orderNumber} orders=${totalOrders} rate=${(completionRate * 100).toFixed(0)}% age=${registerDays}d amount=$${orderAmount}`);
@@ -610,6 +649,27 @@ export class OkxAutoRelease extends EventEmitter {
     }
 
     return passed;
+  }
+
+  private async saveRiskCheckStep(
+    orderNumber: string,
+    passed: boolean,
+    totalOrders: number,
+    completionRate: number,
+    registerDays: number,
+    orderAmount: number,
+    failedCriteria: string[]
+  ): Promise<void> {
+    try {
+      await db.addVerificationStep(
+        orderNumber,
+        passed ? VerificationStatus.RISK_CHECK_PASSED : VerificationStatus.RISK_CHECK_FAILED,
+        passed
+          ? `Risk check passed: ${totalOrders} orders, ${(completionRate * 100).toFixed(0)}% rate, ${registerDays}d age`
+          : `Risk check FAILED: ${failedCriteria.join(', ')}`,
+        { totalOrders, completionRate, registerDays, orderAmount, passed, failedCriteria }
+      );
+    } catch { /* non-critical */ }
   }
 
   /**
