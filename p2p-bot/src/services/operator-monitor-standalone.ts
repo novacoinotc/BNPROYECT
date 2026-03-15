@@ -167,19 +167,24 @@ async function checkOkxAds(op: OperatorConfig): Promise<AdStatus> {
       return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
     }
 
-    // Filter sell ads (side=sell or tradeType)
-    const sellAds = allAds.filter((ad: any) =>
+    // Filter visible ads (exclude hidden ads — they exist but aren't on the marketplace)
+    const visibleAds = allAds.filter((ad: any) => !ad.isHidden);
+
+    // Filter sell ads from visible ones
+    const sellAds = visibleAds.filter((ad: any) =>
       ad.side === 'sell' || ad.tradeType === 'sell'
     );
 
-    const bestPool = sellAds.length > 0 ? sellAds : allAds;
+    // Fallback: if no visible sell ads, check all visible ads; if none visible, use all
+    const bestPool = sellAds.length > 0 ? sellAds : (visibleAds.length > 0 ? visibleAds : allAds);
 
+    // Pick the ad with the HIGHEST surplus (most relevant for low-funds detection)
     const best = bestPool.sort((a: any, b: any) =>
-      parseFloat(a.unitPrice || a.price || '0') - parseFloat(b.unitPrice || b.price || '0')
+      parseFloat(b.availableAmount || b.surplusAmount || '0') - parseFloat(a.availableAmount || a.surplusAmount || '0')
     )[0];
 
     return {
-      isOnline: true,
+      isOnline: visibleAds.length > 0,
       surplusAmount: parseFloat(best.availableAmount || best.surplusAmount || '0'),
       adPrice: parseFloat(best.unitPrice || best.price || '0'),
       onlineAdsCount: bestPool.length,
