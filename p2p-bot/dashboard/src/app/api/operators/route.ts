@@ -99,14 +99,26 @@ export async function GET(request: NextRequest) {
 
     const nickExpr = nicknameCaseExpr('nickname');
 
-    // Current status view
+    // Current status view — deduplicate by minute (multiple monitors may save at the same time)
+    // Use bool_or: if ANY source sees the operator online, they ARE online
     if (view === 'current') {
       const result = await pool.query(
-        `SELECT DISTINCT ON (norm_nick)
-          ${nickExpr} as norm_nick, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", "checkedAt"
-        FROM "OperatorSnapshot"
-        WHERE "checkedAt" > NOW() - INTERVAL '1 hour'
-        ORDER BY norm_nick, "checkedAt" DESC`
+        `WITH deduped AS (
+          SELECT
+            ${nickExpr} as norm_nick,
+            date_trunc('minute', "checkedAt") as ts,
+            bool_or("isAdOnline") as "isAdOnline",
+            MAX("surplusAmount") as "surplusAmount",
+            MAX("adPrice") as "adPrice",
+            bool_or("lowFunds") as "lowFunds"
+          FROM "OperatorSnapshot"
+          WHERE "checkedAt" > NOW() - INTERVAL '1 hour'
+          GROUP BY ${nickExpr}, date_trunc('minute', "checkedAt")
+        )
+        SELECT DISTINCT ON (norm_nick)
+          norm_nick, "isAdOnline", "surplusAmount", "adPrice", "lowFunds", ts as "checkedAt"
+        FROM deduped
+        ORDER BY norm_nick, ts DESC`
       );
 
       return NextResponse.json({
@@ -150,45 +162,59 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate hours based on snapshot ratio within work hours (9am-10pm CDMX).
+    // DEDUPLICATION: Multiple monitors (standalone + embedded per-exchange) save snapshots
+    // for the same operator. We deduplicate by minute using bool_or — if ANY source sees
+    // the operator online in a given minute, they count as online. This prevents false
+    // "offline" readings from marketplace-search monitors that sometimes miss operators.
     const workStart = 9;  // 9 AM CDMX
     const workEnd = 22;   // 10 PM CDMX
     const fullWorkDay = workEnd - workStart; // 13 hours
     const result = await pool.query(
-      `SELECT
-        ${nickExpr} as nickname,
-        ("checkedAt" AT TIME ZONE '${tz}')::date as date,
+      `WITH deduped AS (
+        SELECT
+          ${nickExpr} as nickname,
+          date_trunc('minute', "checkedAt") as ts,
+          bool_or("isAdOnline") as "isAdOnline",
+          bool_or("lowFunds") as "lowFunds",
+          MAX("surplusAmount") as "surplusAmount",
+          MAX("adPrice") as "adPrice"
+        FROM "OperatorSnapshot"
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY ${nickExpr}, date_trunc('minute', "checkedAt")
+      )
+      SELECT
+        nickname,
+        (ts AT TIME ZONE '${tz}')::date as date,
         COUNT(*)::int as "totalSnapshots",
         COUNT(*) FILTER (WHERE "isAdOnline" = true)::int as "onlineSnapshots",
         COUNT(*) FILTER (WHERE "lowFunds" = true)::int as "lowFundsSnapshots",
-        -- Only count snapshots within work hours for time calculations
         COUNT(*) FILTER (
-          WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+          WHERE EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
         )::int as "workSnapshots",
         COUNT(*) FILTER (
           WHERE "isAdOnline" = true
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
         )::int as "workOnlineSnapshots",
         COUNT(*) FILTER (
           WHERE "lowFunds" = true
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
         )::int as "workLowFundsSnapshots",
-        -- Work span = MAX - MIN of work-hour timestamps (capped at 13h)
         CASE WHEN COUNT(*) FILTER (
-          WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-            AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+          WHERE EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+            AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
         ) > 1
         THEN LEAST(
           EXTRACT(EPOCH FROM (
-            MAX("checkedAt") FILTER (
-              WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-                AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            MAX(ts) FILTER (
+              WHERE EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+                AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
             ) -
-            MIN("checkedAt") FILTER (
-              WHERE EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') >= ${workStart}
-                AND EXTRACT(HOUR FROM "checkedAt" AT TIME ZONE '${tz}') < ${workEnd}
+            MIN(ts) FILTER (
+              WHERE EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') >= ${workStart}
+                AND EXTRACT(HOUR FROM ts AT TIME ZONE '${tz}') < ${workEnd}
             )
           )) / 3600.0,
           ${fullWorkDay}.0
@@ -196,9 +222,8 @@ export async function GET(request: NextRequest) {
         ELSE 0 END as "workSpanHours",
         ROUND(AVG("surplusAmount") FILTER (WHERE "isAdOnline" = true)::numeric, 2) as "avgSurplus",
         MIN("surplusAmount") FILTER (WHERE "isAdOnline" = true) as "minSurplus"
-      FROM "OperatorSnapshot"
-      WHERE ${conditions.join(' AND ')}
-      GROUP BY ${nickExpr}, ("checkedAt" AT TIME ZONE '${tz}')::date
+      FROM deduped
+      GROUP BY nickname, (ts AT TIME ZONE '${tz}')::date
       ORDER BY date DESC, nickname`,
       params
     );
