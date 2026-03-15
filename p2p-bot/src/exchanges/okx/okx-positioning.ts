@@ -25,6 +25,7 @@ interface TrackedAd {
   currentPrice: number;
   availableAmount: string;
   targetPrice: number | null;
+  lastAppliedPrice: number | null;  // Last price we successfully set — prevents re-applying same target
   lastUpdate: Date | null;
   updateCount: number;
   errorCount: number;
@@ -163,6 +164,7 @@ export class OkxPositioning extends EventEmitter {
           currentPrice: ad.currentPrice,
           availableAmount: ad.availableAmount,
           targetPrice: null,
+          lastAppliedPrice: null,
           lastUpdate: null,
           updateCount: 0,
           errorCount: 0,
@@ -296,6 +298,18 @@ export class OkxPositioning extends EventEmitter {
       return;
     }
 
+    // Prevent re-applying the same target price.
+    // OKX cancel+create can cause the API to return stale currentPrice,
+    // making the bot think it needs to update when it already did.
+    if (ad.lastAppliedPrice !== null && Math.abs(ad.lastAppliedPrice - targetPrice) < this.PRICE_UPDATE_THRESHOLD) {
+      const timeSinceUpdate = ad.lastUpdate ? Date.now() - ad.lastUpdate.getTime() : Infinity;
+      // Only skip if we applied this price recently (< 60s) — after 60s, allow re-check
+      if (timeSinceUpdate < 60000) {
+        log.debug(`OKX positioning: Target ${targetPrice.toFixed(2)} same as last applied ${ad.lastAppliedPrice.toFixed(2)} (${Math.round(timeSinceUpdate/1000)}s ago), skipping`);
+        return;
+      }
+    }
+
     // Execute update
     const result = await this.adManager.updateAdPrice(ad.adId, targetPrice, ad.type, ad.availableAmount);
 
@@ -312,6 +326,7 @@ export class OkxPositioning extends EventEmitter {
       }
 
       ad.currentPrice = targetPrice;
+      ad.lastAppliedPrice = targetPrice;
       ad.lastUpdate = new Date();
       ad.updateCount++;
       ad.errorCount = 0;

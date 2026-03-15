@@ -90,29 +90,35 @@ export class OkxFollowEngine {
     // Smart target selection: when multiple ads and price floor
     let targetAd: OkxAdData;
 
-    if (targetAds.length === 1 || !this.config.minPrice || this.adType !== 'sell') {
+    if (targetAds.length === 1) {
       targetAd = targetAds[0];
     } else {
-      const undercutValue = this.config.matchPrice ? 0 : this.config.undercutCents / 100;
-      const validTargetAds = targetAds
-        .map(ad => ({
-          ad,
-          price: parseFloat(ad.unitPrice),
-          ourPrice: parseFloat(ad.unitPrice) - undercutValue,
-        }))
-        .filter(entry => entry.ourPrice >= this.config.minPrice!)
-        .sort((a, b) => a.ourPrice - b.ourPrice);
+      // Multiple ads from target found — during OKX cancel+create, stale ads
+      // at old prices may briefly coexist with the new ad.
+      // SELL: pick HIGHEST price (most recent/intended, stale ones are lower)
+      // BUY: pick LOWEST price (most recent/intended, stale ones are higher)
+      const sorted = [...targetAds].sort((a, b) =>
+        this.adType === 'sell'
+          ? parseFloat(b.unitPrice) - parseFloat(a.unitPrice)
+          : parseFloat(a.unitPrice) - parseFloat(b.unitPrice)
+      );
 
-      if (validTargetAds.length > 0) {
-        targetAd = validTargetAds[0].ad;
-        log.info({
-          totalAds: targetAds.length,
-          validAds: validTargetAds.length,
-          price: validTargetAds[0].price.toFixed(2),
-        }, 'OKX Follow: Selected best target ad above floor');
+      // Apply minPrice floor if configured
+      if (this.config.minPrice && this.adType === 'sell') {
+        const undercutValue = this.config.matchPrice ? 0 : this.config.undercutCents / 100;
+        const aboveFloor = sorted.filter(ad =>
+          parseFloat(ad.unitPrice) - undercutValue >= this.config.minPrice!
+        );
+        targetAd = aboveFloor.length > 0 ? aboveFloor[0] : sorted[0];
       } else {
-        targetAd = targetAds[0];
+        targetAd = sorted[0];
       }
+
+      log.info({
+        totalAds: targetAds.length,
+        selectedPrice: parseFloat(targetAd.unitPrice).toFixed(2),
+        allPrices: sorted.map(a => parseFloat(a.unitPrice).toFixed(2)),
+      }, `OKX Follow: Multiple target ads, picked ${this.adType === 'sell' ? 'highest' : 'lowest'}`);
     }
 
     const targetPrice = parseFloat(targetAd.unitPrice);
