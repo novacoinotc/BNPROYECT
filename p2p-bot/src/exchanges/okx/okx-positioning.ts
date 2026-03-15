@@ -55,9 +55,7 @@ export class OkxPositioning extends EventEmitter {
   // Full DB config — used by getPositioningConfigForAd()
   private dbConfig: BotConfig | null = null;
 
-  // Minimum price difference to trigger an update (in fiat units).
-  // 0.02 = 2 centavos — avoids oscillation when competitors fluctuate by 1¢
-  private readonly PRICE_UPDATE_THRESHOLD = 0.02;
+  private readonly PRICE_UPDATE_THRESHOLD = 0.01;
 
   constructor() {
     super();

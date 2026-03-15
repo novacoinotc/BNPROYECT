@@ -90,30 +90,7 @@ export class OkxFollowEngine {
     // Smart target selection: when multiple ads and price floor
     let targetAd: OkxAdData;
 
-    if (targetAds.length === 1) {
-      targetAd = targetAds[0];
-    } else if (this.adType === 'sell') {
-      // For SELL: pick the HIGHEST-priced target ad.
-      // During OKX cancel+create, stale ads at old prices may briefly coexist
-      // with the new ad. The highest price is the most recently updated/intended one.
-      const sorted = [...targetAds].sort((a, b) =>
-        parseFloat(b.unitPrice) - parseFloat(a.unitPrice)
-      );
-      targetAd = sorted[0];
-      if (targetAds.length > 1) {
-        log.info({
-          totalAds: targetAds.length,
-          selectedPrice: parseFloat(sorted[0].unitPrice).toFixed(2),
-          allPrices: sorted.map(a => parseFloat(a.unitPrice).toFixed(2)),
-        }, 'OKX Follow: Multiple target ads found, picked highest for SELL');
-      }
-    } else if (this.adType === 'buy') {
-      // For BUY: pick the LOWEST-priced target ad (most competitive buy)
-      const sorted = [...targetAds].sort((a, b) =>
-        parseFloat(a.unitPrice) - parseFloat(b.unitPrice)
-      );
-      targetAd = sorted[0];
-    } else if (!this.config.minPrice) {
+    if (targetAds.length === 1 || !this.config.minPrice || this.adType !== 'sell') {
       targetAd = targetAds[0];
     } else {
       const undercutValue = this.config.matchPrice ? 0 : this.config.undercutCents / 100;
