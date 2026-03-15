@@ -328,15 +328,11 @@ export class OkxBuyOrderManager extends EventEmitter {
     forceManualApproval: boolean = false,
   ): Promise<void> {
     try {
-      // If listOrders didn't include paymentMethods, fetch full order detail
-      let orderForExtraction = order;
-      if (!order.paymentMethods || order.paymentMethods.length === 0) {
-        log.info({ orderId }, '[OKX-BUY] No paymentMethods in list response, fetching order detail');
-        const fullOrder = await this.client.getOrder(orderId);
-        if (fullOrder) {
-          orderForExtraction = fullOrder;
-        }
-      }
+      // Always fetch full order detail for BUY orders — listOrders doesn't include
+      // counterpartyDetail.takerPaymentMethod which has the seller's actual bank details
+      log.info({ orderId }, '[OKX-BUY] Fetching full order detail for payment info');
+      const fullOrder = await this.client.getOrder(orderId);
+      const orderForExtraction = fullOrder || order;
 
       const paymentDetails = this.extractPaymentDetails(orderForExtraction, amount);
 
@@ -520,49 +516,94 @@ export class OkxBuyOrderManager extends EventEmitter {
   // ==================== PAYMENT DETAIL EXTRACTION ====================
 
   /**
-   * Extract payment details from OKX order's paymentMethods.
-   * OKX provides: paymentType, bankName, accountNo, realName inline in the order.
+   * Extract payment details from OKX order.
+   * PRIMARY: counterpartyDetail.takerPaymentMethod (Get Order response)
+   * FALLBACK: paymentMethods[] array
    * Returns null if no valid 16/18-digit account found.
    */
   private extractPaymentDetails(order: OkxOrderData, amount: number): PaymentDetails | null {
     try {
       const orderId = order.orderId;
-      const payMethods = order.paymentMethods || [];
-
-      if (payMethods.length === 0) {
-        log.error({ orderId }, '[OKX-BUY] No paymentMethods in order');
-        return null;
-      }
 
       let beneficiaryName = '';
       let beneficiaryAccount = '';
       let bankName: string | null = null;
 
-      for (const method of payMethods) {
-        // Extract realName (beneficiary)
-        if (method.realName && !beneficiaryName) {
-          beneficiaryName = method.realName;
-        }
+      // PRIMARY: Extract from counterpartyDetail.takerPaymentMethod (Get Order API)
+      const takerPM = order.counterpartyDetail?.takerPaymentMethod;
+      if (takerPM) {
+        log.info({ orderId, type: takerPM.type, bankName: takerPM.bankName, hasAccountNo: !!takerPM.accountNo },
+          '[OKX-BUY] Found takerPaymentMethod in order detail');
 
-        // Extract bankName
-        if (method.bankName && !bankName) {
-          bankName = method.bankName;
-        }
-
-        // Extract accountNo (CLABE or card)
-        if (method.accountNo && !beneficiaryAccount) {
-          const cleaned = method.accountNo.replace(/\s|-/g, '');
+        // accountNo = CLABE or card number
+        if (takerPM.accountNo) {
+          const cleaned = takerPM.accountNo.replace(/\s|-/g, '');
           if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
             beneficiaryAccount = cleaned;
-          } else {
-            // Search within text for 16/18-digit numbers
-            const digitSequences = cleaned.match(/\d+/g) || [];
-            const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
-            if (validAccounts.length > 0) {
-              beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
-              log.info({ orderId, extracted: `...${beneficiaryAccount.slice(-4)}` }, '[OKX-BUY] Extracted account from mixed-text field');
+          }
+        }
+        // paymentMethodNumber as fallback for accountNo
+        if (!beneficiaryAccount && takerPM.paymentMethodNumber) {
+          const cleaned = takerPM.paymentMethodNumber.replace(/\s|-/g, '');
+          if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
+            beneficiaryAccount = cleaned;
+          }
+        }
+
+        // beneficiary name: accountName (real name) or paymentMethodName
+        beneficiaryName = takerPM.accountName || takerPM.paymentMethodName || '';
+        bankName = takerPM.bankName || null;
+      }
+
+      // FALLBACK: Extract from paymentMethods[] array (ad-level data)
+      if (!beneficiaryAccount) {
+        const payMethods = order.paymentMethods || [];
+        if (payMethods.length > 0) {
+          log.info({ orderId, methodCount: payMethods.length }, '[OKX-BUY] Trying paymentMethods[] fallback');
+
+          for (const method of payMethods) {
+            if (method.realName && !beneficiaryName) {
+              beneficiaryName = method.realName;
+            }
+            if (method.bankName && !bankName) {
+              bankName = method.bankName;
+            }
+            if (method.accountNo && !beneficiaryAccount) {
+              const cleaned = method.accountNo.replace(/\s|-/g, '');
+              if (/^\d{16}$/.test(cleaned) || /^\d{18}$/.test(cleaned)) {
+                beneficiaryAccount = cleaned;
+              } else {
+                const digitSequences = cleaned.match(/\d+/g) || [];
+                const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
+                if (validAccounts.length > 0) {
+                  beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
+                  log.info({ orderId, extracted: `...${beneficiaryAccount.slice(-4)}` }, '[OKX-BUY] Extracted account from mixed-text field');
+                }
+              }
             }
           }
+
+          // Smart scan: check all method fields for digit sequences
+          if (!beneficiaryAccount) {
+            for (const method of payMethods) {
+              const fields = [method.accountNo, method.bankName, method.realName].filter(Boolean);
+              for (const value of fields) {
+                if (!value) continue;
+                const cleaned = value.replace(/\s|-/g, '');
+                const digitSequences = cleaned.match(/\d+/g) || [];
+                const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
+                if (validAccounts.length > 0) {
+                  beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
+                  log.info({ orderId, extracted: `...${beneficiaryAccount.slice(-4)}`, source: 'smart-scan' }, '[OKX-BUY] Found account via smart scan');
+                  break;
+                }
+              }
+              if (beneficiaryAccount) break;
+            }
+          }
+        } else {
+          log.error({ orderId, hasTakerPM: !!takerPM }, '[OKX-BUY] No payment data in order (no takerPaymentMethod, no paymentMethods[])');
+          return null;
         }
       }
 
@@ -571,29 +612,10 @@ export class OkxBuyOrderManager extends EventEmitter {
         beneficiaryName = order.counterpartyDetail.realName;
       }
 
-      // Smart scan: if no account found, check all method fields for digit sequences
-      if (!beneficiaryAccount) {
-        for (const method of payMethods) {
-          const fields = [method.accountNo, method.bankName, method.realName].filter(Boolean);
-          for (const value of fields) {
-            if (!value) continue;
-            const cleaned = value.replace(/\s|-/g, '');
-            const digitSequences = cleaned.match(/\d+/g) || [];
-            const validAccounts = digitSequences.filter((d: string) => d.length === 16 || d.length === 18);
-            if (validAccounts.length > 0) {
-              beneficiaryAccount = validAccounts.find((d: string) => d.length === 18) || validAccounts[0];
-              log.info({ orderId, extracted: `...${beneficiaryAccount.slice(-4)}`, source: 'smart-scan' }, '[OKX-BUY] Found account via smart scan');
-              break;
-            }
-          }
-          if (beneficiaryAccount) break;
-        }
-      }
-
       // Smart scan for bank name from known banks
       if (!bankName) {
         const knownBanks = ['bbva', 'banamex', 'santander', 'banorte', 'hsbc', 'scotiabank', 'azteca', 'banco azteca', 'inbursa', 'banregio', 'bajio', 'banbajio', 'afirme', 'bancoppel', 'spin', 'nu', 'hey banco', 'klar', 'mercadopago'];
-        for (const method of payMethods) {
+        for (const method of (order.paymentMethods || [])) {
           const fields = [method.bankName, method.realName, method.accountNo].filter(Boolean);
           for (const value of fields) {
             if (!value) continue;
@@ -626,7 +648,7 @@ export class OkxBuyOrderManager extends EventEmitter {
             'nu': '90638', 'nubank': '90638', 'spin': '90728', 'stori': '90706',
             'rappi': '90706', 'cashi': '90715',
           };
-          for (const method of payMethods) {
+          for (const method of (order.paymentMethods || [])) {
             const fields = [method.bankName, method.realName, method.accountNo, method.paymentType].filter(Boolean);
             for (const value of fields) {
               if (!value) continue;

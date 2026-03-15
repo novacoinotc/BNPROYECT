@@ -71,6 +71,23 @@ export interface OkxOrderData {
   paymentMethods?: OkxPaymentMethod[];
 }
 
+/** OKX taker payment method (returned in Get Order response) */
+export interface OkxTakerPaymentMethod {
+  paymentMethodId?: string;
+  bankCode?: string;
+  bankName?: string;
+  bankBranchName?: string;
+  accountNo?: string;           // Bank card/CLABE number
+  accountName?: string;         // Beneficiary real name (from API response)
+  paymentMethodName?: string;   // Beneficiary name (could be nick name)
+  paymentMethodNumber?: string; // Same as accountNo in some cases
+  paymentMethodQrCodeUrl?: string;
+  type?: string;                // BANK, ALIPAY, etc.
+  currency?: string;
+  isDisabled?: boolean;
+  paymentDescription?: string;
+}
+
 /** OKX counterparty info (inline in order response) */
 export interface OkxCounterpartyDetail {
   merchantId: string;
@@ -84,6 +101,7 @@ export interface OkxCounterpartyDetail {
   registerTime?: string;
   createdTimestamp?: string;
   blacklisted?: boolean;
+  takerPaymentMethod?: OkxTakerPaymentMethod;
 }
 
 /** OKX payment method */
