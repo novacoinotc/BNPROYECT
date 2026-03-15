@@ -294,18 +294,41 @@ export default function OperatorsPage() {
                     </span>
                   </div>
 
-                  {/* Coverage Bar */}
-                  <div className="w-full h-1.5 bg-gray-700 rounded-full mb-3">
-                    <div
-                      className={`h-1.5 rounded-full transition-all ${getCoverageBg(summary.avgCoverage)}`}
-                      style={{ width: `${Math.min(summary.avgCoverage, 100)}%` }}
-                    />
-                  </div>
+                  {/* Segmented Coverage Bar — shows connected / low funds / disconnected */}
+                  {(() => {
+                    const connectedPct = summary.totalExpectedHours > 0
+                      ? Math.round(((summary.totalHoursOnline - summary.totalHoursLowFunds) / summary.totalExpectedHours) * 100)
+                      : 0;
+                    const lowFundsPct = summary.totalExpectedHours > 0
+                      ? Math.round((summary.totalHoursLowFunds / summary.totalExpectedHours) * 100)
+                      : 0;
+                    const disconnectedPct = Math.max(0, 100 - connectedPct - lowFundsPct);
+                    return (
+                      <div className="mb-3">
+                        <div className="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden flex">
+                          {connectedPct > 0 && (
+                            <div className="bg-emerald-500 h-full transition-all" style={{ width: `${connectedPct}%` }} />
+                          )}
+                          {lowFundsPct > 0 && (
+                            <div className="bg-yellow-500 h-full transition-all" style={{ width: `${lowFundsPct}%` }} />
+                          )}
+                          {disconnectedPct > 0 && (
+                            <div className="bg-red-500/40 h-full transition-all" style={{ width: `${disconnectedPct}%` }} />
+                          )}
+                        </div>
+                        <div className="flex justify-between mt-1 text-[10px]">
+                          <span className="text-emerald-400">{connectedPct}% conectado</span>
+                          {lowFundsPct > 0 && <span className="text-yellow-400">{lowFundsPct}% low funds</span>}
+                          {disconnectedPct > 0 && <span className="text-red-400">{disconnectedPct}% desconectado</span>}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Stats Grid */}
                   <div className="grid grid-cols-3 gap-1.5 text-xs">
                     <div className="bg-gray-700/50 p-2 rounded-lg text-center">
-                      <div className="text-gray-500 text-[10px]">Online</div>
+                      <div className="text-gray-500 text-[10px]">Conectado</div>
                       <div className="text-emerald-400 font-bold">{summary.totalHoursOnline.toFixed(1)}h</div>
                     </div>
                     <div className="bg-gray-700/50 p-2 rounded-lg text-center">
@@ -318,7 +341,7 @@ export default function OperatorsPage() {
                     </div>
                     <div className="bg-gray-700/50 p-2 rounded-lg text-center">
                       <div className="text-gray-500 text-[10px]">Low Funds</div>
-                      <div className={`font-bold ${summary.totalHoursLowFunds > 2 ? 'text-red-400' : 'text-white'}`}>
+                      <div className={`font-bold ${summary.totalHoursLowFunds > 1 ? 'text-yellow-400' : 'text-gray-400'}`}>
                         {summary.totalHoursLowFunds.toFixed(1)}h
                       </div>
                     </div>
