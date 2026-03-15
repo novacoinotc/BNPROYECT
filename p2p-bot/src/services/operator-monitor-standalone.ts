@@ -222,13 +222,18 @@ async function checkBybitAds(op: OperatorConfig): Promise<AdStatus> {
     if (!result?.items) return { isOnline: false, surplusAmount: null, adPrice: null, onlineAdsCount: 0 };
 
     // status 10 = online, side 1 = sell
+    // IMPORTANT: Also check showStatus !== 'HIDDEN' — when Active Mode is OFF,
+    // Bybit returns status=10 but showStatus='HIDDEN' (ad exists but not visible)
+    const isAdVisible = (ad: any) =>
+      ad.status === 10 && ad.showStatus !== 'HIDDEN';
+
     const onlineSellAds = result.items.filter((ad: any) =>
-      ad.status === 10 && ad.side === 1
+      isAdVisible(ad) && ad.side === 1
     );
 
     if (onlineSellAds.length === 0) {
       // Check any online ads (buy too)
-      const anyOnline = result.items.filter((ad: any) => ad.status === 10);
+      const anyOnline = result.items.filter((ad: any) => isAdVisible(ad));
       if (anyOnline.length > 0) {
         const best = anyOnline[0];
         return {
