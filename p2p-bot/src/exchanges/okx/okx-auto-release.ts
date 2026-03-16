@@ -70,6 +70,7 @@ export class OkxAutoRelease extends EventEmitter {
   private readonly CHECK_THROTTLE_MS = 5000;
 
   private riskConfig: OkxBuyerRiskConfig;
+  private paymentRetryInterval: NodeJS.Timeout | null = null;
 
   constructor(
     config: OkxAutoReleaseConfig,
@@ -88,6 +89,7 @@ export class OkxAutoRelease extends EventEmitter {
     };
 
     this.setupEventListeners();
+    this.startPaymentRetryLoop();
 
     log.info({
       enableAutoRelease: config.enableAutoRelease,
@@ -104,6 +106,36 @@ export class OkxAutoRelease extends EventEmitter {
     this.orderManager.on('order', (event: OkxOrderEvent) => {
       this.handleOrderEvent(event);
     });
+  }
+
+  // ==================== PAYMENT RETRY LOOP ====================
+
+  /**
+   * Periodically re-check pending orders that don't have a bank match yet.
+   * Recovers from: service restarts, THIRD_PARTY payments that arrived before the order,
+   * and any race conditions between payment webhooks and order detection.
+   */
+  private startPaymentRetryLoop(): void {
+    const RETRY_INTERVAL_MS = 120_000; // 2 minutes
+
+    this.paymentRetryInterval = setInterval(async () => {
+      if (!this.config.enableAutoRelease) return;
+
+      for (const [orderNumber, pending] of this.pendingReleases) {
+        if (pending.bankMatch) continue; // Already matched
+
+        try {
+          await this.tryMatchExistingPayments(pending.order);
+
+          if (pending.bankMatch) {
+            log.info({ orderNumber }, 'OKX: Payment retry loop matched a payment!');
+            await this.checkReadyForRelease(orderNumber);
+          }
+        } catch (error) {
+          log.debug({ error, orderNumber }, 'OKX: Payment retry loop error');
+        }
+      }
+    }, RETRY_INTERVAL_MS);
   }
 
   /**

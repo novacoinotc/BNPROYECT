@@ -80,6 +80,9 @@ export class AutoReleaseOrchestrator extends EventEmitter {
   // Processing lock to prevent race conditions
   private processingOrders: Set<string> = new Set();
 
+  // Periodic retry for unmatched payments
+  private paymentRetryInterval: NodeJS.Timeout | null = null;
+
   // 2FA code callback (for manual entry or TOTP generation)
   private getVerificationCode: ((orderNumber: string, authType: AuthType) => Promise<string>) | null = null;
 
@@ -100,6 +103,7 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     this.buyerRiskAssessor = new BuyerRiskAssessor();
 
     this.setupEventListeners();
+    this.startPaymentRetryLoop();
 
     // EXPLICIT startup logging
     logger.info(
@@ -153,6 +157,82 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     this.webhookReceiver.on('sync_matched', (event: { order: OrderData; payment: { transactionId: string; amount: number; senderName: string } }) => {
       this.handleSyncMatched(event);
     });
+  }
+
+  // ==================== PAYMENT RETRY LOOP ====================
+
+  /**
+   * Periodically re-check pending orders that don't have a bank match yet.
+   * Recovers from: service restarts, THIRD_PARTY payments that arrived before the order,
+   * and any race conditions between payment webhooks and order detection.
+   */
+  private startPaymentRetryLoop(): void {
+    const RETRY_INTERVAL_MS = 120_000; // 2 minutes
+
+    this.paymentRetryInterval = setInterval(async () => {
+      if (!this.config.enableAutoRelease) return;
+
+      for (const [orderNumber, pending] of this.pendingReleases) {
+        if (pending.bankMatch) continue; // Already matched
+
+        try {
+          const expectedAmount = parseFloat(pending.order.totalPrice);
+
+          // Search PENDING payments first
+          let payments = await db.findUnmatchedPaymentsByAmount(expectedAmount, 1, 120);
+
+          // Then THIRD_PARTY payments
+          if (payments.length === 0) {
+            try {
+              payments = await db.findThirdPartyPaymentsByAmount(expectedAmount, 1);
+            } catch { /* function may not exist */ }
+          }
+
+          if (payments.length === 0) continue;
+
+          // Smart name matching — require 70% similarity
+          const buyerName = (pending.order as any).buyerRealName || pending.order.counterPartNickName || '';
+          if (!buyerName) continue;
+
+          let bestPayment: typeof payments[0] | null = null;
+          let bestScore = 0;
+
+          for (const payment of payments) {
+            const score = this.compareNames(payment.senderName, buyerName);
+            if (score > bestScore) {
+              bestScore = score;
+              bestPayment = payment;
+            }
+          }
+
+          if (bestPayment && bestScore >= 0.70) {
+            logger.info({
+              orderNumber,
+              sender: bestPayment.senderName,
+              buyer: buyerName,
+              score: (bestScore * 100).toFixed(0) + '%',
+            }, 'Payment retry loop: matched payment to order!');
+
+            try {
+              await db.matchPaymentToOrder(bestPayment.transactionId, orderNumber, 'BANK_WEBHOOK');
+            } catch { /* may already be matched */ }
+
+            const match: OrderMatch = {
+              orderNumber,
+              bankTransactionId: bestPayment.transactionId,
+              receivedAmount: bestPayment.amount,
+              expectedAmount,
+              senderName: bestPayment.senderName,
+              verified: true,
+              matchedAt: new Date(),
+            };
+            await this.handlePaymentMatch(pending.order, match);
+          }
+        } catch (error) {
+          logger.debug({ error, orderNumber }, 'Payment retry loop error');
+        }
+      }
+    }, RETRY_INTERVAL_MS);
   }
 
   /**

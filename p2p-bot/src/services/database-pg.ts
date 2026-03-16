@@ -511,7 +511,7 @@ export async function findUnmatchedPaymentsByAmount(
 export async function findThirdPartyPaymentsByAmount(
   expectedAmount: number,
   tolerancePercent: number = 1,
-  maxAgeMinutes: number = 60
+  maxAgeMinutes: number = 15 // Only recover THIRD_PARTY within 15 min — after that, discard
 ): Promise<Array<{
   id: string;
   transactionId: string;

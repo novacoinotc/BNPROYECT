@@ -1189,7 +1189,7 @@ export class BuyOrderManager extends EventEmitter {
       // Banco Azteca
       '4027': '40127', '4741': '40127', '4576': '40127',
       // BBVA
-      '4152': '40012', '4772': '40012', '4915': '40012', '4555': '40012', '4075': '40012',
+      '4152': '40012', '4772': '40012', '4915': '40012', '4555': '40012', '4075': '40012', '4815': '40012',
       // Banamex
       '5256': '40002', '5474': '40002', '4766': '40002', '5204': '40002',
       // Banorte
@@ -1282,16 +1282,49 @@ export class BuyOrderManager extends EventEmitter {
 
       // Handle NOVACORE idempotent response: if previous attempt failed at OPM,
       // NOVACORE returns success:true + idempotent:true + status:failed
-      // This means the SPEI was NOT actually sent
+      // This means the SPEI was NOT actually sent — auto-retry with suffixed reference
       if (data.idempotent && data.status === 'failed') {
         logger.warn({
           orderNumber: details.orderNumber,
           transactionId: data.transactionId,
-        }, '[AUTO-BUY] NOVACORE returned idempotent failed — previous attempt failed, SPEI not sent');
-        return {
-          success: false,
-          error: 'SPEI anterior fallo en OPM (idempotente) — contacta soporte para reintentar',
-        };
+        }, '[AUTO-BUY] NOVACORE idempotent failed — retrying with new reference');
+
+        // Retry with suffixed externalReference to bypass idempotency
+        const retryRef = `${details.orderNumber}-R${Date.now().toString(36)}`;
+        const retryBody = { ...body, externalReference: retryRef };
+
+        try {
+          const retryResp = await fetch(`${this.config.novacoreUrl}/api/integrations/spei-dispatch`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': this.config.novacoreApiKey,
+            },
+            body: JSON.stringify(retryBody),
+            signal: AbortSignal.timeout(30000),
+          });
+
+          const retryData = await retryResp.json() as any;
+
+          if (retryResp.ok && retryData.success && !(retryData.idempotent && retryData.status === 'failed')) {
+            logger.info({ orderNumber: details.orderNumber, retryRef }, '[AUTO-BUY] Idempotent retry succeeded');
+            return {
+              success: true,
+              trackingKey: retryData.trackingKey,
+              transactionId: retryData.transactionId,
+            };
+          }
+
+          return {
+            success: false,
+            error: retryData.error || 'SPEI retry con nueva referencia también falló',
+          };
+        } catch (retryError: any) {
+          return {
+            success: false,
+            error: `SPEI retry falló: ${retryError.message}`,
+          };
+        }
       }
 
       return {

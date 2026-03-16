@@ -766,15 +766,36 @@ export class OkxBuyOrderManager extends EventEmitter {
       }
 
       // Handle NOVACORE idempotent response: previous attempt failed at OPM
+      // Auto-retry with suffixed reference to bypass idempotency
       if (data.idempotent && data.status === 'failed') {
         log.warn({
           orderNumber: details.orderNumber,
           transactionId: data.transactionId,
-        }, '[OKX-BUY] NOVACORE returned idempotent failed - previous attempt failed, SPEI not sent');
-        return {
-          success: false,
-          error: 'SPEI anterior fallo en OPM (idempotente) - contacta soporte para reintentar',
-        };
+        }, '[OKX-BUY] NOVACORE idempotent failed — retrying with new reference');
+
+        const retryRef = `${details.orderNumber}-R${Date.now().toString(36)}`;
+        const retryBody = { ...body, externalReference: retryRef };
+
+        try {
+          const retryResp = await fetch(`${this.config.novacoreUrl}/api/integrations/spei-dispatch`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': this.config.novacoreApiKey,
+            },
+            body: JSON.stringify(retryBody),
+            signal: AbortSignal.timeout(30000),
+          });
+          const retryData = await retryResp.json() as any;
+
+          if (retryResp.ok && retryData.success && !(retryData.idempotent && retryData.status === 'failed')) {
+            log.info({ orderNumber: details.orderNumber, retryRef }, '[OKX-BUY] Idempotent retry succeeded');
+            return { success: true, trackingKey: retryData.trackingKey, transactionId: retryData.transactionId };
+          }
+          return { success: false, error: retryData.error || 'SPEI retry con nueva referencia también falló' };
+        } catch (retryError: any) {
+          return { success: false, error: `SPEI retry falló: ${retryError.message}` };
+        }
       }
 
       return {
@@ -889,7 +910,7 @@ export class OkxBuyOrderManager extends EventEmitter {
 
     const binMap4: Record<string, string> = {
       '4027': '40127', '4741': '40127', '4576': '40127', // Banco Azteca
-      '4152': '40012', '4772': '40012', '4915': '40012', '4555': '40012', '4075': '40012', // BBVA
+      '4152': '40012', '4772': '40012', '4915': '40012', '4555': '40012', '4075': '40012', '4815': '40012', // BBVA
       '5256': '40002', '5474': '40002', '4766': '40002', '5204': '40002', // Banamex
       '4189': '40072', '4413': '40072', '5177': '40072', // Banorte
       '5339': '40014', '4217': '40014', '5468': '40014', // Santander
