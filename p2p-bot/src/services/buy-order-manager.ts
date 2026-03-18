@@ -1201,7 +1201,7 @@ export class BuyOrderManager extends EventEmitter {
       // Scotiabank
       '4032': '40044', '5570': '40044',
       // Bancoppel
-      '6042': '40137', '6372': '40137',
+      '6042': '40137', '6372': '40137', '4169': '40137',
       // Spin/Oxxo
       '5512': '90728',
       // Inbursa
