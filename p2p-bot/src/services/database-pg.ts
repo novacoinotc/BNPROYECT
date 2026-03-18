@@ -184,12 +184,12 @@ export async function saveOrder(order: OrderData): Promise<void> {
     ? (order.buyer?.userNo || (order as any).counterPartUserNo || (order as any).buyerUserNo || null)
     : ((order as any).seller?.userNo || (order as any).counterPartUserNo || (order as any).sellerUserNo || null);
 
-  const buyerUserNo = isSellOrder ? counterPartUserNo : 'self';
-  const buyerNickName = isSellOrder ? counterPartNick : 'self';
+  const buyerUserNo = isSellOrder ? (counterPartUserNo || 'unknown') : 'self';
+  const buyerNickName = isSellOrder ? (counterPartNick || 'unknown') : 'self';
   // Get real name from order detail if available (multiple sources)
   const buyerRealName = (order as any).buyerRealName || order.buyer?.realName || null;
-  const sellerUserNo = isSellOrder ? 'self' : counterPartUserNo;
-  const sellerNickName = isSellOrder ? 'self' : counterPartNick;
+  const sellerUserNo = isSellOrder ? 'self' : (counterPartUserNo || 'unknown');
+  const sellerNickName = isSellOrder ? 'self' : (counterPartNick || 'unknown');
 
   // Calculate unitPrice if not provided (totalPrice / amount)
   // API may return unitPrice or price field
