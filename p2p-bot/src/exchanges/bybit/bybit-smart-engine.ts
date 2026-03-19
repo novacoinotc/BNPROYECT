@@ -23,6 +23,7 @@ export interface BybitSmartConfig {
   myNickName?: string;
   minUserGrade: number;          // 1=GA, 2=VA, 3=BA
   ignoredAdvertisers?: string[];
+  minMaxOrderLimit?: number;     // Min maxOrderLimit to filter trap ads
 }
 
 export interface BybitSmartResult {
@@ -82,6 +83,12 @@ export class BybitSmartEngine {
     const available = parseFloat(ad.lastQuantity);
     const fiatValue = price * available;
     if (fiatValue < this.config.minSurplusAmount) return false;
+
+    // Filter 5: Skip trap ads with very low max order limit
+    if (this.config.minMaxOrderLimit) {
+      const maxOrder = parseFloat(ad.maxAmount || '0');
+      if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+    }
 
     return true;
   }

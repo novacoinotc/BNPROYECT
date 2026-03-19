@@ -18,6 +18,7 @@ export interface BybitFollowConfig {
   matchPrice: boolean;
   minPrice?: number | null;
   maxPrice?: number | null;
+  minMaxOrderLimit?: number;   // Min maxOrderLimit to filter trap ads
 }
 
 export interface BybitFollowResult {
@@ -63,9 +64,15 @@ export class BybitFollowEngine {
 
       if (ads.length === 0) break;
 
-      const found = ads.find(ad =>
-        ad.nickName.toLowerCase() === target.toLowerCase()
-      );
+      const found = ads.find(ad => {
+        if (ad.nickName.toLowerCase() !== target.toLowerCase()) return false;
+        // Skip trap ads with very low max order limit
+        if (this.config.minMaxOrderLimit) {
+          const maxOrder = parseFloat(ad.maxAmount || '0');
+          if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+        }
+        return true;
+      });
 
       if (found) {
         targetAd = found;

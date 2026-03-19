@@ -21,6 +21,7 @@ export interface OkxSmartConfig {
   maxPrice?: number | null;      // Price ceiling for BUY ads
   myNickName?: string;
   ignoredAdvertisers?: string[];
+  minMaxOrderLimit?: number;   // Min maxOrderLimit to filter trap ads
 }
 
 export interface OkxSmartResult {
@@ -70,6 +71,12 @@ export class OkxSmartEngine {
     const available = parseFloat(ad.availableAmount);
     const fiatValue = price * available;
     if (fiatValue < this.config.minSurplusAmount) return false;
+
+    // Filter 4: Skip trap ads with very low max order limit
+    if (this.config.minMaxOrderLimit) {
+      const maxOrder = parseFloat(ad.maxAmount || '0');
+      if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+    }
 
     return true;
   }

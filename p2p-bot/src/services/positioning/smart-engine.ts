@@ -16,6 +16,7 @@ export interface SmartConfig {
   myNickName?: string;         // Our nickname to exclude from results
   minUserGrade: number;        // Minimum user grade (1=basic, 2=verified, 3+=advanced)
   ignoredAdvertisers?: string[]; // List of nicknames to always ignore
+  minMaxOrderLimit?: number;   // Min maxOrderLimit to filter trap ads (e.g., 5000 MXN)
 }
 
 export interface SmartResult {
@@ -70,6 +71,12 @@ export class SmartEngine {
     const surplusAmount = parseFloat(ad.surplusAmount);
     const fiatValue = price * surplusAmount;
     if (fiatValue < this.config.minSurplusAmount) return false;
+
+    // Filter 4: Skip trap ads with very low max order limit
+    if (this.config.minMaxOrderLimit) {
+      const maxOrder = parseFloat(ad.maxSingleTransAmount || '0');
+      if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+    }
 
     return true;
   }

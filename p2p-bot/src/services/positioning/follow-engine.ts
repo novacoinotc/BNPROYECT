@@ -12,6 +12,7 @@ export interface FollowConfig {
   matchPrice: boolean; // true = exact match, false = undercut
   minPrice?: number | null; // Price floor for SELL ads - won't go below this
   ignoredAdvertisers?: string[]; // List of nicknames to always ignore
+  minMaxOrderLimit?: number;   // Min maxOrderLimit to filter trap ads
 }
 
 export interface FollowResult {
@@ -91,6 +92,14 @@ export class FollowEngine {
       targetAds.push(...found);
     }
 
+    // Filter out trap ads from target (low max order limit)
+    if (this.config.minMaxOrderLimit) {
+      targetAds = targetAds.filter(ad => {
+        const maxOrder = parseFloat(ad.maxSingleTransAmount || '0');
+        return maxOrder <= 0 || maxOrder >= this.config.minMaxOrderLimit!;
+      });
+    }
+
     if (targetAds.length === 0) {
       logger.warn(`⚠️ [FOLLOW] Target "${this.config.targetNickName}" NOT FOUND in ${asset}/${fiat} (searched 3 pages)`);
       return null;
@@ -167,6 +176,11 @@ export class FollowEngine {
           const isIgnored = this.config.ignoredAdvertisers?.some(
             ignored => ignored.toLowerCase() === nick
           );
+          // Filter trap ads with low max order limit
+          if (this.config.minMaxOrderLimit) {
+            const maxOrder = parseFloat(ad.maxSingleTransAmount || '0');
+            if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+          }
           return price >= this.config.minPrice! && !isSelf && !isTarget && !isIgnored;
         })
         .sort((a, b) => parseFloat(a.price) - parseFloat(b.price)); // Sort by price ascending

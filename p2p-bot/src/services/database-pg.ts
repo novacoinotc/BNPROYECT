@@ -2091,6 +2091,7 @@ export interface AssetPositioningConfig {
   smartMinOrderCount: number;  // Min monthly orders for smart mode
   smartMinSurplus: number;     // Min volume in FIAT (e.g., MXN) for smart mode
   smartMinFinishRate: number;  // Min completion rate (0-1) for smart mode
+  smartMinMaxOrderLimit: number; // Min maxOrderLimit to filter trap ads (e.g., 5000 MXN)
 }
 
 // Map of "TRADE_TYPE:ASSET" -> config (e.g., "SELL:USDT", "BUY:BTC")
@@ -2127,6 +2128,8 @@ export interface BotConfig {
   autoMessageText: string | null;
   // Ignored advertisers (global list)
   ignoredAdvertisers: string[];
+  // Anti-trap: minimum maxOrderLimit to consider an ad (filters low-limit bait ads)
+  smartMinMaxOrderLimit: number;
   // Auto-buy: auto-dispatch mode (false = manual approval, true = auto)
   autoBuyAutoDispatch: boolean;
 }
@@ -2234,6 +2237,8 @@ export async function getBotConfig(): Promise<BotConfig> {
       smartMinPositiveRate: row?.smartMinPositiveRate ?? 0.95,
       smartRequireOnline: row?.smartRequireOnline ?? true,
       smartMinSurplus: row?.smartMinSurplus ?? 100,
+      // Anti-trap filter
+      smartMinMaxOrderLimit: row?.smartMinMaxOrderLimit ?? 5000,
       // Strategy
       undercutCents: row?.undercutCents ?? 1,
       matchPrice: row?.matchPrice ?? false,
@@ -2277,6 +2282,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       smartMinPositiveRate: 0.95,
       smartRequireOnline: true,
       smartMinSurplus: 100,
+      smartMinMaxOrderLimit: 5000,
       undercutCents: 1,
       matchPrice: false,
       autoMessageEnabled: false,
@@ -2319,6 +2325,7 @@ export function getPositioningConfigForAd(
       smartMinOrderCount: assetConfig.smartMinOrderCount ?? config.smartMinOrderCount ?? 10,
       smartMinSurplus: assetConfig.smartMinSurplus ?? config.smartMinSurplus ?? 100,
       smartMinFinishRate: assetConfig.smartMinFinishRate ?? config.smartMinFinishRate ?? 0,
+      smartMinMaxOrderLimit: assetConfig.smartMinMaxOrderLimit ?? config.smartMinMaxOrderLimit ?? 5000,
     };
   }
 
@@ -2336,6 +2343,7 @@ export function getPositioningConfigForAd(
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
       smartMinFinishRate: config.smartMinFinishRate ?? 0,
+      smartMinMaxOrderLimit: config.smartMinMaxOrderLimit ?? 5000,
     };
   } else {
     return {
@@ -2350,6 +2358,7 @@ export function getPositioningConfigForAd(
       smartMinOrderCount: config.smartMinOrderCount ?? 10,
       smartMinSurplus: config.smartMinSurplus ?? 100,
       smartMinFinishRate: config.smartMinFinishRate ?? 0,
+      smartMinMaxOrderLimit: config.smartMinMaxOrderLimit ?? 5000,
     };
   }
 }

@@ -122,6 +122,7 @@ export class OkxPositioning extends EventEmitter {
         smartMinOrderCount: 10,
         smartMinSurplus: 100,
         smartMinFinishRate: 0,
+        smartMinMaxOrderLimit: 5000,
       };
     }
     const tradeType = ad.side === 'sell' ? 'SELL' : 'BUY';
@@ -374,6 +375,7 @@ export class OkxPositioning extends EventEmitter {
       ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers ?? [],
       minPrice: ad.side === 'sell' ? (adConfig.minPrice ?? null) : undefined,
       maxPrice: ad.side === 'buy' ? (adConfig.maxPrice ?? null) : undefined,
+      minMaxOrderLimit: adConfig.smartMinMaxOrderLimit,
     });
 
     return engine;
@@ -400,6 +402,7 @@ export class OkxPositioning extends EventEmitter {
       matchPrice: adConfig.matchPrice,
       minPrice: ad.side === 'sell' ? (adConfig.minPrice ?? null) : undefined,
       maxPrice: ad.side === 'buy' ? (adConfig.maxPrice ?? null) : undefined,
+      minMaxOrderLimit: adConfig.smartMinMaxOrderLimit,
     });
 
     return engine;

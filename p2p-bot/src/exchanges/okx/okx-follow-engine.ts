@@ -19,6 +19,7 @@ export interface OkxFollowConfig {
   minPrice?: number | null;
   maxPrice?: number | null;
   ignoredAdvertisers?: string[];
+  minMaxOrderLimit?: number;   // Min maxOrderLimit to filter trap ads
 }
 
 export interface OkxFollowResult {
@@ -80,6 +81,14 @@ export class OkxFollowEngine {
         ad.creator?.nickName?.toLowerCase() === this.config.targetNickName.toLowerCase()
       );
       targetAds.push(...found);
+    }
+
+    // Filter out trap ads from target (low max order limit)
+    if (this.config.minMaxOrderLimit) {
+      targetAds = targetAds.filter(ad => {
+        const maxOrder = parseFloat(ad.maxAmount || '0');
+        return maxOrder <= 0 || maxOrder >= this.config.minMaxOrderLimit!;
+      });
     }
 
     if (targetAds.length === 0) {
@@ -148,6 +157,11 @@ export class OkxFollowEngine {
           const isIgnored = this.config.ignoredAdvertisers?.some(
             ignored => ignored.toLowerCase() === nick
           );
+          // Filter trap ads with low max order limit
+          if (this.config.minMaxOrderLimit) {
+            const maxOrder = parseFloat(ad.maxAmount || '0');
+            if (maxOrder > 0 && maxOrder < this.config.minMaxOrderLimit) return false;
+          }
           return price >= this.config.minPrice! && !isSelf && !isTarget && !isIgnored;
         })
         .sort((a, b) => parseFloat(a.unitPrice) - parseFloat(b.unitPrice));

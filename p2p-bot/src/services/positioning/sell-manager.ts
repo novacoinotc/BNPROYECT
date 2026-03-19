@@ -153,11 +153,13 @@ export class SellAdManager extends EventEmitter {
         matchPrice: this.config.matchPrice,
         myNickName: process.env.BINANCE_MY_NICKNAME || undefined,
         ignoredAdvertisers: dbConfig.ignoredAdvertisers || [],
+        minMaxOrderLimit: dbConfig.smartMinMaxOrderLimit,
       });
 
-      // Update follow engine with ignored advertisers
+      // Update follow engine with ignored advertisers and anti-trap filter
       this.followEngine.updateConfig({
         ignoredAdvertisers: dbConfig.ignoredAdvertisers || [],
+        minMaxOrderLimit: dbConfig.smartMinMaxOrderLimit,
       });
 
       if (oldMode !== this.config.mode) {
@@ -298,7 +300,7 @@ export class SellAdManager extends EventEmitter {
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'SELL', ad.asset)
-      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, maxPrice: null, spotMarginCents: 0, smartMinOrderCount: 10, smartMinSurplus: 100 };
+      : { enabled: true, mode: this.config.mode, followTarget: this.config.followTarget, matchPrice: this.config.matchPrice, undercutCents: this.config.undercutCents, minPrice: null, maxPrice: null, spotMarginCents: 0, smartMinOrderCount: 10, smartMinSurplus: 100, smartMinMaxOrderLimit: 5000 };
 
     // Skip if this asset is disabled (silent - no log spam)
     if (assetConfig.enabled === false) {
@@ -319,6 +321,7 @@ export class SellAdManager extends EventEmitter {
         undercutCents: assetConfig.undercutCents,
         matchPrice: assetConfig.matchPrice,
         minPrice: assetConfig.minPrice,  // Price floor
+        minMaxOrderLimit: assetConfig.smartMinMaxOrderLimit,
       });
       const result = await this.followEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {
@@ -343,6 +346,7 @@ export class SellAdManager extends EventEmitter {
         minPrice: assetConfig.minPrice,  // Price floor
         minMonthOrderCount: assetConfig.smartMinOrderCount,
         minSurplusAmount: assetConfig.smartMinSurplus,
+        minMaxOrderLimit: assetConfig.smartMinMaxOrderLimit,
       });
       const result = await this.smartEngine.getPrice(ad.asset, ad.fiat);
       if (result?.success) {

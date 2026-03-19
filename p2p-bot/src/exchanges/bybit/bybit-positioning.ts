@@ -322,6 +322,7 @@ export class BybitPositioning extends EventEmitter {
       minSurplusAmount: assetConfig.smartMinSurplus,
       minFinishRate: assetConfig.smartMinFinishRate,
       ignoredAdvertisers: this.dbConfig?.ignoredAdvertisers,
+      minMaxOrderLimit: assetConfig.smartMinMaxOrderLimit,
     });
 
     return engine;
@@ -348,6 +349,7 @@ export class BybitPositioning extends EventEmitter {
       matchPrice: assetConfig.matchPrice,
       minPrice: ad.side === 'sell' ? (assetConfig.minPrice ?? undefined) : undefined,
       maxPrice: ad.side === 'buy' ? (assetConfig.maxPrice ?? undefined) : undefined,
+      minMaxOrderLimit: assetConfig.smartMinMaxOrderLimit,
     });
 
     return engine;
