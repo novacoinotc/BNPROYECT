@@ -230,7 +230,30 @@ function setupApiEndpoints(app: import('express').Application): void {
     }
   });
 
-  log.info('OKX API endpoints registered (/api/sellers, /api/ads)');
+  // Release endpoint — used by dashboard (biometric verified) to release OKX orders
+  // OKX does NOT need TOTP — uses API key auth with verificationType '2'
+  app.post('/api/orders/release', async (req, res) => {
+    try {
+      const { orderNumber } = req.body;
+
+      if (!orderNumber) {
+        res.status(400).json({ success: false, error: 'orderNumber is required' });
+        return;
+      }
+
+      log.info({ orderNumber }, 'OKX: Manual release requested (biometric verified)');
+
+      await client.releaseCrypto(orderNumber);
+
+      log.info({ orderNumber }, 'OKX: Manual release successful');
+      res.json({ success: true, message: 'Order released' });
+    } catch (error: any) {
+      log.error({ error: error.message }, 'OKX: Manual release failed');
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  log.info('OKX API endpoints registered (/api/sellers, /api/ads, /api/orders/release)');
 }
 
 function setupEventHandlers(): void {
