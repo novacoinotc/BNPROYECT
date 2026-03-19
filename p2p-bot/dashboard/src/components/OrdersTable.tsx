@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { P2PReleaseModal } from './p2p/P2PReleaseModal';
 
 interface VerificationStep {
   timestamp: string;
@@ -234,110 +235,7 @@ function getDescriptiveStatus(order: Order): { emoji: string; label: string; col
   };
 }
 
-// Release Modal Component
-function ReleaseModal({
-  orderNumber,
-  onClose,
-  onSuccess
-}: {
-  orderNumber: string;
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [authType, setAuthType] = useState('GOOGLE');
-  const [code, setCode] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleRelease = async () => {
-    if (!code) {
-      setError('Ingresa el codigo de verificacion');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/orders/release', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderNumber, authType, code }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        onSuccess();
-        onClose();
-      } else {
-        setError(data.error || 'Error al liberar orden');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Error de conexion');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-[#13111c] rounded-lg p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-white mb-4">Liberar Orden</h3>
-        <p className="text-sm text-gray-400 mb-4">
-          Orden: <span className="font-mono text-white">{orderNumber.slice(-8)}</span>
-        </p>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">Tipo de verificacion</label>
-            <select
-              value={authType}
-              onChange={(e) => setAuthType(e.target.value)}
-              className="w-full bg-[#2d2640] text-white rounded px-3 py-2 border border-[#3d3655] focus:border-primary-500 focus:outline-none"
-            >
-              <option value="GOOGLE">Google Authenticator</option>
-              <option value="SMS">SMS</option>
-              <option value="FUND_PWD">Contrasena de fondos</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">Codigo de verificacion</label>
-            <input
-              type="text"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="Ingresa el codigo"
-              className="w-full bg-[#2d2640] text-white rounded px-3 py-2 border border-[#3d3655] focus:border-primary-500 focus:outline-none"
-              autoFocus
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-red-400">{error}</p>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={onClose}
-              className="flex-1 px-4 py-2 bg-[#2d2640] text-gray-300 rounded hover:bg-[#3d3655] transition"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleRelease}
-              disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Liberando...' : 'Liberar'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Release Modal: now uses P2PReleaseModal (biometric) imported at top
 
 // Chat Section Component
 function ChatSection({ orderNumber }: { orderNumber: string }) {
@@ -932,9 +830,9 @@ export function OrdersTable({ orders, onRefresh }: { orders: Order[]; onRefresh?
         </table>
       </div>
 
-      {/* Release Modal */}
+      {/* Release Modal — biometric (Face ID / Touch ID) */}
       {releaseOrder && (
-        <ReleaseModal
+        <P2PReleaseModal
           orderNumber={releaseOrder}
           onClose={() => setReleaseOrder(null)}
           onSuccess={handleReleaseSuccess}
