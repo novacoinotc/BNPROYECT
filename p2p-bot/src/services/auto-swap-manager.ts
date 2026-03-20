@@ -40,6 +40,7 @@ export class AutoSwapManager extends EventEmitter {
   private lotSizeCache = new Map<string, LotSizeInfo>();
   private consecutiveErrors = 0;
   private readonly maxConsecutiveErrors = 5;
+  private ipBanUntil: number = 0; // Timestamp (ms) when IP ban expires
   private totalSwaps = 0;
   private totalReceivedUsdt = 0;
   private totalTransfers = 0;
@@ -230,6 +231,11 @@ export class AutoSwapManager extends EventEmitter {
       await this.reloadSellAd(parseFloat(amount));
     } catch (error: any) {
       const errorMsg = error?.response?.data?.msg || error?.message || '';
+      // Detect IP ban and set cooldown
+      if (error?.response?.status === 418 || errorMsg.includes('IP banned until')) {
+        const banMatch = errorMsg.match(/IP banned until (\d+)/);
+        this.ipBanUntil = banMatch ? parseInt(banMatch[1]) : Date.now() + 15 * 60 * 1000;
+      }
       // Ignore harmless errors
       if (!errorMsg.includes('You don') && !errorMsg.includes('The amount')) {
         logger.warn({ error: errorMsg }, '[AUTO-SWAP] Spot → Funding USDT transfer failed');
@@ -354,6 +360,13 @@ export class AutoSwapManager extends EventEmitter {
     this.isPolling = true;
 
     try {
+      // IP ban cooldown: skip polls until ban expires
+      if (this.ipBanUntil > Date.now()) {
+        const remainingMin = Math.ceil((this.ipBanUntil - Date.now()) / 60000);
+        logger.warn({ remainingMin }, '[AUTO-SWAP] IP banned — waiting for ban to expire');
+        return;
+      }
+
       // Circuit breaker: skip if too many consecutive errors
       if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
         logger.warn({
@@ -513,10 +526,29 @@ export class AutoSwapManager extends EventEmitter {
       this.consecutiveErrors = 0;
     } catch (error: any) {
       this.consecutiveErrors++;
-      logger.error({
-        error: error?.message,
-        consecutiveErrors: this.consecutiveErrors,
-      }, '[AUTO-SWAP] Poll error');
+
+      // Detect IP ban (HTTP 418) and extract ban expiry timestamp
+      const errorData = error?.response?.data;
+      const errorMsg = typeof errorData === 'string' ? errorData : (errorData?.msg || error?.message || '');
+      if (error?.response?.status === 418 || errorMsg.includes('IP banned until')) {
+        const banMatch = errorMsg.match(/IP banned until (\d+)/);
+        if (banMatch) {
+          this.ipBanUntil = parseInt(banMatch[1]);
+          const remainingMin = Math.ceil((this.ipBanUntil - Date.now()) / 60000);
+          logger.warn({ banUntil: new Date(this.ipBanUntil).toISOString(), remainingMin },
+            '[AUTO-SWAP] IP ban detected — pausing until ban expires');
+        } else {
+          // No timestamp found, wait 15 minutes as safety
+          this.ipBanUntil = Date.now() + 15 * 60 * 1000;
+          logger.warn('[AUTO-SWAP] IP ban detected (no timestamp) — pausing 15 min');
+        }
+        this.consecutiveErrors = 0; // Reset errors, ban cooldown handles retry
+      } else {
+        logger.error({
+          error: error?.message,
+          consecutiveErrors: this.consecutiveErrors,
+        }, '[AUTO-SWAP] Poll error');
+      }
     } finally {
       this.isPolling = false;
     }
