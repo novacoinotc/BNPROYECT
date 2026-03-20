@@ -232,6 +232,19 @@ function setupApiEndpoints(app: import('express').Application): void {
 
   // Release endpoint — used by dashboard (biometric verified) to release OKX orders
   // OKX does NOT need TOTP — uses API key auth with verificationType '2'
+  // IMPORTANT: Remove the Binance webhook-receiver's /api/orders/release handler
+  // (which requires TOTP) and replace with OKX's handler (no TOTP needed).
+  // The Binance handler is registered first in the constructor, so we must remove it.
+  const routerStack = (app as any)._router?.stack;
+  if (routerStack) {
+    const idx = routerStack.findIndex((layer: any) =>
+      layer.route?.path === '/api/orders/release' && layer.route?.methods?.post
+    );
+    if (idx !== -1) {
+      routerStack.splice(idx, 1);
+      log.info('OKX: Removed Binance /api/orders/release handler (TOTP not needed for OKX)');
+    }
+  }
   app.post('/api/orders/release', async (req, res) => {
     try {
       const { orderNumber } = req.body;
