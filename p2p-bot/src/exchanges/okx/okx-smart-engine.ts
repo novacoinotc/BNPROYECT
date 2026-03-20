@@ -179,8 +179,10 @@ export class OkxSmartEngine {
 
       const aboveFloor = qualified.filter(ad => parseFloat(ad.unitPrice) >= this.config.minPrice!);
       if (aboveFloor.length > 0) {
-        ourPrice = parseFloat(aboveFloor[0].unitPrice);
-        log.info({ price: ourPrice.toFixed(2) }, 'OKX Smart: Matching competitor above floor');
+        const nextPrice = parseFloat(aboveFloor[0].unitPrice);
+        const undercutAttempt = this.config.matchPrice ? nextPrice : nextPrice - (this.config.undercutCents / 100);
+        ourPrice = Math.max(undercutAttempt, this.config.minPrice!);
+        log.info({ price: ourPrice.toFixed(2), competitor: nextPrice.toFixed(2) }, 'OKX Smart: Undercutting competitor above floor');
         return {
           success: true,
           targetPrice: Math.round(ourPrice * 100) / 100,

@@ -175,11 +175,12 @@ export class SmartEngine {
       const competitorsAboveFloor = qualifiedAds.filter(ad => parseFloat(ad.price) >= this.config.minPrice!);
 
       if (competitorsAboveFloor.length > 0) {
-        // MATCH the cheapest qualified competitor above floor (don't undercut - we're at our cost limit)
+        // UNDERCUT the cheapest competitor above floor, but never go below floor
         const nextBestPrice = parseFloat(competitorsAboveFloor[0].price);
-        ourPrice = nextBestPrice;
+        const undercutAttempt = this.config.matchPrice ? nextBestPrice : nextBestPrice - (this.config.undercutCents / 100);
+        ourPrice = Math.max(undercutAttempt, this.config.minPrice);
 
-        logger.info(`📈 [SMART] At floor - matching competitor at $${ourPrice.toFixed(2)}`);
+        logger.info(`📈 [SMART] At floor - undercutting competitor ${nextBestPrice.toFixed(2)} → ${ourPrice.toFixed(2)} (floor: ${this.config.minPrice.toFixed(2)})`);
 
         return {
           success: true,

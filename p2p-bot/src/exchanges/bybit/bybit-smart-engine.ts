@@ -183,8 +183,10 @@ export class BybitSmartEngine {
 
       const aboveFloor = qualified.filter(ad => parseFloat(ad.price) >= this.config.minPrice!);
       if (aboveFloor.length > 0) {
-        ourPrice = parseFloat(aboveFloor[0].price);
-        log.info({ price: ourPrice.toFixed(2), nick: aboveFloor[0].nickName }, 'Bybit Smart: Matching competitor above floor');
+        const nextPrice = parseFloat(aboveFloor[0].price);
+        const undercutAttempt = this.config.matchPrice ? nextPrice : nextPrice - (this.config.undercutCents / 100);
+        ourPrice = Math.max(undercutAttempt, this.config.minPrice!);
+        log.info({ price: ourPrice.toFixed(2), competitor: nextPrice.toFixed(2), nick: aboveFloor[0].nickName }, 'Bybit Smart: Undercutting competitor above floor');
         return {
           success: true,
           targetPrice: Math.round(ourPrice * 100) / 100,

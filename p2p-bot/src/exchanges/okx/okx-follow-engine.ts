@@ -168,8 +168,10 @@ export class OkxFollowEngine {
 
       if (competitorsAboveFloor.length > 0) {
         const next = competitorsAboveFloor[0];
-        ourPrice = parseFloat(next.unitPrice);
-        log.info({ price: ourPrice.toFixed(2), competitor: next.creator.nickName }, 'OKX Follow: Matching above floor');
+        const nextPrice = parseFloat(next.unitPrice);
+        const undercutAttempt = this.config.matchPrice ? nextPrice : nextPrice - (this.config.undercutCents / 100);
+        ourPrice = Math.max(undercutAttempt, this.config.minPrice!);
+        log.info({ price: ourPrice.toFixed(2), competitor: next.creator.nickName }, 'OKX Follow: Undercutting above floor');
         return {
           success: true,
           targetPrice: Math.round(ourPrice * 100) / 100,

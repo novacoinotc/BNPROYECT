@@ -186,12 +186,13 @@ export class FollowEngine {
         .sort((a, b) => parseFloat(a.price) - parseFloat(b.price)); // Sort by price ascending
 
       if (competitorsAboveFloor.length > 0) {
-        // MATCH the cheapest competitor above floor (don't undercut - we're at our cost limit)
+        // UNDERCUT the cheapest competitor above floor, but never go below floor
         const nextCompetitor = competitorsAboveFloor[0];
         const nextPrice = parseFloat(nextCompetitor.price);
-        ourPrice = nextPrice;
+        const undercutAttempt = this.config.matchPrice ? nextPrice : nextPrice - (this.config.undercutCents / 100);
+        ourPrice = Math.max(undercutAttempt, this.config.minPrice!);
 
-        logger.info(`📈 [FOLLOW] At floor - matching "${nextCompetitor.advertiser.nickName}" at $${ourPrice.toFixed(2)}`);
+        logger.info(`📈 [FOLLOW] At floor - undercutting "${nextCompetitor.advertiser.nickName}" ${nextPrice.toFixed(2)} → ${ourPrice.toFixed(2)}`);
 
         return {
           success: true,
