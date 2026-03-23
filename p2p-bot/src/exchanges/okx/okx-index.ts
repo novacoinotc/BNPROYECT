@@ -256,9 +256,17 @@ function setupApiEndpoints(app: import('express').Application): void {
 
       log.info({ orderNumber }, 'OKX: Manual release requested (biometric verified)');
 
-      await client.releaseCrypto(orderNumber);
+      // OKX requires fiatAmount for release — fetch order details first
+      const order = await client.getOrder(orderNumber);
+      const fiatAmount = order?.fiatAmount;
+      if (!fiatAmount) {
+        res.status(404).json({ success: false, error: 'Order not found or missing amount' });
+        return;
+      }
 
-      log.info({ orderNumber }, 'OKX: Manual release successful');
+      await client.releaseCrypto(orderNumber, fiatAmount);
+
+      log.info({ orderNumber, amount: fiatAmount }, 'OKX: Manual release successful');
       res.json({ success: true, message: 'Order released' });
     } catch (error: any) {
       log.error({ error: error.message }, 'OKX: Manual release failed');
