@@ -256,14 +256,38 @@ function setupApiEndpoints(app: import('express').Application): void {
 
       log.info({ orderNumber }, 'OKX: Manual release requested (biometric verified)');
 
-      // OKX requires fiatAmount for release — fetch order details first
+      // OKX requires fiatAmount for release — try multiple sources:
+      // 1. Fetch from OKX API
+      // 2. Look up in local DB
+      // 3. Try release without amount (some OKX endpoints accept it)
+      let fiatAmount: string | undefined;
+
       const order = await client.getOrder(orderNumber);
-      const fiatAmount = order?.fiatAmount;
-      if (!fiatAmount) {
-        res.status(404).json({ success: false, error: 'Order not found or missing amount' });
-        return;
+      if (order?.fiatAmount) {
+        fiatAmount = order.fiatAmount;
+        log.info({ orderNumber, fiatAmount, source: 'okx-api' }, 'OKX: Got order amount from API');
       }
 
+      // Fallback: look up in local DB
+      if (!fiatAmount) {
+        try {
+          const pg = await import('pg');
+          const tmpPool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          const dbResult = await tmpPool.query(
+            `SELECT amount FROM "Order" WHERE "orderNumber" = $1 LIMIT 1`,
+            [orderNumber]
+          );
+          await tmpPool.end();
+          if (dbResult.rows[0]?.amount) {
+            fiatAmount = dbResult.rows[0].amount.toString();
+            log.info({ orderNumber, fiatAmount, source: 'db' }, 'OKX: Got order amount from DB');
+          }
+        } catch (dbErr: any) {
+          log.warn({ error: dbErr.message }, 'OKX: DB lookup failed');
+        }
+      }
+
+      // Release with or without amount
       await client.releaseCrypto(orderNumber, fiatAmount);
 
       log.info({ orderNumber, amount: fiatAmount }, 'OKX: Manual release successful');
