@@ -274,12 +274,12 @@ function setupApiEndpoints(app: import('express').Application): void {
           const pg = await import('pg');
           const tmpPool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
           const dbResult = await tmpPool.query(
-            `SELECT amount FROM "Order" WHERE "orderNumber" = $1 LIMIT 1`,
+            `SELECT "totalPrice" FROM "Order" WHERE "orderNumber" = $1 LIMIT 1`,
             [orderNumber]
           );
           await tmpPool.end();
-          if (dbResult.rows[0]?.amount) {
-            fiatAmount = dbResult.rows[0].amount.toString();
+          if (dbResult.rows[0]?.totalPrice) {
+            fiatAmount = dbResult.rows[0].totalPrice.toString();
             log.info({ orderNumber, fiatAmount, source: 'db' }, 'OKX: Got order amount from DB');
           }
         } catch (dbErr: any) {
