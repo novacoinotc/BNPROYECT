@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMerchantContext } from '@/lib/merchant-context';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 import { Pool } from 'pg';
 
 const pool = new Pool({
@@ -21,13 +21,20 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = (page - 1) * limit;
 
-    let where = `"merchantId" = $1`;
-    const params: any[] = [context.merchantId];
-    let paramIdx = 2;
+    // Admin without viewAs sees all, merchant sees own
+    const filter = getMerchantFilter(context);
+    let where = '1=1';
+    const params: any[] = [];
+    let paramIdx = 1;
+
+    if (filter.merchantId) {
+      where += ` AND "merchantId" = $${paramIdx++}`;
+      params.push(filter.merchantId);
+    }
 
     if (orderNumber) {
-      where += ` AND "orderNumber" = $${paramIdx++}`;
-      params.push(orderNumber);
+      where += ` AND "orderNumber" LIKE $${paramIdx++}`;
+      params.push(`%${orderNumber}%`);
     }
 
     if (documentType) {
@@ -43,7 +50,7 @@ export async function GET(request: NextRequest) {
 
     const result = await pool.query(
       `SELECT id, "orderNumber", "documentType", "compressedSize", "amount",
-              "buyerName", "createdAt"
+              "buyerName", "merchantId", "createdAt"
        FROM "OrderImage"
        WHERE ${where}
        ORDER BY "createdAt" DESC

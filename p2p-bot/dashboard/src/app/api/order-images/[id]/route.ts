@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMerchantContext } from '@/lib/merchant-context';
+import { getMerchantContext, getMerchantFilter } from '@/lib/merchant-context';
 import { Pool } from 'pg';
 
 const pool = new Pool({
@@ -18,11 +18,18 @@ export async function GET(
     }
 
     const { id } = await params;
+    const filter = getMerchantFilter(context);
 
-    const result = await pool.query(
-      `SELECT "imageData", "mimeType" FROM "OrderImage" WHERE id = $1 AND "merchantId" = $2`,
-      [id, context.merchantId]
-    );
+    let query = `SELECT "imageData", "mimeType" FROM "OrderImage" WHERE id = $1`;
+    const queryParams: any[] = [id];
+
+    // Non-admin users can only see their own images
+    if (filter.merchantId) {
+      query += ` AND "merchantId" = $2`;
+      queryParams.push(filter.merchantId);
+    }
+
+    const result = await pool.query(query, queryParams);
 
     if (!result.rows[0]) {
       return new NextResponse('Not found', { status: 404 });
