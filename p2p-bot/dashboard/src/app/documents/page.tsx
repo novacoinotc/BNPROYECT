@@ -10,6 +10,7 @@ interface OrderImage {
   compressedSize: number;
   amount: string | null;
   buyerName: string | null;
+  merchantId: string | null;
   createdAt: string;
 }
 
@@ -24,15 +25,26 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 export default function DocumentsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [nameSearch, setNameSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['order-images', page, search, typeFilter],
+    queryKey: ['order-images', page, search, nameSearch, typeFilter, dateFrom, dateTo, minAmount, maxAmount],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), limit: '30' });
       if (search) params.set('orderNumber', search);
+      if (nameSearch) params.set('buyerName', nameSearch);
       if (typeFilter) params.set('type', typeFilter);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      if (minAmount) params.set('minAmount', minAmount);
+      if (maxAmount) params.set('maxAmount', maxAmount);
       const res = await fetch(`/api/order-images?${params}`);
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
@@ -44,6 +56,14 @@ export default function DocumentsPage() {
   const totalPages = data?.totalPages || 1;
   const total = data?.total || 0;
 
+  const clearFilters = () => {
+    setSearch(''); setNameSearch(''); setTypeFilter('');
+    setDateFrom(''); setDateTo(''); setMinAmount(''); setMaxAmount('');
+    setPage(1);
+  };
+
+  const hasFilters = search || nameSearch || typeFilter || dateFrom || dateTo || minAmount || maxAmount;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -54,42 +74,107 @@ export default function DocumentsPage() {
             {total} imagenes guardadas del chat
           </p>
         </div>
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+            showFilters || hasFilters ? 'bg-primary-500/20 text-primary-400' : 'bg-[#1e2a3e] text-gray-400'
+          }`}
+        >
+          Filtros {hasFilters ? '(activos)' : ''}
+        </button>
       </div>
 
-      {/* Filters */}
+      {/* Search + Type (always visible) */}
       <div className="flex gap-3 flex-wrap">
         <input
           type="text"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          placeholder="Buscar por # orden..."
-          className="flex-1 min-w-[200px] bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52] focus:border-primary-500 focus:outline-none"
+          placeholder="# orden..."
+          className="flex-1 min-w-[140px] bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52] focus:border-primary-500 focus:outline-none"
+        />
+        <input
+          type="text"
+          value={nameSearch}
+          onChange={(e) => { setNameSearch(e.target.value); setPage(1); }}
+          placeholder="Nombre comprador..."
+          className="flex-1 min-w-[140px] bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52] focus:border-primary-500 focus:outline-none"
         />
         <select
           value={typeFilter}
           onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
           className="bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
         >
-          <option value="">Todos los tipos</option>
+          <option value="">Tipo</option>
           <option value="RECEIPT">Comprobantes</option>
           <option value="ID_INE">INE</option>
           <option value="ID_PASSPORT">Pasaporte</option>
+          <option value="ID_LICENSE">Licencia</option>
           <option value="UNKNOWN">Otros</option>
         </select>
       </div>
+
+      {/* Advanced Filters */}
+      {showFilters && (
+        <div className="bg-[#151d2e] rounded-xl border border-[#1e2a3e] p-4 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Desde</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Hasta</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Monto min</label>
+              <input
+                type="number"
+                value={minAmount}
+                onChange={(e) => { setMinAmount(e.target.value); setPage(1); }}
+                placeholder="$0"
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Monto max</label>
+              <input
+                type="number"
+                value={maxAmount}
+                onChange={(e) => { setMaxAmount(e.target.value); setPage(1); }}
+                placeholder="$999,999"
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+          </div>
+          {hasFilters && (
+            <button onClick={clearFilters} className="text-xs text-red-400 hover:text-red-300">
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Image Grid */}
       {isLoading ? (
         <div className="text-center py-12 text-gray-500">Cargando...</div>
       ) : images.length === 0 ? (
         <div className="text-center py-12">
-          <div className="text-4xl mb-3">
-            <svg className="w-12 h-12 mx-auto text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-          </div>
+          <svg className="w-12 h-12 mx-auto text-gray-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
           <p className="text-gray-500 text-sm">
-            {search ? 'No hay imagenes para esta orden' : 'Aun no hay imagenes guardadas'}
+            {hasFilters ? 'No hay imagenes con estos filtros' : 'Aun no hay imagenes guardadas'}
           </p>
           <p className="text-gray-600 text-xs mt-1">Las imagenes se guardan automaticamente del chat</p>
         </div>
@@ -101,9 +186,8 @@ export default function DocumentsPage() {
               <div
                 key={img.id}
                 onClick={() => setSelectedImage(img.id)}
-                className="bg-[#151d2e] rounded-xl border border-[#1e2a3e] overflow-hidden cursor-pointer hover:border-primary-500/50 transition group"
+                className="bg-[#151d2e] rounded-xl border border-[#1e2a3e] overflow-hidden cursor-pointer hover:border-primary-500/50 transition"
               >
-                {/* Thumbnail */}
                 <div className="aspect-[3/4] relative bg-[#0d1520]">
                   <img
                     src={`/api/order-images/${img.id}`}
@@ -111,17 +195,12 @@ export default function DocumentsPage() {
                     className="w-full h-full object-cover"
                     loading="lazy"
                   />
-                  {/* Type badge */}
                   <span className={`absolute top-1.5 left-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${typeInfo.color}`}>
                     {typeInfo.label}
                   </span>
                 </div>
-
-                {/* Info */}
                 <div className="p-2">
-                  <p className="text-xs font-mono text-gray-300 truncate">
-                    #{img.orderNumber.slice(-8)}
-                  </p>
+                  <p className="text-xs font-mono text-gray-300 truncate">#{img.orderNumber.slice(-8)}</p>
                   {img.amount && (
                     <p className="text-xs text-emerald-400 font-medium">
                       ${parseFloat(img.amount).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
@@ -150,9 +229,7 @@ export default function DocumentsPage() {
           >
             Anterior
           </button>
-          <span className="text-sm text-gray-400">
-            {page} / {totalPages}
-          </span>
+          <span className="text-sm text-gray-400">{page} / {totalPages}</span>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
