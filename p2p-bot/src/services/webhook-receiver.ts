@@ -153,6 +153,34 @@ export class WebhookReceiver extends EventEmitter {
     // Image proxy - downloads Binance chat images for INE storage
     this.app.get('/api/proxy-image', this.handleImageProxy.bind(this));
 
+    // Order images - retrieve saved chat images for an order
+    this.app.get('/api/orders/:orderNumber/images', async (req, res) => {
+      try {
+        const { getOrderImages } = await import('./database-pg.js');
+        const images = await getOrderImages(req.params.orderNumber);
+        res.json({ success: true, images });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Serve individual image binary
+    this.app.get('/api/order-images/:id', async (req, res) => {
+      try {
+        const { getOrderImageById } = await import('./database-pg.js');
+        const image = await getOrderImageById(req.params.id);
+        if (!image) {
+          res.status(404).json({ success: false, error: 'Image not found' });
+          return;
+        }
+        res.setHeader('Content-Type', image.mimeType);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(image.imageData);
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Debug: Explore BUY order data (temporary - for development)
     this.app.get('/api/debug/buy-orders', this.handleDebugBuyOrders.bind(this));
 

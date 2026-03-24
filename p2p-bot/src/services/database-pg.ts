@@ -3215,6 +3215,100 @@ export async function cleanupOperatorSnapshots(daysToKeep: number = 90): Promise
   return result.rowCount || 0;
 }
 
+// ==================== ORDER IMAGES (Chat image auto-save) ====================
+
+let orderImageTableReady = false;
+
+async function ensureOrderImageTable(): Promise<void> {
+  if (orderImageTableReady) return;
+  const db = getPool();
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS "OrderImage" (
+      id TEXT PRIMARY KEY,
+      "orderNumber" TEXT NOT NULL,
+      "imageData" BYTEA NOT NULL,
+      "documentType" TEXT NOT NULL DEFAULT 'UNKNOWN',
+      "mimeType" TEXT NOT NULL DEFAULT 'image/jpeg',
+      "originalSize" INTEGER,
+      "compressedSize" INTEGER,
+      "amount" TEXT,
+      "buyerName" TEXT,
+      "chatMessageId" TEXT UNIQUE,
+      "ocrText" TEXT,
+      "merchantId" TEXT,
+      "createdAt" TIMESTAMP DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_image_order ON "OrderImage" ("orderNumber");
+    CREATE INDEX IF NOT EXISTS idx_order_image_merchant ON "OrderImage" ("merchantId");
+  `);
+  orderImageTableReady = true;
+}
+
+export async function saveOrderImage(data: {
+  orderNumber: string;
+  imageData: Buffer;
+  documentType?: string;
+  mimeType?: string;
+  originalSize?: number;
+  compressedSize?: number;
+  amount?: string;
+  buyerName?: string;
+  chatMessageId?: string;
+  ocrText?: string;
+}): Promise<string | null> {
+  await ensureOrderImageTable();
+  const db = getPool();
+  const id = generateId();
+  const merchantId = getMerchantId();
+
+  try {
+    await db.query(
+      `INSERT INTO "OrderImage" (id, "orderNumber", "imageData", "documentType", "mimeType",
+        "originalSize", "compressedSize", "amount", "buyerName", "chatMessageId", "ocrText", "merchantId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT ("chatMessageId") DO NOTHING`,
+      [
+        id, data.orderNumber, data.imageData, data.documentType || 'UNKNOWN',
+        data.mimeType || 'image/jpeg', data.originalSize || null, data.compressedSize || null,
+        data.amount || null, data.buyerName || null, data.chatMessageId || null,
+        data.ocrText || null, merchantId,
+      ]
+    );
+    return id;
+  } catch (error: any) {
+    // Silently handle duplicate chatMessageId
+    if (error.code === '23505') return null;
+    logger.error({ error: error.message }, 'Failed to save order image');
+    return null;
+  }
+}
+
+export async function getOrderImages(orderNumber: string): Promise<any[]> {
+  await ensureOrderImageTable();
+  const db = getPool();
+  const merchantId = getMerchantId();
+  const merchantFilter = merchantId ? ` AND "merchantId" = '${merchantId}'` : '';
+  const result = await db.query(
+    `SELECT id, "orderNumber", "documentType", "compressedSize", "amount", "buyerName",
+            "chatMessageId", "createdAt"
+     FROM "OrderImage"
+     WHERE "orderNumber" = $1${merchantFilter}
+     ORDER BY "createdAt" ASC`,
+    [orderNumber]
+  );
+  return result.rows;
+}
+
+export async function getOrderImageById(id: string): Promise<{ imageData: Buffer; mimeType: string } | null> {
+  await ensureOrderImageTable();
+  const db = getPool();
+  const result = await db.query(
+    `SELECT "imageData", "mimeType" FROM "OrderImage" WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 // ==================== CLEANUP ====================
 
 export async function disconnect(): Promise<void> {

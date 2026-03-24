@@ -12,6 +12,7 @@ import { getChatHandler } from './services/chat-handler.js';
 import { createWebhookReceiver } from './services/webhook-receiver.js';
 import { createOCRService } from './services/ocr-service.js';
 import { createAutoReleaseOrchestrator } from './services/auto-release.js';
+import { setupImageSaver } from './services/image-saver.js';
 import { createTOTPService, TOTPService } from './services/totp-service.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig, saveOperatorSnapshot } from './services/database-pg.js';
 import { fetchMerchantAds } from './services/binance-api.js';
@@ -195,6 +196,9 @@ async function initializeServices(): Promise<void> {
     totpConfigured: totpService.isConfigured(),
     maxAmount: process.env.MAX_AUTO_RELEASE_AMOUNT || '50000',
   }, 'Auto-release orchestrator initialized');
+
+  // Auto-save all chat images to OrderImage table
+  setupImageSaver(chatHandler, ocrService);
 }
 
 function setupEventHandlers(): void {
