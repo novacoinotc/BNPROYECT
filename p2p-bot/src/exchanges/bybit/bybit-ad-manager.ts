@@ -11,7 +11,27 @@ import { BybitMyAd } from './bybit-types.js';
 const log = logger.child({ module: 'bybit-ad-manager' });
 
 export class BybitAdManager {
+  // Rate limit: Bybit allows max 10 updates per ad per 5 minutes
+  private adUpdateTimestamps: Map<string, number[]> = new Map();
+  private readonly MAX_UPDATES_PER_WINDOW = 8; // Stay under 10 limit
+  private readonly WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(private readonly client: BybitClient) {}
+
+  private isRateLimited(adId: string): boolean {
+    const now = Date.now();
+    const timestamps = this.adUpdateTimestamps.get(adId) || [];
+    // Remove timestamps outside the window
+    const recent = timestamps.filter(ts => now - ts < this.WINDOW_MS);
+    this.adUpdateTimestamps.set(adId, recent);
+    return recent.length >= this.MAX_UPDATES_PER_WINDOW;
+  }
+
+  private recordUpdate(adId: string): void {
+    const timestamps = this.adUpdateTimestamps.get(adId) || [];
+    timestamps.push(Date.now());
+    this.adUpdateTimestamps.set(adId, timestamps);
+  }
 
   /**
    * Get active SELL ad for USDT/MXN (or specified pair)
@@ -39,6 +59,12 @@ export class BybitAdManager {
    * So we fetch the current ad, change the price, and send the full update
    */
   async updateAdPrice(adId: string, newPrice: string): Promise<boolean> {
+    // Rate limit check: skip if we've hit the per-ad update limit
+    if (this.isRateLimited(adId)) {
+      log.debug({ adId, newPrice }, 'Skipping update — rate limit (max 8 per 5min)');
+      return false;
+    }
+
     try {
       // Get current ad to preserve all fields
       const ad = await this.client.getAdDetail(adId);
@@ -75,10 +101,18 @@ export class BybitAdManager {
         paymentPeriod: String(ad.paymentPeriod),
       });
 
+      this.recordUpdate(adId);
       log.info({ adId, oldPrice, newPrice }, 'Ad price updated');
       return true;
     } catch (error: any) {
-      log.error({ error: error.message, adId, newPrice }, 'updateAdPrice failed');
+      // If Bybit returns rate limit error, fill the window to prevent retries
+      if (error.message?.includes('912120050') || error.message?.includes('exceed the limit')) {
+        const timestamps = Array(this.MAX_UPDATES_PER_WINDOW).fill(Date.now());
+        this.adUpdateTimestamps.set(adId, timestamps);
+        log.warn({ adId, newPrice }, 'Bybit rate limit hit — cooling down for 5 min');
+      } else {
+        log.error({ error: error.message, adId, newPrice }, 'updateAdPrice failed');
+      }
       return false;
     }
   }
