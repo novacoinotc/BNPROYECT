@@ -105,13 +105,15 @@ export class BybitAdManager {
       log.info({ adId, oldPrice, newPrice }, 'Ad price updated');
       return true;
     } catch (error: any) {
-      // If Bybit returns rate limit error, fill the window to prevent retries
-      if (error.message?.includes('912120050') || error.message?.includes('exceed the limit')) {
+      // If Bybit returns rate limit or region error, fill the window to prevent retries
+      const errMsg = error.message || '';
+      if (errMsg.includes('912120050') || errMsg.includes('exceed the limit') ||
+          errMsg.includes('300200031') || errMsg.includes('does not support P2P')) {
         const timestamps = Array(this.MAX_UPDATES_PER_WINDOW).fill(Date.now());
         this.adUpdateTimestamps.set(adId, timestamps);
-        log.warn({ adId, newPrice }, 'Bybit rate limit hit — cooling down for 5 min');
+        log.warn({ adId, newPrice }, 'Bybit update blocked — cooling down for 5 min');
       } else {
-        log.error({ error: error.message, adId, newPrice }, 'updateAdPrice failed');
+        log.error({ error: errMsg, adId, newPrice }, 'updateAdPrice failed');
       }
       return false;
     }
