@@ -361,13 +361,64 @@ export class BybitClient {
    * Get chat messages for order
    * POST /v5/p2p/order/message/listpage
    */
-  async getChatMessages(orderId: string, page: number = 1, size: number = 50): Promise<any[]> {
+  /**
+   * Get chat messages for an order (2-step: order detail → session → messages)
+   * Returns normalized message array for dashboard display
+   */
+  async getChatMessages(orderId: string, page: number = 1, size: number = 30): Promise<any[]> {
     try {
-      const result = await this.post<{ items: any[] }>(
-        '/v5/p2p/order/message/listpage',
-        { orderId, page: String(page), size: String(size) }
+      // Step 1: Get order detail to find targetUserMaskId
+      const detail = await this.getOrderDetail(orderId);
+      if (!detail) return [];
+
+      const targetMaskId = (detail as any).targetUserMaskId;
+      if (!targetMaskId) return [];
+
+      // Step 2: Get chat session
+      const sessionResult = await this.post<{ chatSession: any[] }>(
+        '/v5/p2p/chat/session/list',
+        { size: 5, userMaskId: targetMaskId }
       );
-      return result?.items || [];
+      const sessions = sessionResult?.chatSession || [];
+      if (sessions.length === 0) return [];
+
+      const sessionId = sessions[0].sessionId;
+
+      // Step 3: Get messages
+      const msgResult = await this.post<{ messages: any[] }>(
+        '/v5/p2p/chat/message/listpage',
+        { sessionId, limit: size, lastId: 0 }
+      );
+      const messages = msgResult?.messages || [];
+
+      // Normalize to common format
+      return messages.map((msg: any) => {
+        const isImage = msg.contentType === 'pic' || msg.contentType === 'PIC';
+        let content = '';
+        let imageUrl = '';
+
+        try {
+          const parsed = JSON.parse(msg.message || '{}');
+          content = parsed.content || '';
+          if (isImage) {
+            imageUrl = content.startsWith('http') ? content : `https://api.bybit.com${content}`;
+            content = '[Image]';
+          }
+        } catch {
+          content = msg.message || '';
+        }
+
+        return {
+          id: msg.id || `bybit-${orderId}-${msg.createDate}`,
+          content,
+          contentType: isImage ? 2 : 1,
+          message: content,
+          nickName: msg.sendUserNickName || '',
+          isSelf: msg.sendUserNickName === 'SYSTEM' ? false : undefined, // Can't determine self reliably
+          imageUrl: isImage ? imageUrl : undefined,
+          createTime: msg.createDate || String(Date.now()),
+        };
+      });
     } catch (error: any) {
       log.error({ error: error.message, orderId }, 'getChatMessages failed');
       return [];

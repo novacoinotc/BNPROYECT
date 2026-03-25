@@ -20,6 +20,7 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   ID_PASSPORT: { label: 'Pasaporte', color: 'bg-purple-500/20 text-purple-400' },
   ID_LICENSE: { label: 'Licencia', color: 'bg-amber-500/20 text-amber-400' },
   UNKNOWN: { label: 'Otro', color: 'bg-gray-500/20 text-gray-400' },
+  BYBIT_REFERENCE: { label: 'Bybit Ref', color: 'bg-orange-500/20 text-orange-400' },
 };
 
 export default function DocumentsPage() {
