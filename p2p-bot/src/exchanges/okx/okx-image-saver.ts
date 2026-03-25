@@ -8,6 +8,9 @@ import { logger } from '../../utils/logger.js';
 import { getOkxClient, OkxClient } from './okx-client.js';
 import { OkxOrderManager } from './okx-order-manager.js';
 import { saveOrderImage } from '../../services/database-pg.js';
+import { createOCRService, OCRService } from '../../services/ocr-service.js';
+
+let ocrService: OCRService | null = null;
 
 const log = logger.child({ module: 'okx-image-saver' });
 
@@ -71,6 +74,21 @@ export function setupOkxImageSaver(orderManager: OkxOrderManager): void {
     }
   }, 5 * 60 * 1000);
 
+  // Initialize OCR in background (don't block startup)
+  if (process.env.ENABLE_OCR !== 'false') {
+    try {
+      ocrService = createOCRService();
+      ocrService.initialize().then(() => {
+        log.info('OKX OCR service ready for image classification');
+      }).catch(() => {
+        log.warn('OKX OCR initialization failed — images saved as UNKNOWN');
+        ocrService = null;
+      });
+    } catch {
+      ocrService = null;
+    }
+  }
+
   log.info('OKX image auto-saver initialized');
 }
 
@@ -131,21 +149,43 @@ async function saveImageInBackground(
     compressedBuffer = imageBuffer;
   }
 
+  // OCR + classify
+  let documentType = 'UNKNOWN';
+  let ocrText: string | undefined;
+
+  if (ocrService) {
+    try {
+      const ocrResult = await ocrService.processReceiptBuffer(compressedBuffer);
+      if (ocrResult?.rawText && ocrResult.rawText.length > 10) {
+        ocrText = ocrResult.rawText.substring(0, 2000);
+        const { classifyText } = await import('../../services/document-classifier.js');
+        const classification = classifyText(ocrText);
+        if (classification.confidence >= 0.3) {
+          documentType = classification.type;
+        }
+      }
+    } catch {
+      // OCR failed — save as UNKNOWN
+    }
+  }
+
   const savedId = await saveOrderImage({
     orderNumber,
     imageData: compressedBuffer,
-    documentType: 'UNKNOWN',
+    documentType,
     originalSize: imageBuffer.length,
     compressedSize: compressedBuffer.length,
     amount,
     buyerName,
     chatMessageId,
+    ocrText,
   });
 
   if (savedId) {
     log.info({
       orderNumber,
+      documentType,
       compressedKB: Math.round(compressedBuffer.length / 1024),
-    }, `📸 OKX image saved (${Math.round(compressedBuffer.length / 1024)}KB)`);
+    }, `📸 OKX image saved: ${documentType} (${Math.round(compressedBuffer.length / 1024)}KB)`);
   }
 }
