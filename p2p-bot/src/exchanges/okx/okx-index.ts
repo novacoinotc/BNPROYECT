@@ -14,6 +14,7 @@ import { createOkxPositioning, OkxPositioning } from './okx-positioning.js';
 import { createOkxAutoSwap, OkxAutoSwap } from './okx-auto-swap.js';
 import { createOkxBuyOrderManager, OkxBuyOrderManager } from './okx-buy-order-manager.js';
 import { testConnection, disconnect, isPositioningEnabled, getBotConfig } from '../../services/database-pg.js';
+import { setupOkxImageSaver } from './okx-image-saver.js';
 
 const log = logger.child({ module: 'okx-main' });
 
@@ -89,6 +90,11 @@ async function main(): Promise<void> {
 
   // 6. Start services
   await startServices();
+
+  // Image auto-saver
+  if (orderManager) {
+    setupOkxImageSaver(orderManager);
+  }
 
   log.info('='.repeat(50));
   log.info('OKX Bot fully operational!');

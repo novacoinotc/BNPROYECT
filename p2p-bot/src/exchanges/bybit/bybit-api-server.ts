@@ -81,6 +81,29 @@ export class BybitApiServer extends EventEmitter {
     this.app.get('/api/positioning/status', this.handlePositioningStatus.bind(this));
     this.app.get('/api/proxy-image', this.handleImageProxy.bind(this));
 
+    // Order images
+    this.app.get('/api/orders/:orderNumber/images', async (req, res) => {
+      try {
+        const { getOrderImages } = await import('../../services/database-pg.js');
+        const images = await getOrderImages(req.params.orderNumber);
+        res.json({ success: true, images });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+    this.app.get('/api/order-images/:id', async (req, res) => {
+      try {
+        const { getOrderImageById } = await import('../../services/database-pg.js');
+        const image = await getOrderImageById(req.params.id);
+        if (!image) { res.status(404).json({ success: false, error: 'Not found' }); return; }
+        res.setHeader('Content-Type', image.mimeType);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(image.imageData);
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Auto-buy endpoints
     this.app.get('/api/auto-buy/status', (_req, res) => {
       const mgr = this.services.buyOrderManager;

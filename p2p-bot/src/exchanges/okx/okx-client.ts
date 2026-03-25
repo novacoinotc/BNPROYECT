@@ -493,6 +493,24 @@ export class OkxClient {
   }
 
   /**
+   * Get chat history for an order
+   * GET /api/v5/p2p/chat/history
+   */
+  async getChatHistory(orderId: string, pageSize: number = 50): Promise<any[]> {
+    try {
+      const result = await this.p2pGet<any>('/api/v5/p2p/chat/history', {
+        orderId,
+        pageSize: String(pageSize),
+      });
+      // Result can be an array or have items
+      return Array.isArray(result) ? result : (result?.items || []);
+    } catch (error: any) {
+      log.error({ error: error.message, orderId }, 'getChatHistory failed');
+      return [];
+    }
+  }
+
+  /**
    * Cancel an order
    * POST /api/v5/p2p/order/cancel
    */

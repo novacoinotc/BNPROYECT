@@ -14,6 +14,7 @@ import { createBybitAutoSwap, BybitAutoSwap } from './bybit-auto-swap.js';
 import { createBybitBuyOrderManager, BybitBuyOrderManager } from './bybit-buy-order-manager.js';
 import { createBybitApiServer, BybitApiServer } from './bybit-api-server.js';
 import { testConnection, disconnect, isPositioningEnabled, isReleaseEnabled } from '../../services/database-pg.js';
+import { setupBybitImageSaver } from './bybit-image-saver.js';
 
 const log = logger.child({ module: 'bybit-main' });
 
@@ -172,6 +173,11 @@ async function startServices(): Promise<void> {
     }
 
     log.info('Bybit Auto-Release started');
+  }
+
+  // Image auto-saver — saves all chat images to OrderImage table
+  if (orderManager) {
+    setupBybitImageSaver(orderManager);
   }
 
   // Positioning — check DB toggle periodically
