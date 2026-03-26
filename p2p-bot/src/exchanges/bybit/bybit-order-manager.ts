@@ -7,7 +7,7 @@
 import { EventEmitter } from 'events';
 import { BybitClient, getBybitClient } from './bybit-client.js';
 import { logger } from '../../utils/logger.js';
-import { saveOrder, getStaleOrders, getVerificationTimeline } from '../../services/database-pg.js';
+import { saveOrder, getStaleOrders, getVerificationTimeline, updateOrderStatus } from '../../services/database-pg.js';
 import {
   BybitOrderData,
   BybitOrderEvent,
@@ -300,7 +300,8 @@ export class BybitOrderManager extends EventEmitter {
       newStatus: newOrder.orderStatus,
     }, 'Bybit order status changed');
 
-    try { await saveOrder(newOrder); } catch { /* continue */ }
+    // Update status in DB (saveOrder only inserts, so we need explicit UPDATE for status changes)
+    try { await updateOrderStatus(newOrder.orderNumber, newOrder.orderStatus); } catch { /* order may not exist yet */ }
 
     switch (newOrder.orderStatus) {
       case 'BUYER_PAYED':
@@ -334,7 +335,7 @@ export class BybitOrderManager extends EventEmitter {
           this.activeOrders.delete(newOrder.orderNumber);
           this.pendingMatches.delete(newOrder.orderNumber);
           newOrder.orderStatus = 'COMPLETED';
-          try { await saveOrder(newOrder); } catch { /* continue */ }
+          try { await updateOrderStatus(newOrder.orderNumber, 'COMPLETED'); } catch { /* continue */ }
           this.emit('order', { type: 'released', order: newOrder } as BybitOrderEvent);
         } else {
           this.activeOrders.delete(newOrder.orderNumber);
