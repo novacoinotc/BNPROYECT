@@ -96,6 +96,7 @@ export async function GET() {
         smartMinPositiveRate: config.smartMinPositiveRate ?? 0.95,
         smartRequireOnline: config.smartRequireOnline ?? true,
         smartMinSurplus: config.smartMinSurplus ?? 100,
+        smartMinMaxOrderLimit: config.smartMinMaxOrderLimit ?? 5000,
 
         // Strategy
         undercutCents: config.undercutCents ?? 1,
@@ -219,6 +220,10 @@ export async function POST(request: NextRequest) {
       updates.push(`"smartMinSurplus" = $${paramIndex++}`);
       values.push(body.smartMinSurplus);
     }
+    if (typeof body.smartMinMaxOrderLimit === 'number') {
+      updates.push(`"smartMinMaxOrderLimit" = $${paramIndex++}`);
+      values.push(body.smartMinMaxOrderLimit);
+    }
 
     // Strategy
     if (typeof body.undercutCents === 'number') {
@@ -320,6 +325,7 @@ export async function POST(request: NextRequest) {
         smartMinPositiveRate: config.smartMinPositiveRate,
         smartRequireOnline: config.smartRequireOnline,
         smartMinSurplus: config.smartMinSurplus,
+        smartMinMaxOrderLimit: config.smartMinMaxOrderLimit,
         undercutCents: config.undercutCents,
         matchPrice: config.matchPrice,
         autoMessageEnabled: config.autoMessageEnabled,

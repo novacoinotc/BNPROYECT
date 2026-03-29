@@ -8,6 +8,7 @@ interface BotConfig {
   positioningEnabled: boolean;
   smartMinOrderCount: number;
   smartMinSurplus: number;
+  smartMinMaxOrderLimit: number;
   undercutCents: number;
   matchPrice: boolean;
   releaseLastActive: string | null;
@@ -300,6 +301,59 @@ export default function SettingsPage() {
             </a>
           </div>
         </div>
+      </div>
+
+      {/* Anti-Trap Filter */}
+      <div className="card p-4">
+        <h2 className="font-semibold text-white mb-1">Filtro Anti-Trampa</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Ignora anuncios con limite de orden maximo menor a este valor (filtra anuncios bait que manipulan el precio)
+        </p>
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <label className="block text-[10px] text-gray-500 mb-1 uppercase">Limite minimo de orden (MXN)</label>
+            <input
+              type="number"
+              value={config?.smartMinMaxOrderLimit ?? 5000}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val >= 0) {
+                  setConfig(prev => prev ? { ...prev, smartMinMaxOrderLimit: val } : prev);
+                }
+              }}
+              className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52] focus:border-primary-500 focus:outline-none"
+              placeholder="5000"
+            />
+          </div>
+          <button
+            onClick={() => {
+              const val = config?.smartMinMaxOrderLimit;
+              if (val !== undefined) {
+                // Update ALL merchants (admin global config)
+                fetch('/api/bot-control/global', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ smartMinMaxOrderLimit: val }),
+                }).then(r => r.json()).then(d => {
+                  if (d.success) {
+                    setSuccessMessage(`Anti-trampa: ${val.toLocaleString()} MXN (${d.updated} merchants)`);
+                    setTimeout(() => setSuccessMessage(null), 3000);
+                  }
+                }).catch(() => {
+                  // Fallback: update current merchant only
+                  updateConfig({ smartMinMaxOrderLimit: val });
+                });
+              }
+            }}
+            disabled={saving}
+            className="mt-5 px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm font-medium transition disabled:opacity-50"
+          >
+            Aplicar a todos
+          </button>
+        </div>
+        <p className="text-[10px] text-gray-600 mt-2">
+          Ejemplo: Si Flowers888 pone anuncio con max $10,000, pon el filtro en $15,000 para ignorarlo
+        </p>
       </div>
 
       {/* App Info */}
