@@ -300,8 +300,10 @@ export class BybitOrderManager extends EventEmitter {
       newStatus: newOrder.orderStatus,
     }, 'Bybit order status changed');
 
-    // Update status in DB (saveOrder only inserts, so we need explicit UPDATE for status changes)
-    try { await updateOrderStatus(newOrder.orderNumber, newOrder.orderStatus); } catch { /* order may not exist yet */ }
+    // Update status in DB — but NOT for CANCELLED (need to check if it was released first)
+    if (newOrder.orderStatus !== 'CANCELLED' && newOrder.orderStatus !== 'CANCELLED_BY_SYSTEM') {
+      try { await updateOrderStatus(newOrder.orderNumber, newOrder.orderStatus); } catch { /* order may not exist yet */ }
+    }
 
     switch (newOrder.orderStatus) {
       case 'BUYER_PAYED':
@@ -320,26 +322,40 @@ export class BybitOrderManager extends EventEmitter {
 
       case 'CANCELLED':
       case 'CANCELLED_BY_SYSTEM': {
-        // Check if this order was already released — Bybit race condition:
-        // buyer can cancel almost simultaneously with release, resulting in
-        // status=CANCELLED even though crypto was already released successfully.
-        // In that case, treat as COMPLETED instead of CANCELLED.
+        // Bybit race condition: buyer cancels almost simultaneously with our release.
+        // Bybit reports CANCELLED even though crypto was released.
+        // Wait a moment for the RELEASED step to be written to DB, then check.
+        await new Promise(r => setTimeout(r, 3000));
+
         let wasReleased = false;
         try {
           const timeline = await getVerificationTimeline(newOrder.orderNumber);
           wasReleased = timeline.some(step => step.status === 'RELEASED');
         } catch { /* DB error — proceed with cancel */ }
 
+        // Also check if auto-release has this order as released (in-memory)
+        if (!wasReleased) {
+          // Double-check: was the order in BUYER_PAYED before? If so, it may have been released
+          if (oldOrder.orderStatus === 'BUYER_PAYED') {
+            // Wait a bit more and re-check
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const timeline2 = await getVerificationTimeline(newOrder.orderNumber);
+              wasReleased = timeline2.some(step => step.status === 'RELEASED');
+            } catch { /* continue */ }
+          }
+        }
+
+        this.activeOrders.delete(newOrder.orderNumber);
+        this.pendingMatches.delete(newOrder.orderNumber);
+
         if (wasReleased) {
-          log.warn({ orderId: newOrder.orderNumber }, 'Bybit: CANCELLED after RELEASED — ignoring cancel, treating as COMPLETED (Bybit race condition)');
-          this.activeOrders.delete(newOrder.orderNumber);
-          this.pendingMatches.delete(newOrder.orderNumber);
+          log.warn({ orderId: newOrder.orderNumber }, 'Bybit: CANCELLED after RELEASED — treating as COMPLETED');
           newOrder.orderStatus = 'COMPLETED';
           try { await updateOrderStatus(newOrder.orderNumber, 'COMPLETED'); } catch { /* continue */ }
           this.emit('order', { type: 'released', order: newOrder } as BybitOrderEvent);
         } else {
-          this.activeOrders.delete(newOrder.orderNumber);
-          this.pendingMatches.delete(newOrder.orderNumber);
+          try { await updateOrderStatus(newOrder.orderNumber, 'CANCELLED'); } catch { /* continue */ }
           this.emit('order', { type: 'cancelled', order: newOrder } as BybitOrderEvent);
           log.info({ orderId: newOrder.orderNumber }, 'Bybit order cancelled');
         }
