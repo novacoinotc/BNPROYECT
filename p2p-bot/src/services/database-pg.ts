@@ -271,10 +271,19 @@ export async function saveOrder(order: OrderData): Promise<void> {
 
 export async function updateOrderStatus(orderNumber: string, status: string): Promise<void> {
   const db = getPool();
-  await db.query(
-    `UPDATE "Order" SET status = $1::"OrderStatus", "updatedAt" = NOW() WHERE "orderNumber" = $2`,
-    [status, orderNumber]
-  );
+  // NEVER overwrite COMPLETED with CANCELLED (Bybit race condition protection)
+  if (status === 'CANCELLED' || status === 'CANCELLED_BY_SYSTEM') {
+    await db.query(
+      `UPDATE "Order" SET status = $1::"OrderStatus", "updatedAt" = NOW()
+       WHERE "orderNumber" = $2 AND status != 'COMPLETED'`,
+      [status, orderNumber]
+    );
+  } else {
+    await db.query(
+      `UPDATE "Order" SET status = $1::"OrderStatus", "updatedAt" = NOW() WHERE "orderNumber" = $2`,
+      [status, orderNumber]
+    );
+  }
 }
 
 export async function getOrder(orderNumber: string) {
