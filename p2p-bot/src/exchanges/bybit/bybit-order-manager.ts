@@ -431,11 +431,20 @@ export class BybitOrderManager extends EventEmitter {
 
       for (const stale of staleOrders) {
         try {
+          // Skip orders we already confirmed as completed
+          if (this.completedOrders.has(stale.orderNumber)) continue;
+
           // Fetch current status from Bybit via order detail
           const detail = await this.client.getOrderDetail(stale.orderNumber);
           if (!detail) continue;
 
           const currentStatus = mapBybitOrderStatus(detail.status);
+
+          // If Bybit says CANCELLED but we have RELEASED in timeline, keep as COMPLETED
+          if ((currentStatus === 'CANCELLED' || currentStatus === 'CANCELLED_BY_SYSTEM') && stale.status === 'COMPLETED') {
+            // DB says COMPLETED, Bybit says CANCELLED — this is the race condition, ignore it
+            continue;
+          }
 
           if (currentStatus !== stale.status) {
             log.info({
