@@ -243,6 +243,11 @@ export class BybitOrderManager extends EventEmitter {
   // ==================== ORDER PROCESSING ====================
 
   private async processOrder(order: OrderData): Promise<void> {
+    // If we already confirmed this order as completed, ignore any further status from Bybit
+    if (this.completedOrders.has(order.orderNumber)) {
+      return;
+    }
+
     const existing = this.activeOrders.get(order.orderNumber);
 
     if (!existing) {
@@ -250,6 +255,8 @@ export class BybitOrderManager extends EventEmitter {
         await this.handleNewOrder(order);
         this.activeOrders.set(order.orderNumber, order);
       } else {
+        // Don't overwrite status for completed/cancelled orders that aren't tracked
+        // saveOrder is INSERT-only so it won't overwrite existing records
         try { await saveOrder(order); } catch { /* skip */ }
       }
     } else if (existing.orderStatus !== order.orderStatus) {
