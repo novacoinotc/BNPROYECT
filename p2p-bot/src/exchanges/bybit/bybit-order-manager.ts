@@ -33,6 +33,7 @@ export class BybitOrderManager extends EventEmitter {
   private client: BybitClient;
   private config: BybitOrderManagerConfig;
   private activeOrders: Map<string, OrderData> = new Map();
+  private completedOrders: Set<string> = new Set(); // Track completed orders to ignore late CANCELLED
   private pendingMatches: Map<string, OrderMatch> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private staleInterval: NodeJS.Timeout | null = null;
@@ -75,6 +76,11 @@ export class BybitOrderManager extends EventEmitter {
       () => this.checkStaleOrders(),
       60_000
     );
+
+    // Cleanup completedOrders set every 30 min to prevent memory leak
+    setInterval(() => {
+      if (this.completedOrders.size > 500) this.completedOrders.clear();
+    }, 30 * 60 * 1000);
   }
 
   stop(): void {
@@ -316,41 +322,36 @@ export class BybitOrderManager extends EventEmitter {
       case 'COMPLETED':
         this.activeOrders.delete(newOrder.orderNumber);
         this.pendingMatches.delete(newOrder.orderNumber);
+        this.completedOrders.add(newOrder.orderNumber);
         this.emit('order', { type: 'released', order: newOrder } as BybitOrderEvent);
         log.info({ orderId: newOrder.orderNumber, amount: newOrder.totalPrice }, 'Bybit order completed');
         break;
 
       case 'CANCELLED':
       case 'CANCELLED_BY_SYSTEM': {
-        // Bybit race condition: buyer cancels almost simultaneously with our release.
-        // Bybit reports CANCELLED even though crypto was released.
-        // Wait a moment for the RELEASED step to be written to DB, then check.
-        await new Promise(r => setTimeout(r, 3000));
+        // Bybit race condition: after release, Bybit sometimes sends CANCELLED.
+        // If we already saw COMPLETED or RELEASED, ignore the CANCELLED entirely.
 
+        // Check 1: Did we already mark this as completed in this session?
+        if (this.completedOrders.has(newOrder.orderNumber)) {
+          log.warn({ orderId: newOrder.orderNumber }, 'Bybit: CANCELLED after COMPLETED — ignoring (already completed)');
+          break;
+        }
+
+        // Check 2: Was it released? (wait a moment for timeline to be written)
+        await new Promise(r => setTimeout(r, 3000));
         let wasReleased = false;
         try {
           const timeline = await getVerificationTimeline(newOrder.orderNumber);
           wasReleased = timeline.some(step => step.status === 'RELEASED');
-        } catch { /* DB error — proceed with cancel */ }
-
-        // Also check if auto-release has this order as released (in-memory)
-        if (!wasReleased) {
-          // Double-check: was the order in BUYER_PAYED before? If so, it may have been released
-          if (oldOrder.orderStatus === 'BUYER_PAYED') {
-            // Wait a bit more and re-check
-            await new Promise(r => setTimeout(r, 2000));
-            try {
-              const timeline2 = await getVerificationTimeline(newOrder.orderNumber);
-              wasReleased = timeline2.some(step => step.status === 'RELEASED');
-            } catch { /* continue */ }
-          }
-        }
+        } catch { /* DB error */ }
 
         this.activeOrders.delete(newOrder.orderNumber);
         this.pendingMatches.delete(newOrder.orderNumber);
 
         if (wasReleased) {
           log.warn({ orderId: newOrder.orderNumber }, 'Bybit: CANCELLED after RELEASED — treating as COMPLETED');
+          this.completedOrders.add(newOrder.orderNumber);
           newOrder.orderStatus = 'COMPLETED';
           try { await updateOrderStatus(newOrder.orderNumber, 'COMPLETED'); } catch { /* continue */ }
           this.emit('order', { type: 'released', order: newOrder } as BybitOrderEvent);
