@@ -162,6 +162,17 @@ export default function DocumentsPage() {
               />
             </div>
             <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Tipo de documento</label>
+              <select name="documentType" className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]">
+                <option value="">Auto-detectar</option>
+                <option value="ID_INE">INE</option>
+                <option value="ID_PASSPORT">Pasaporte</option>
+                <option value="ID_LICENSE">Licencia</option>
+                <option value="RECEIPT">Comprobante</option>
+                <option value="UNKNOWN">Otro</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-[10px] text-gray-500 mb-1 uppercase">Monto (opcional)</label>
               <input
                 type="text"

@@ -46,36 +46,10 @@ export async function POST(request: NextRequest) {
       compressedBuffer = imageBuffer;
     }
 
-    // OCR + classify
-    let documentType = 'UNKNOWN';
+    // Classify from user-provided type or default to UNKNOWN
+    const userType = formData.get('documentType') as string || '';
+    let documentType = userType || 'UNKNOWN';
     let ocrText: string | undefined;
-
-    try {
-      // Use Tesseract via the bot API if available, or classify from patterns
-      const Tesseract = await import('tesseract.js');
-      const worker = await Tesseract.createWorker('spa');
-      const { data } = await worker.recognize(compressedBuffer);
-      await worker.terminate();
-
-      if (data.text && data.text.length > 10) {
-        ocrText = data.text.substring(0, 2000);
-
-        // Simple pattern-based classification
-        const text = ocrText.toUpperCase();
-        if (text.includes('INSTITUTO NACIONAL ELECTORAL') || text.includes('CREDENCIAL PARA VOTAR') ||
-            text.includes('CLAVE DE ELECTOR') || text.includes('INE') && text.includes('CURP')) {
-          documentType = 'ID_INE';
-        } else if (text.includes('PASAPORTE') || text.includes('PASSPORT')) {
-          documentType = 'ID_PASSPORT';
-        } else if (text.includes('LICENCIA') && (text.includes('CONDUCIR') || text.includes('AUTOMOVILISTA'))) {
-          documentType = 'ID_LICENSE';
-        } else if (text.includes('COMPROBANTE') || text.includes('TRANSFERENCIA') || text.includes('CLABE') || text.includes('SPEI')) {
-          documentType = 'RECEIPT';
-        }
-      }
-    } catch {
-      // OCR failed — save as UNKNOWN
-    }
 
     // Append notes to ocrText
     if (notes) {
