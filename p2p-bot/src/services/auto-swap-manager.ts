@@ -52,7 +52,7 @@ export class AutoSwapManager extends EventEmitter {
     const assetsEnv = process.env.AUTO_SWAP_ASSETS || 'BTC,USDC,BNB,ETH,FDUSD,DOGE,WLD,ADA,XRP,TRUMP,SOL';
     this.config = {
       assets: assetsEnv.split(',').map(a => a.trim().toUpperCase()).filter(Boolean),
-      pollIntervalMs: parseInt(process.env.AUTO_SWAP_POLL_INTERVAL_MS || '30000'),
+      pollIntervalMs: parseInt(process.env.AUTO_SWAP_POLL_INTERVAL_MS || '60000'),
       minSwapUsdt: parseFloat(process.env.AUTO_SWAP_MIN_USDT || '5'),
       dustThreshold: parseFloat(process.env.AUTO_SWAP_DUST_THRESHOLD || '1'),
       ...config,
@@ -527,10 +527,17 @@ export class AutoSwapManager extends EventEmitter {
     } catch (error: any) {
       this.consecutiveErrors++;
 
-      // Detect IP ban (HTTP 418) and extract ban expiry timestamp
+      // Detect rate limit (HTTP 429) — back off before it escalates to 418 ban
       const errorData = error?.response?.data;
       const errorMsg = typeof errorData === 'string' ? errorData : (errorData?.msg || error?.message || '');
-      if (error?.response?.status === 418 || errorMsg.includes('IP banned until')) {
+      const httpStatus = error?.response?.status;
+
+      if (httpStatus === 429 || errorMsg.includes('Too many requests') || errorMsg.includes('rate limit')) {
+        // Back off 2 minutes to avoid escalation to 418
+        this.ipBanUntil = Date.now() + 2 * 60 * 1000;
+        logger.warn('[AUTO-SWAP] Rate limited (429) — backing off 2 min to avoid ban');
+        this.consecutiveErrors = 0;
+      } else if (httpStatus === 418 || errorMsg.includes('IP banned until')) {
         const banMatch = errorMsg.match(/IP banned until (\d+)/);
         if (banMatch) {
           this.ipBanUntil = parseInt(banMatch[1]);
@@ -538,11 +545,10 @@ export class AutoSwapManager extends EventEmitter {
           logger.warn({ banUntil: new Date(this.ipBanUntil).toISOString(), remainingMin },
             '[AUTO-SWAP] IP ban detected — pausing until ban expires');
         } else {
-          // No timestamp found, wait 15 minutes as safety
           this.ipBanUntil = Date.now() + 15 * 60 * 1000;
           logger.warn('[AUTO-SWAP] IP ban detected (no timestamp) — pausing 15 min');
         }
-        this.consecutiveErrors = 0; // Reset errors, ban cooldown handles retry
+        this.consecutiveErrors = 0;
       } else {
         logger.error({
           error: error?.message,
