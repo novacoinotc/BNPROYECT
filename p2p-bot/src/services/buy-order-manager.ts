@@ -599,24 +599,56 @@ export class BuyOrderManager extends EventEmitter {
         account: beneficiaryAccount.slice(-4).padStart(beneficiaryAccount.length, '*'),
       }, '🛒 [AUTO-BUY] Sending SPEI dispatch');
 
-      // Send SPEI via NOVACORE
-      const details: PaymentDetails = {
-        beneficiaryName,
-        beneficiaryAccount,
-        bankName,
-        amount: safeAmount,
-        orderNumber,
-        selectedPayId,
-      };
-
-      const speiResult = await this.sendSpeiPayment(details);
-
-      if (!speiResult.success) {
-        await updateBuyDispatch(id, { status: 'FAILED', error: `SPEI falló: ${speiResult.error}` });
-        logger.error({ orderNumber, error: speiResult.error }, '🛒 [AUTO-BUY] SPEI dispatch failed');
-        this.emit('buy_order', { type: 'failed', orderNumber, error: speiResult.error });
-        return { success: false, error: speiResult.error };
+      // Send SPEI via NOVACORE — split into chunks if amount > 120,000 (SPEI limit)
+      const SPEI_MAX = 120000;
+      const chunks: number[] = [];
+      let remaining = safeAmount;
+      while (remaining > 0) {
+        const chunk = Math.min(remaining, SPEI_MAX);
+        chunks.push(Math.round(chunk * 100) / 100);
+        remaining = Math.round((remaining - chunk) * 100) / 100;
       }
+
+      let lastResult: SpeiResult | null = null;
+      let totalSent = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkAmount = chunks[i];
+        if (chunks.length > 1) {
+          logger.info({ orderNumber, chunk: i + 1, total: chunks.length, amount: chunkAmount }, '🛒 [AUTO-BUY] Sending SPEI chunk');
+        }
+
+        const details: PaymentDetails = {
+          beneficiaryName,
+          beneficiaryAccount,
+          bankName,
+          amount: chunkAmount,
+          orderNumber: chunks.length > 1 ? `${orderNumber}-P${i + 1}` : orderNumber,
+          selectedPayId,
+        };
+
+        const speiResult = await this.sendSpeiPayment(details);
+
+        if (!speiResult.success) {
+          const error = chunks.length > 1
+            ? `SPEI falló en parcial ${i + 1}/${chunks.length} ($${chunkAmount}): ${speiResult.error}. Enviado: $${totalSent}/${safeAmount}`
+            : `SPEI falló: ${speiResult.error}`;
+          await updateBuyDispatch(id, { status: 'FAILED', error });
+          logger.error({ orderNumber, error: speiResult.error, chunk: i + 1, totalSent }, '🛒 [AUTO-BUY] SPEI dispatch failed');
+          this.emit('buy_order', { type: 'failed', orderNumber, error });
+          return { success: false, error };
+        }
+
+        totalSent += chunkAmount;
+        lastResult = speiResult;
+
+        // Delay between chunks to avoid SPEI rate limits
+        if (i < chunks.length - 1) {
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+
+      const speiResult = lastResult!;
 
       // Update dispatch with SPEI result
       await updateBuyDispatch(id, {
