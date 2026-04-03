@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 interface OrderImage {
   id: string;
@@ -21,6 +21,7 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   ID_LICENSE: { label: 'Licencia', color: 'bg-amber-500/20 text-amber-400' },
   UNKNOWN: { label: 'Otro', color: 'bg-gray-500/20 text-gray-400' },
   BYBIT_REFERENCE: { label: 'Bybit Ref', color: 'bg-orange-500/20 text-orange-400' },
+  MANUAL: { label: 'Manual', color: 'bg-cyan-500/20 text-cyan-400' },
 };
 
 export default function DocumentsPage() {
@@ -34,6 +35,11 @@ export default function DocumentsPage() {
   const [maxAmount, setMaxAmount] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ['order-images', page, search, nameSearch, typeFilter, dateFrom, dateTo, minAmount, maxAmount],
@@ -65,6 +71,33 @@ export default function DocumentsPage() {
 
   const hasFilters = search || nameSearch || typeFilter || dateFrom || dateTo || minAmount || maxAmount;
 
+  const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const file = formData.get('file') as File;
+    if (!file || file.size === 0) return;
+
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const res = await fetch('/api/order-images/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success) {
+        setUploadResult(`Guardado como ${data.documentType}${data.buyerNameDetected ? ' — ' + data.buyerNameDetected : ''}`);
+        form.reset();
+        queryClient.invalidateQueries({ queryKey: ['order-images'] });
+        setTimeout(() => { setUploadResult(null); setShowUpload(false); }, 3000);
+      } else {
+        setUploadResult('Error: ' + data.error);
+      }
+    } catch (err: any) {
+      setUploadResult('Error: ' + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -75,15 +108,95 @@ export default function DocumentsPage() {
             {total} imagenes guardadas del chat
           </p>
         </div>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-            showFilters || hasFilters ? 'bg-primary-500/20 text-primary-400' : 'bg-[#1e2a3e] text-gray-400'
-          }`}
-        >
-          Filtros {hasFilters ? '(activos)' : ''}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowUpload(!showUpload)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+              showUpload ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[#1e2a3e] text-gray-400'
+            }`}
+          >
+            + Subir
+          </button>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+              showFilters || hasFilters ? 'bg-primary-500/20 text-primary-400' : 'bg-[#1e2a3e] text-gray-400'
+            }`}
+          >
+            Filtros {hasFilters ? '(activos)' : ''}
+          </button>
+        </div>
       </div>
+
+      {/* Upload Form */}
+      {showUpload && (
+        <form onSubmit={handleUpload} className="bg-[#151d2e] rounded-xl border border-[#1e2a3e] p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-white">Subir documento</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                name="file"
+                accept="image/*"
+                required
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-primary-500 file:text-white file:text-sm file:cursor-pointer"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Nombre del comprador</label>
+              <input
+                type="text"
+                name="buyerName"
+                placeholder="Ej: Juan Perez"
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase"># Orden (opcional)</label>
+              <input
+                type="text"
+                name="orderNumber"
+                placeholder="Ej: 22869..."
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Monto (opcional)</label>
+              <input
+                type="text"
+                name="amount"
+                placeholder="Ej: 5000"
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1 uppercase">Notas</label>
+              <input
+                type="text"
+                name="notes"
+                placeholder="Ej: INE enviada por WhatsApp"
+                className="w-full bg-[#1e2a3e] text-white rounded-lg px-3 py-2 text-sm border border-[#2a3a52]"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={uploading}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition disabled:opacity-50"
+            >
+              {uploading ? 'Subiendo...' : 'Subir y clasificar'}
+            </button>
+            {uploadResult && (
+              <span className={`text-sm ${uploadResult.startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                {uploadResult}
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-600">El OCR detecta automaticamente si es INE, pasaporte, licencia o comprobante</p>
+        </form>
+      )}
 
       {/* Search + Type (always visible) */}
       <div className="flex gap-3 flex-wrap">
