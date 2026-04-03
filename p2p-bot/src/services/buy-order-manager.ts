@@ -599,64 +599,137 @@ export class BuyOrderManager extends EventEmitter {
         account: beneficiaryAccount.slice(-4).padStart(beneficiaryAccount.length, '*'),
       }, '🛒 [AUTO-BUY] Sending SPEI dispatch');
 
-      // Send SPEI via NOVACORE — split into chunks if amount > 120,000 (SPEI limit)
-      const SPEI_MAX = 120000;
-      const chunks: number[] = [];
-      let remaining = safeAmount;
-      while (remaining > 0) {
-        const chunk = Math.min(remaining, SPEI_MAX);
-        chunks.push(Math.round(chunk * 100) / 100);
-        remaining = Math.round((remaining - chunk) * 100) / 100;
-      }
+      // Send SPEI via NOVACORE — split into chunks if amount > 120,000 (SPEI/Banxico limit)
+      const SPEI_MAX = 119999; // Stay under 120,000 to be safe
+      const needsSplit = safeAmount > SPEI_MAX;
 
-      let lastResult: SpeiResult | null = null;
-      let totalSent = 0;
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkAmount = chunks[i];
-        if (chunks.length > 1) {
-          logger.info({ orderNumber, chunk: i + 1, total: chunks.length, amount: chunkAmount }, '🛒 [AUTO-BUY] Sending SPEI chunk');
+      if (needsSplit) {
+        // Build chunks and validate they sum correctly BEFORE sending anything
+        const chunks: number[] = [];
+        let remaining = safeAmount;
+        while (remaining > 0) {
+          const chunk = Math.min(remaining, SPEI_MAX);
+          chunks.push(Math.round(chunk * 100) / 100);
+          remaining = Math.round((remaining - chunk) * 100) / 100;
         }
 
+        const chunksSum = Math.round(chunks.reduce((a, b) => a + b, 0) * 100) / 100;
+        if (chunksSum !== safeAmount) {
+          const error = `SPEI split validation failed: chunks sum ${chunksSum} !== total ${safeAmount}`;
+          await updateBuyDispatch(id, { status: 'FAILED', error });
+          logger.error({ orderNumber, chunks, chunksSum, safeAmount }, `[AUTO-BUY] ${error}`);
+          return { success: false, error };
+        }
+
+        logger.warn({
+          orderNumber, total: safeAmount, chunks: chunks.length,
+          breakdown: chunks.map((c, i) => `P${i + 1}: $${c}`).join(', '),
+          beneficiary: beneficiaryName,
+        }, '🛒 [AUTO-BUY] SPLITTING into multiple SPEI transfers');
+
+        // Track sent chunks in dispatch notes for audit trail
+        let totalSent = 0;
+        const sentChunks: string[] = [];
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkAmount = chunks[i];
+          const chunkRef = `${orderNumber}-P${i + 1}of${chunks.length}`;
+
+          logger.info({
+            orderNumber, chunk: i + 1, total: chunks.length,
+            amount: chunkAmount, ref: chunkRef, sentSoFar: totalSent,
+          }, `🛒 [AUTO-BUY] Sending SPEI chunk ${i + 1}/${chunks.length}`);
+
+          // Update dispatch with progress before each chunk
+          await updateBuyDispatch(id, {
+            error: `Enviando parcial ${i + 1}/${chunks.length} ($${chunkAmount.toLocaleString()}) — enviado: $${totalSent.toLocaleString()}/${safeAmount.toLocaleString()}`,
+          });
+
+          const details: PaymentDetails = {
+            beneficiaryName,
+            beneficiaryAccount,
+            bankName,
+            amount: chunkAmount,
+            orderNumber: chunkRef,
+            selectedPayId,
+          };
+
+          const speiResult = await this.sendSpeiPayment(details);
+
+          if (!speiResult.success) {
+            const error = `SPEI parcial ${i + 1}/${chunks.length} falló ($${chunkAmount}): ${speiResult.error}. YA ENVIADO: $${totalSent}/${safeAmount}. FALTA: $${safeAmount - totalSent}`;
+            await updateBuyDispatch(id, { status: 'FAILED', error });
+            logger.error({ orderNumber, error, chunk: i + 1, totalSent, remaining: safeAmount - totalSent }, '🛒 [AUTO-BUY] SPEI chunk FAILED');
+            this.emit('buy_order', { type: 'failed', orderNumber, error });
+            return { success: false, error };
+          }
+
+          totalSent = Math.round((totalSent + chunkAmount) * 100) / 100;
+          sentChunks.push(`P${i + 1}: $${chunkAmount} (${speiResult.trackingKey || 'ok'})`);
+
+          logger.info({
+            orderNumber, chunk: i + 1, chunkAmount, totalSent,
+            trackingKey: needsSplit ? 'SPLIT' : 'single',
+          }, `🛒 [AUTO-BUY] SPEI chunk ${i + 1}/${chunks.length} sent OK`);
+
+          // Wait 10 seconds between chunks (financial safety)
+          if (i < chunks.length - 1) {
+            logger.info({ orderNumber, nextChunk: i + 2, waitSeconds: 10 }, '🛒 [AUTO-BUY] Waiting before next chunk...');
+            await new Promise(r => setTimeout(r, 10000));
+          }
+        }
+
+        // All chunks sent successfully
+        const speiResult: SpeiResult = {
+          success: true,
+          trackingKey: `SPLIT-${chunks.length}x-${sentChunks.join('|')}`,
+          transactionId: `${orderNumber}-SPLIT`,
+        };
+
+        logger.info({
+          orderNumber, totalSent, chunks: chunks.length,
+          breakdown: sentChunks,
+        }, '🛒 [AUTO-BUY] All SPEI chunks sent successfully');
+
+        // All chunks sent — build combined result
+        logger.info({
+          orderNumber, totalSent, chunks: chunks.length,
+          breakdown: sentChunks,
+        }, '🛒 [AUTO-BUY] All SPEI chunks sent successfully');
+
+        await updateBuyDispatch(id, {
+          error: `Enviado en ${chunks.length} parciales: ${sentChunks.join(', ')}`,
+          trackingKey: `SPLIT-${chunks.length}x`,
+          transactionId: `${orderNumber}-SPLIT`,
+        });
+      } else {
+        // Single transfer — normal flow
         const details: PaymentDetails = {
           beneficiaryName,
           beneficiaryAccount,
           bankName,
-          amount: chunkAmount,
-          orderNumber: chunks.length > 1 ? `${orderNumber}-P${i + 1}` : orderNumber,
+          amount: safeAmount,
+          orderNumber,
           selectedPayId,
         };
 
         const speiResult = await this.sendSpeiPayment(details);
 
         if (!speiResult.success) {
-          const error = chunks.length > 1
-            ? `SPEI falló en parcial ${i + 1}/${chunks.length} ($${chunkAmount}): ${speiResult.error}. Enviado: $${totalSent}/${safeAmount}`
-            : `SPEI falló: ${speiResult.error}`;
-          await updateBuyDispatch(id, { status: 'FAILED', error });
-          logger.error({ orderNumber, error: speiResult.error, chunk: i + 1, totalSent }, '🛒 [AUTO-BUY] SPEI dispatch failed');
-          this.emit('buy_order', { type: 'failed', orderNumber, error });
-          return { success: false, error };
+          await updateBuyDispatch(id, { status: 'FAILED', error: `SPEI falló: ${speiResult.error}` });
+          logger.error({ orderNumber, error: speiResult.error }, '🛒 [AUTO-BUY] SPEI dispatch failed');
+          this.emit('buy_order', { type: 'failed', orderNumber, error: speiResult.error });
+          return { success: false, error: speiResult.error };
         }
 
-        totalSent += chunkAmount;
-        lastResult = speiResult;
-
-        // Delay between chunks to avoid SPEI rate limits
-        if (i < chunks.length - 1) {
-          await new Promise(r => setTimeout(r, 3000));
-        }
+        // Update dispatch with SPEI result
+        await updateBuyDispatch(id, {
+          trackingKey: speiResult.trackingKey || undefined,
+          transactionId: speiResult.transactionId || undefined,
+        });
       }
 
-      const speiResult = lastResult!;
-
-      // Update dispatch with SPEI result
-      await updateBuyDispatch(id, {
-        trackingKey: speiResult.trackingKey || undefined,
-        transactionId: speiResult.transactionId || undefined,
-      });
-
-      logger.info({ orderNumber, trackingKey: speiResult.trackingKey }, '🛒 [AUTO-BUY] SPEI sent successfully');
+      logger.info({ orderNumber, amount: safeAmount, split: needsSplit }, '🛒 [AUTO-BUY] SPEI sent successfully');
 
       // Mark order as paid on Binance
       try {
@@ -673,14 +746,14 @@ export class BuyOrderManager extends EventEmitter {
         logger.info({
           orderNumber,
           amount: safeAmount,
-          trackingKey: speiResult.trackingKey,
+          split: needsSplit,
         }, '✅ [AUTO-BUY] Order completed - SPEI sent + marked as paid');
 
         this.emit('buy_order', {
           type: 'completed',
           orderNumber,
           amount: safeAmount,
-          trackingKey: speiResult.trackingKey,
+          trackingKey: needsSplit ? 'SPLIT' : 'single',
         });
 
         return { success: true };
@@ -694,7 +767,7 @@ export class BuyOrderManager extends EventEmitter {
         });
         logger.error({
           orderNumber,
-          trackingKey: speiResult.trackingKey,
+          trackingKey: needsSplit ? 'SPLIT' : 'single',
           error: markError.message,
         }, '⚠️ [AUTO-BUY] SPEI sent but FAILED to mark as paid - MANUAL ACTION NEEDED');
         this.emit('buy_order', { type: 'manual_required', orderNumber, error: markError.message });
