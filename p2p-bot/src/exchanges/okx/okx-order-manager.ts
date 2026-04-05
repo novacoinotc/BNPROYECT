@@ -138,6 +138,7 @@ export class OkxOrderManager extends EventEmitter {
       for (const okxOrder of allOkxOrders.values()) {
         try {
           const order = toOrderData(okxOrder);
+          if (!order) continue;
           await saveOrder(order);
           savedCount++;
 
@@ -187,6 +188,7 @@ export class OkxOrderManager extends EventEmitter {
       // Process each pending order
       for (const okxOrder of pendingOrders) {
         const order = toOrderData(okxOrder);
+        if (!order) continue;
         await this.processOrder(order, okxOrder);
       }
 
@@ -199,6 +201,7 @@ export class OkxOrderManager extends EventEmitter {
 
       for (const okxOrder of recentCompleted) {
         const order = toOrderData(okxOrder);
+        if (!order) continue;
         const tracked = this.activeOrders.get(order.orderNumber);
         if (tracked && tracked.orderStatus !== order.orderStatus) {
           await this.processOrder(order, okxOrder);
@@ -213,6 +216,7 @@ export class OkxOrderManager extends EventEmitter {
 
       for (const okxOrder of recentCancelled) {
         const order = toOrderData(okxOrder);
+        if (!order) continue;
         const tracked = this.activeOrders.get(order.orderNumber);
         if (tracked && tracked.orderStatus !== order.orderStatus) {
           await this.processOrder(order, okxOrder);
@@ -329,9 +333,11 @@ export class OkxOrderManager extends EventEmitter {
 
       for (const okxOrder of unreleased) {
         const orderId = okxOrder.orderId;
-        if (!this.activeOrders.has(orderId)) {
+        if (!orderId || !this.activeOrders.has(orderId)) {
+          if (!orderId) continue;
           // Order exists on OKX but not tracked locally — add it
           const order = toOrderData(okxOrder);
+          if (!order) continue;
           if (!['COMPLETED', 'CANCELLED'].includes(order.orderStatus)) {
             this.activeOrders.set(orderId, order);
             this.pendingMatches.set(orderId, {

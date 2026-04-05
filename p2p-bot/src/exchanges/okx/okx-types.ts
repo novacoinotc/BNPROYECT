@@ -298,9 +298,9 @@ export function mapCreatorTypeToGrade(type?: string): number {
  * Transform OKX order data to our generic OrderData for DB/events
  * This is the bridge between OKX API format and our shared data model
  */
-export function toOrderData(okxOrder: OkxOrderData): OrderData {
+export function toOrderData(okxOrder: OkxOrderData): OrderData | null {
   if (!okxOrder.orderId) {
-    throw new Error('OKX order missing orderId — skipping');
+    return null;
   }
   const status = mapOkxOrderStatus(okxOrder.orderStatus, okxOrder.paymentStatus);
   const tradeType = mapOkxSide(okxOrder.side);
