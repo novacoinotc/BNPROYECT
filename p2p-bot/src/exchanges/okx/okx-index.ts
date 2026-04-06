@@ -443,7 +443,15 @@ async function shutdown(): Promise<void> {
 
 // ==================== ERROR HANDLING ====================
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', (error: any) => {
+  const msg = error?.message || String(error);
+  // Ignore image/OCR errors — don't crash the whole bot
+  if (msg.includes('JPEG') || msg.includes('PNG') || msg.includes('sharp') ||
+      msg.includes('Tesseract') || msg.includes('Premature end') ||
+      msg.includes('Unsupported image')) {
+    log.warn({ error: msg }, 'OKX: Image processing error (non-fatal)');
+    return;
+  }
   log.fatal({ error }, 'OKX: Uncaught exception');
   process.exit(1);
 });
