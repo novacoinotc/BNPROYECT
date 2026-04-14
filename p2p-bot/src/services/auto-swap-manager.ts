@@ -228,7 +228,10 @@ export class AutoSwapManager extends EventEmitter {
       }, '💰 [AUTO-SWAP] USDT transferred Spot → Funding');
 
       // Now update the SELL ad to include the new USDT
-      await this.reloadSellAd(parseFloat(amount));
+      // NOTE: Do NOT reload SELL ad — updating initAmount causes Binance to
+      // reposition the ad lower (treats it as new). USDT stays in Funding
+      // and is automatically available for P2P orders.
+      // await this.reloadSellAd(parseFloat(amount));
     } catch (error: any) {
       const errorMsg = error?.response?.data?.msg || error?.message || '';
       // Detect IP ban and set cooldown
