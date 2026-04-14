@@ -1183,10 +1183,14 @@ export class AutoReleaseOrchestrator extends EventEmitter {
 
     logger.debug({ original1: name1, normalized1: n1, original2: name2, normalized2: n2 }, 'Name comparison normalization');
 
+    // If either name is empty after normalization (non-Latin characters), return 0
+    if (!n1 || !n2 || n1.length < 3 || n2.length < 3) return 0;
+
     if (n1 === n2) return 1;
 
-    // Check if one contains the other
-    if (n1.includes(n2) || n2.includes(n1)) return 0.8;
+    // Check if one contains the other (but only if the shorter string has meaningful length)
+    const shorter = n1.length < n2.length ? n1 : n2;
+    if (shorter.length >= 5 && (n1.includes(n2) || n2.includes(n1))) return 0.8;
 
     // Check word overlap (names can be in different order)
     const words1 = new Set(n1.split(/\s+/).filter(w => w.length > 2));
