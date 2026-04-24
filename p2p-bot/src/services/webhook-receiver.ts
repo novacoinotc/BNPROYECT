@@ -346,6 +346,11 @@ export class WebhookReceiver extends EventEmitter {
    * This bypasses Binance geo-restriction by running from Railway (EU)
    */
   private async handleAdsProxy(_req: Request, res: Response): Promise<void> {
+    const botMode = (process.env.BOT_MODE || '').toLowerCase();
+    if (botMode === 'okx' || botMode === 'bybit') {
+      res.json({ success: true, sellAds: [], buyAds: [], merchant: null, source: 'railway-proxy', mode: botMode });
+      return;
+    }
     try {
       const client = getBinanceClient();
       const adsData = await client.listMyAds();
