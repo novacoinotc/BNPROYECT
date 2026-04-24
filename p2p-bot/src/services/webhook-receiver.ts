@@ -381,6 +381,11 @@ export class WebhookReceiver extends EventEmitter {
    * Fetches orders from Binance and saves them to the database
    */
   private async handleOrdersSync(_req: Request, res: Response): Promise<void> {
+    const botMode = (process.env.BOT_MODE || '').toLowerCase();
+    if (botMode === 'okx' || botMode === 'bybit') {
+      res.json({ success: true, syncedOrders: 0, source: 'railway-proxy', mode: botMode });
+      return;
+    }
     try {
       const client = getBinanceClient();
 
