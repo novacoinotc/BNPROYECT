@@ -444,16 +444,14 @@ async function shutdown(): Promise<void> {
 // ==================== ERROR HANDLING ====================
 
 process.on('uncaughtException', (error: any) => {
-  const msg = error?.message || String(error);
-  // Ignore image/OCR errors — don't crash the whole bot
-  if (msg.includes('JPEG') || msg.includes('PNG') || msg.includes('sharp') ||
-      msg.includes('Tesseract') || msg.includes('Premature end') ||
-      msg.includes('Unsupported image')) {
-    log.warn({ error: msg }, 'OKX: Image processing error (non-fatal)');
-    return;
-  }
-  log.fatal({ error }, 'OKX: Uncaught exception');
-  process.exit(1);
+  const msg = error?.message || error?.toString?.() || String(error);
+  const stack = error?.stack || '';
+  log.error({
+    msg,
+    name: error?.name,
+    code: error?.code,
+    stack: stack.split('\n').slice(0, 8).join('\n'),
+  }, 'OKX: Uncaught exception (non-fatal, keeping process alive)');
 });
 
 process.on('unhandledRejection', (reason) => {
