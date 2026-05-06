@@ -1192,6 +1192,17 @@ export class AutoReleaseOrchestrator extends EventEmitter {
     const shorter = n1.length < n2.length ? n1 : n2;
     if (shorter.length >= 5 && (n1.includes(n2) || n2.includes(n1))) return 0.8;
 
+    // Compare with spaces removed — handles concatenated usernames (e.g. Binance "ANGELYAHIR"
+    // vs bank "ANGEL YAHIR VILLALPANDO ORTIZ"). Requires shorter side ≥8 chars to avoid
+    // false positives on tiny prefixes.
+    const n1NoSpace = n1.replace(/\s/g, '');
+    const n2NoSpace = n2.replace(/\s/g, '');
+    const shorterNoSpace = n1NoSpace.length < n2NoSpace.length ? n1NoSpace : n2NoSpace;
+    if (shorterNoSpace.length >= 8 &&
+        (n1NoSpace.includes(n2NoSpace) || n2NoSpace.includes(n1NoSpace))) {
+      return 0.8;
+    }
+
     // Check word overlap (names can be in different order)
     const words1 = new Set(n1.split(/\s+/).filter(w => w.length > 2));
     const words2 = new Set(n2.split(/\s+/).filter(w => w.length > 2));
