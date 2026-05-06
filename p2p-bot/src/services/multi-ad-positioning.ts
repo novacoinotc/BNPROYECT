@@ -91,6 +91,7 @@ export class MultiAdPositioningManager extends EventEmitter {
   private followTarget: string | null = null;
   private undercutCents: number = 1;
   private lastConfigCheck: Date | null = null;
+  private ignoredAdIds: Set<string> = new Set();
 
   // Threshold for price updates (0.01 MXN)
   private readonly PRICE_UPDATE_THRESHOLD = 0.01;
@@ -154,6 +155,7 @@ export class MultiAdPositioningManager extends EventEmitter {
       this.followTarget = config.followTargetNickName || null;
       this.undercutCents = config.undercutCents || 1;
       this.lastConfigCheck = new Date();
+      this.ignoredAdIds = new Set(config.ignoredAdIds || []);
 
       // Update follow positioning config
       // Use very wide margins for follow mode to allow tracking target price closely
@@ -270,6 +272,12 @@ export class MultiAdPositioningManager extends EventEmitter {
    * Update a single ad's price based on current mode
    */
   private async updateSingleAd(ad: ManagedAd): Promise<void> {
+    // Skip ads explicitly ignored from price updates (per-ad opt-out from dashboard)
+    if (this.ignoredAdIds.has(ad.advNo)) {
+      ad.mode = 'idle';
+      return;
+    }
+
     // Binance API uses CLIENT perspective for tradeType:
     // - tradeType: BUY in request → returns SELL ads (merchants who SELL)
     // - tradeType: SELL in request → returns BUY ads (merchants who BUY)

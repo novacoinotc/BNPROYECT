@@ -172,6 +172,11 @@ export class BybitPositioning extends EventEmitter {
   private async updateSingleAd(ad: TrackedAd): Promise<void> {
     if (!this.dbConfig) return;
 
+    // Skip ads explicitly ignored from price updates (per-ad opt-out from dashboard)
+    if (this.dbConfig.ignoredAdIds?.includes(ad.adId)) {
+      return;
+    }
+
     // Get per-asset config from database (same logic as Binance)
     const tradeType = ad.side === 'sell' ? 'SELL' : 'BUY';
     const assetConfig = getPositioningConfigForAd(this.dbConfig, tradeType as 'SELL' | 'BUY', ad.tokenId);

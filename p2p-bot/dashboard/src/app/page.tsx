@@ -48,6 +48,7 @@ interface AdsResponse {
 interface BotConfig {
   positioningEnabled: boolean;
   positioningConfigs: Record<string, any>;
+  ignoredAdIds?: string[];
 }
 
 type FilterType = 'all' | 'active' | 'paused';
@@ -210,6 +211,29 @@ export default function Dashboard() {
   const getAdPositioning = (ad: AdData) => {
     const key = `${ad.tradeType || 'SELL'}:${ad.asset}`;
     return config?.positioningConfigs?.[key] || null;
+  };
+
+  // Toggle "ignore price updates" for a specific ad
+  const handleToggleIgnore = async (ad: AdData) => {
+    setActionLoading(`ignore-${ad.advNo}`);
+    try {
+      const current: string[] = config?.ignoredAdIds || [];
+      const isIgnored = current.includes(ad.advNo);
+      const next = isIgnored
+        ? current.filter((id: string) => id !== ad.advNo)
+        : [...current, ad.advNo];
+
+      await fetch('/api/bot-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ignoredAdIds: next }),
+      });
+      queryClient.invalidateQueries({ queryKey: ['bot-config'] });
+    } catch (err) {
+      console.error('Error toggling ignore:', err);
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   return (
@@ -375,11 +399,13 @@ export default function Dashboard() {
               viewType={viewType}
               positioning={getAdPositioning(ad)}
               botEnabled={config?.positioningEnabled || false}
+              isIgnored={(config?.ignoredAdIds || []).includes(ad.advNo)}
               onTop1={() => handleTop1(ad)}
               onFollow={() => {
                 setShowFollowModal(ad.advNo);
                 fetchSellersForAd(ad);
               }}
+              onToggleIgnore={() => handleToggleIgnore(ad)}
               actionLoading={actionLoading}
             />
           ))}
@@ -454,19 +480,21 @@ interface AdCardProps {
   viewType: ViewType;
   positioning: any;
   botEnabled: boolean;
+  isIgnored: boolean;
   onTop1: () => void;
   onFollow: () => void;
+  onToggleIgnore: () => void;
   actionLoading: string | null;
 }
 
-function AdCard({ ad, viewType, positioning, botEnabled, onTop1, onFollow, actionLoading }: AdCardProps) {
+function AdCard({ ad, viewType, positioning, botEnabled, isIgnored, onTop1, onFollow, onToggleIgnore, actionLoading }: AdCardProps) {
   const status = getAdStatus(ad);
   const minAmount = ad.minSingleTransAmount || ad.minAmount || '0';
   const maxAmount = ad.maxSingleTransAmount || ad.maxAmount || '0';
   const isSell = ad.tradeType === 'SELL' || !ad.tradeType;
 
-  // Positioning status
-  const isPositioningActive = botEnabled && positioning?.enabled !== false;
+  // Positioning status — when ad is in ignore list, bot won't move price
+  const isPositioningActive = botEnabled && positioning?.enabled !== false && !isIgnored;
   const positioningMode = positioning?.mode;
   const followTarget = positioning?.followTarget;
 
@@ -486,6 +514,11 @@ function AdCard({ ad, viewType, positioning, botEnabled, onTop1, onFollow, actio
                   positioningMode === 'smart' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
                 }`}>
                   {positioningMode === 'smart' ? '🤖' : `👤 ${followTarget?.slice(0, 8)}...`}
+                </span>
+              )}
+              {isIgnored && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400">
+                  🔒 IGNORADO
                 </span>
               )}
             </div>
@@ -532,6 +565,13 @@ function AdCard({ ad, viewType, positioning, botEnabled, onTop1, onFollow, actio
             <span>{positioningMode === 'smart' ? '🤖 Smart Mode' : '👤 Siguiendo'}</span>
             {followTarget && <span className="font-bold text-white">{followTarget}</span>}
           </div>
+        </div>
+      )}
+
+      {/* Ignored badge */}
+      {isIgnored && (
+        <div className="mb-3 p-2 rounded-lg text-xs bg-rose-500/10 border border-rose-500/30 text-rose-400">
+          🔒 Anuncio ignorado por el bot — el precio no se actualizará automáticamente
         </div>
       )}
 
@@ -609,6 +649,23 @@ function AdCard({ ad, viewType, positioning, botEnabled, onTop1, onFollow, actio
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
             </svg>
             FOLLOW
+          </button>
+          <button
+            onClick={onToggleIgnore}
+            disabled={actionLoading === `ignore-${ad.advNo}`}
+            title={isIgnored ? 'El bot está ignorando este anuncio (no actualiza precio)' : 'Ignorar este anuncio (no se actualizará el precio)'}
+            className={`btn-outline text-xs py-1.5 px-2.5 flex items-center gap-1 ${
+              isIgnored ? 'border-rose-500/60 text-rose-400 bg-rose-500/10' : ''
+            }`}
+          >
+            {actionLoading === `ignore-${ad.advNo}` ? (
+              <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isIgnored ? 'M5 13l4 4L19 7' : 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'} />
+              </svg>
+            )}
+            {isIgnored ? 'IGNORADO' : 'IGNORAR'}
           </button>
         </div>
         <div className={`w-3 h-3 rounded-full ${status.isOnline ? 'bg-emerald-500' : 'bg-gray-600'}`}></div>

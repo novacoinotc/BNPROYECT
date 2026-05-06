@@ -65,6 +65,18 @@ export async function GET() {
       }
     }
 
+    // Parse ignoredAdIds from JSONB (per-ad price-update opt-out)
+    let ignoredAdIds: string[] = [];
+    if (config.ignoredAdIds) {
+      try {
+        ignoredAdIds = typeof config.ignoredAdIds === 'string'
+          ? JSON.parse(config.ignoredAdIds)
+          : config.ignoredAdIds;
+      } catch {
+        ignoredAdIds = [];
+      }
+    }
+
     return NextResponse.json({
       success: true,
       config: {
@@ -114,6 +126,9 @@ export async function GET() {
 
         // Ignored advertisers
         ignoredAdvertisers,
+
+        // Ignored ad IDs (per-ad price-update opt-out)
+        ignoredAdIds,
 
         // Auto-buy SPEI
         autoBuyAutoDispatch: config.autoBuyAutoDispatch ?? false,
@@ -249,6 +264,12 @@ export async function POST(request: NextRequest) {
     if (Array.isArray(body.ignoredAdvertisers)) {
       updates.push(`"ignoredAdvertisers" = $${paramIndex++}`);
       values.push(JSON.stringify(body.ignoredAdvertisers));
+    }
+
+    // Ignored ad IDs (JSONB array — per-ad price-update opt-out)
+    if (Array.isArray(body.ignoredAdIds)) {
+      updates.push(`"ignoredAdIds" = $${paramIndex++}`);
+      values.push(JSON.stringify(body.ignoredAdIds));
     }
 
     // Auto-buy SPEI dispatch mode

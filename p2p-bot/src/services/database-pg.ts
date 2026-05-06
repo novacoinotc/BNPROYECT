@@ -2145,6 +2145,8 @@ export interface BotConfig {
   autoMessageText: string | null;
   // Ignored advertisers (global list)
   ignoredAdvertisers: string[];
+  // Ignored ad IDs — bot won't update price on these but keeps monitoring/release/etc.
+  ignoredAdIds: string[];
   // Anti-trap: minimum maxOrderLimit to consider an ad (filters low-limit bait ads)
   smartMinMaxOrderLimit: number;
   // Auto-buy: auto-dispatch mode (false = manual approval, true = auto)
@@ -2232,6 +2234,18 @@ export async function getBotConfig(): Promise<BotConfig> {
       }
     }
 
+    // Parse ignoredAdIds from JSON (per-ad price-update opt-out)
+    let ignoredAdIds: string[] = [];
+    if (row?.ignoredAdIds) {
+      try {
+        ignoredAdIds = typeof row.ignoredAdIds === 'string'
+          ? JSON.parse(row.ignoredAdIds)
+          : row.ignoredAdIds;
+      } catch {
+        ignoredAdIds = [];
+      }
+    }
+
     return {
       releaseEnabled: row?.releaseEnabled ?? true,
       positioningEnabled: row?.positioningEnabled ?? false,
@@ -2264,6 +2278,8 @@ export async function getBotConfig(): Promise<BotConfig> {
       autoMessageText: row?.autoMessageText ?? null,
       // Ignored advertisers
       ignoredAdvertisers,
+      // Ignored ad IDs
+      ignoredAdIds,
       // Auto-buy
       autoBuyAutoDispatch: row?.autoBuyAutoDispatch ?? false,
     };
@@ -2305,6 +2321,7 @@ export async function getBotConfig(): Promise<BotConfig> {
       autoMessageEnabled: false,
       autoMessageText: null,
       ignoredAdvertisers: [],
+      ignoredAdIds: [],
       autoBuyAutoDispatch: false,
     };
   }

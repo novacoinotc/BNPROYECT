@@ -185,6 +185,12 @@ export class OkxPositioning extends EventEmitter {
     if (this.trackedAds.size === 0) return;
 
     for (const [adId, ad] of this.trackedAds) {
+      // Skip ads explicitly ignored from price updates (per-ad opt-out from dashboard)
+      if (this.dbConfig?.ignoredAdIds?.includes(adId)) {
+        ad.mode = 'idle';
+        continue;
+      }
+
       // Skip ads that fail too many times
       if (ad.errorCount >= 5) {
         if (ad.errorCount === 5) {

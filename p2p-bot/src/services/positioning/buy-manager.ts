@@ -278,6 +278,11 @@ export class BuyAdManager extends EventEmitter {
   // ==================== AD UPDATE ====================
 
   private async updateAd(ad: BuyAd): Promise<void> {
+    // Skip ads explicitly ignored from price updates (per-ad opt-out from dashboard)
+    if (this.dbConfig?.ignoredAdIds?.includes(ad.advNo)) {
+      return;
+    }
+
     // Get per-asset config (or fallback to defaults)
     const assetConfig = this.dbConfig
       ? getPositioningConfigForAd(this.dbConfig, 'BUY', ad.asset)
