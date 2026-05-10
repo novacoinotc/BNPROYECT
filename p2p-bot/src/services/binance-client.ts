@@ -173,9 +173,9 @@ export class BinanceC2CClient {
       const beforeMs = Date.now();
       const response = await this.client.get<{ serverTime: number }>('/api/v3/time', { timeout: 5000 });
       const afterMs = Date.now();
-      const rttHalf = (afterMs - beforeMs) / 2;
+      const rttHalfMs = Math.round((afterMs - beforeMs) / 2);
       const serverTime = Number(response.data.serverTime);
-      this.timeOffsetMs = serverTime - (beforeMs + rttHalf);
+      this.timeOffsetMs = Math.round(serverTime - (beforeMs + rttHalfMs));
       this.lastTimeSyncAt = Date.now();
       if (Math.abs(this.timeOffsetMs) > 1500) {
         logger.warn({ offsetMs: this.timeOffsetMs }, 'Binance time sync: significant clock drift detected');
@@ -189,7 +189,8 @@ export class BinanceC2CClient {
    * Build signed query string with timestamp
    */
   private buildSignedParams(params: Record<string, any> = {}): string {
-    const timestamp = Date.now() + this.timeOffsetMs;
+    // Binance requires integer timestamp (any decimal triggers -1102 "malformed" error)
+    const timestamp = Math.floor(Date.now() + this.timeOffsetMs);
     // recvWindow=60000 (Binance max) gives 60s tolerance against clock drift
     const allParams = { recvWindow: 60000, ...params, timestamp };
 
