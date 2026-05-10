@@ -86,6 +86,12 @@ export class BinanceC2CClient {
   private readonly baseUrl: string;
   private readonly client: AxiosInstance;
 
+  // Time sync — corrects local clock drift vs Binance server time
+  // (Binance rejects signed requests with code -1021 when timestamp is outside recvWindow)
+  private timeOffsetMs: number = 0;
+  private lastTimeSyncAt: number = 0;
+  private readonly TIME_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 min
+
   constructor(apiKey: string, apiSecret: string, baseUrl: string = 'https://api.binance.com') {
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
@@ -158,11 +164,34 @@ export class BinanceC2CClient {
   }
 
   /**
+   * Sync local clock offset against Binance serverTime.
+   * Tolerates up to ~recvWindow drift; we set recvWindow=60000 to give plenty of headroom.
+   */
+  private async syncTimeIfStale(): Promise<void> {
+    if (Date.now() - this.lastTimeSyncAt < this.TIME_SYNC_INTERVAL_MS) return;
+    try {
+      const beforeMs = Date.now();
+      const response = await this.client.get<{ serverTime: number }>('/api/v3/time', { timeout: 5000 });
+      const afterMs = Date.now();
+      const rttHalf = (afterMs - beforeMs) / 2;
+      const serverTime = Number(response.data.serverTime);
+      this.timeOffsetMs = serverTime - (beforeMs + rttHalf);
+      this.lastTimeSyncAt = Date.now();
+      if (Math.abs(this.timeOffsetMs) > 1500) {
+        logger.warn({ offsetMs: this.timeOffsetMs }, 'Binance time sync: significant clock drift detected');
+      }
+    } catch {
+      // If sync fails, keep using last known offset
+    }
+  }
+
+  /**
    * Build signed query string with timestamp
    */
   private buildSignedParams(params: Record<string, any> = {}): string {
-    const timestamp = Date.now();
-    const allParams = { ...params, timestamp };
+    const timestamp = Date.now() + this.timeOffsetMs;
+    // recvWindow=60000 (Binance max) gives 60s tolerance against clock drift
+    const allParams = { recvWindow: 60000, ...params, timestamp };
 
     // Build query string (without signature)
     const queryString = Object.entries(allParams)
@@ -186,6 +215,7 @@ export class BinanceC2CClient {
    * Make signed GET request
    */
   private async signedGet<T>(endpoint: string, params: Record<string, any> = {}): Promise<T> {
+    await this.syncTimeIfStale();
     const signedParams = this.buildSignedParams(params);
     const response = await this.client.get<BinanceApiResponse<T>>(
       `${endpoint}?${signedParams}`
@@ -201,6 +231,7 @@ export class BinanceC2CClient {
     body: Record<string, any> = {},
     params: Record<string, any> = {}
   ): Promise<T> {
+    await this.syncTimeIfStale();
     const signedParams = this.buildSignedParams(params);
     const response = await this.client.post<BinanceApiResponse<T>>(
       `${endpoint}?${signedParams}`,
