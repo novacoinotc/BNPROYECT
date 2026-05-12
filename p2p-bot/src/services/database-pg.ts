@@ -2402,13 +2402,21 @@ export function getPositioningConfigForAd(
  */
 export async function updateBotLastActive(botType: 'release' | 'positioning'): Promise<void> {
   const db = getPool();
+  const merchantId = getMerchantId();
 
   const column = botType === 'release' ? 'releaseLastActive' : 'positioningLastActive';
 
   try {
-    await db.query(
-      `UPDATE "BotConfig" SET "${column}" = NOW() WHERE id = 'main'`
-    );
+    if (merchantId) {
+      await db.query(
+        `UPDATE "BotConfig" SET "${column}" = NOW() WHERE "merchantId" = $1`,
+        [merchantId]
+      );
+    } else {
+      await db.query(
+        `UPDATE "BotConfig" SET "${column}" = NOW() WHERE id = 'main'`
+      );
+    }
   } catch (error) {
     logger.debug({ error, botType }, 'Failed to update bot last active timestamp');
   }
